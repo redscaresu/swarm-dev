@@ -517,13 +517,13 @@ waiting() {
   pid="$(cat "$1/.swarm/closing/$2.pid" 2>/dev/null)" || { echo none; return 0; }
   if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then echo running; else echo "none (stale pid file)"; fi
 }
-# polled <stub dir> — wait up to 30 s for two `herdr agent list` calls in the stub's call log, which
-# the caller cleared once the command that retired the agent had exited: each of the waiter's polls
-# makes one, so with two its first poll since then has read the agent and decided. yes, or no.
+# polled <project> <name> — wait up to 30 s for two `read herdr:working` lines in <name>'s waiter log: it
+# writes one on each poll after the command that retired the agent has exited, before it decides, so
+# with two its first poll has read the agent and closed nothing. yes, or no.
 polled() {
   local i
   for ((i = 0; i < 300; i++)); do
-    [[ "$(grep -cx 'agent list' "$1/h/calls" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }
+    [[ "$(grep -cx 'read herdr:working' "$1/.swarm/closing/$2.log" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }
     sleep 0.1
   done
   echo no
@@ -636,7 +636,7 @@ merged_review_fails=0
     fresh; rm -f "${P}"/.swarm/state/*; item s "status: review" "prs: ${URL}" ${epic:+"epic: ${epic}"}; lay "${ROOT}" "${P}" s "${epic}"
     working working; : > "${ROOT}/h/calls"
     merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
-    shut="$(closes "${ROOT}" w:r t1)"; : > "${ROOT}/h/calls"; seen="$(polled "${ROOT}")"
+    shut="$(closes "${ROOT}" w:r t1)"; seen="$(polled "${P}" review-s)"
     is "${what}, merged from review-s's pane while it works: s's builder closes, review-s stays open, retired, and its waiter, having read it working since the merge exited, closes nothing and runs on" \
       "0|yes|${epic:+conduct-e@e }lead@lead review-s-done@${label}|yes|||running" \
       "${rc}|${seen}|$(panes_in "${ROOT}")|$(grep -qx 'w:r review-s-done' "${P}/.swarm/state/${label}" && echo yes)|${shut}|$(closes "${ROOT}" w:r t1)|$(waiting "${P}" review-s)"

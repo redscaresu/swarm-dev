@@ -2089,12 +2089,14 @@ close_when_idle() {
 # session_state's word for <name>'s session, or, where herdr answers for it (no session, or one Claude
 # Code no longer lists), herdr's status for this project's agent under the recorded -done name, or
 # <name> for a conductor (list_field over one herdr agent list; a list herdr fails to give, or one that
-# does not parse, reads as unknown, never as no agent). Idle, done, or no agent under that name any more: a review agent's pane
-# closes (close_pane, which closes its tab too when the pane was the record's last). A conductor closes
-# as collect's close closes it (shut_agent: its epic's tabs, its own pane, its session archived), but
-# only once its report is there and the lead has collected it (report_collected tried: a swarm.sh close
-# of it since the report, refused or not, under <name> or, for a cut name, its full conduct-<epic>); until then it reads as uncollected, since closing it would
-# take collect off next, which finds a conductor to collect by its pane. Either logs
+# does not parse, reads as unknown, never as no agent), and prints `read <state>` to its log. Idle,
+# done, or no agent under that name any more: a review agent's pane closes (close_pane, which closes
+# its tab too when the pane was the record's last). A conductor closes as collect's close closes it
+# (shut_agent: its epic's tabs, its own pane, its session archived), but only once its report is there
+# and the lead has collected it (report_collected tried: a swarm.sh close of it since the report,
+# refused or not, under <name> or, for a cut name, its full conduct-<epic>); until then it reads as
+# uncollected, since closing it would take collect off next, which finds a conductor to collect by its
+# pane. Either logs
 # `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
 # `close-when-idle <name> left open: ...`. So is one whose agent is still not idle (or, for a
 # conductor, not collected) CLOSE_IDLE_SECONDS after <pid> exited, naming its state, or whose <pid>
@@ -2133,6 +2135,7 @@ close_idle_wait() {
           state="herdr:$(list_field "${agent}" agent_status <<< "${agents}")"
         else state="herdr:unknown"; fi
       fi
+      echo "read ${state}"
       case "${state}" in
         idle|herdr:idle|herdr:done|herdr:)
           [[ -z "${conductor}" ]] || report="$(conductor_report "${name}")"
