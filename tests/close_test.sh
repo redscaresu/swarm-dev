@@ -816,5 +816,25 @@ printf '%s\n' "conduct-ce w:p90" "re w:p105" "review-re w:p106" > "${ROOT}/agent
 is "reconcile from review-re's idle pane closes epic story re's builder, and keeps review-re and tab ce-2, recorded there now" "w:p105||w:p106 review-re|1" \
   "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)|$(grep -c '^kept review-re (the pane running this command) in tab ce-2:' <<< "${out}")"
 
+# --- pane-closed: close_pane logs one line per pane it closes, its target the agent's name, with
+# pane= and agent_fields' slug= and role=. review-x shares x's tab with its builder, so its pane closes
+# alone; review-y is the last pane of tab other (w:t3), so its pane closes with that tab.
+# pane_closed_lines <name> — <outcome> of each pane-closed line on <name>, without version=
+pane_closed_lines() { awk -F'\t' -v n="$1" '$2 == "pane-closed" && $3 == n { print $5 }' "${P}/.swarm/events.tsv" | no_version; }
+item x "status: review" "kind: code"; built review-x review; built review-y review
+printf '%s\n' "w:p70 x" "w:p71 review-x" > "${P}/.swarm/state/x"; echo "w:p72 review-y" > "${P}/.swarm/state/other"
+printf '%s\n' "x w:p70" "review-x w:p71" "review-y w:p72" > "${ROOT}/agents"; printf '%s\n' "w:p70 w:t9" "w:p71 w:t9" "w:p72 w:t3" > "${ROOT}/panes"
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; cs review-x >/dev/null || true
+is "close review-x closes its pane alone and logs one pane-closed line, slug=x role=review pane=w:p71" \
+  "w:p71|ok ~~ pane=w:p71 slug=x role=review" "$(cat "${ROOT}/panes-closed")|$(pane_closed_lines review-x)"
+cs review-y >/dev/null || true
+is "close review-y closes its tab, its last pane, and logs one pane-closed line for that pane" \
+  "<w:t3>|ok ~~ pane=w:p72 slug=y role=review" "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines review-y)"
+echo "w:p73 review-z" >> "${P}/.swarm/state/x"; echo "review-z w:p73" >> "${ROOT}/agents"
+touch "${ROOT}/paneclosefail"; cs review-z >/dev/null || true; rm -f "${ROOT}/paneclosefail"
+is "a pane herdr could not close logs no pane-closed line, and its record keeps it" "|w:p73 review-z" \
+  "$(pane_closed_lines review-z)|$(grep -x 'w:p73 review-z' "${P}/.swarm/state/x")"
+rm -f "${P}/.swarm/state/x" "${P}/.swarm/state/other"
+
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

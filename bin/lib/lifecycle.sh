@@ -1766,7 +1766,8 @@ own_pane() {
 # tab is kept for a live agent herdr has in it besides, or herdr has no tab of that label, <pane>
 # closes alone. Fails when no tab record has it. When herdr could not list that tab or close the pane,
 # the pane and its record are kept, that is said, CLOSE_PANE_KEPT is set for the caller to act on,
-# and it succeeds: under errexit a failure here would stop reconcile's loop over merged stories.
+# and it succeeds: under errexit a failure here would stop reconcile's loop over merged stories. A
+# pane it closes, by itself or with its tab, gets its pane-closed line in events.tsv (pane_closed).
 close_pane() {
   local state="${3:-}" id
   if [[ -z "${state}" ]]; then
@@ -1784,14 +1785,24 @@ close_pane() {
     # With no herdr tab of that label there is none to close: the pane closes by itself below.
     [[ -z "${id}" ]] || close_tab "${state}" "${id}" "$1"
   fi
-  [[ -f "${state}" ]] || return 0
+  # The record is gone only when close_tab closed its tab, and <pane> with it.
+  if [[ ! -f "${state}" ]]; then pane_closed "$1" "$2"; return 0; fi
   # Checked, not left to errexit: a caller's `|| true` turns that off here.
   if ! herdr pane close "$1" >/dev/null 2>&1; then
     echo "swarm: could not close pane $2 ($1): it is still open, and its tab record keeps it" >&2
     CLOSE_PANE_KEPT=1; return 0
   fi
   record_drop "${state}" "$1"
+  pane_closed "$1" "$2"
   echo "closed pane $2"
+}
+
+# pane_closed <pane> <name> — events.tsv's pane-closed line for a pane this script closed: its target
+# <name> (- for none), its tail pane=<pane> and agent_fields' slug= and role= for <name>.
+pane_closed() {
+  local kv=()
+  read -r -a kv <<< "$(agent_fields "$2")"
+  record_event pane-closed "${2:--}" ok "pane=$1" "${kv[@]+"${kv[@]}"}"
 }
 
 # label_record <tab-record> <label> — succeed when the record is <label>'s own or its numbered
@@ -1955,7 +1966,8 @@ live_line() { LIVE+="$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\n'; }
 
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
 # (a start that failed) or a retired agent (<name>-done, left open by retire_agent). Lists them; with
-# --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
+# --yes, closes them, drops them from the tab records and logs a pane-closed line for each it closed
+# (pane_closed). Working, waiting and idle agents are never
 # touched, nor the pane this runs in. Run it when nothing is starting: a pane whose agent is still
 # starting has no agent yet, so it looks empty.
 tidy_panes() {
@@ -1972,6 +1984,7 @@ tidy_panes() {
     { awk -v p="${pane}" '$1 != p' "${STATE_DIR}/${file}" > "${STATE_DIR}/${file}.tmp" && mv "${STATE_DIR}/${file}.tmp" "${STATE_DIR}/${file}"; } \
       || die "tidy: closed ${pane} but could not update ${STATE_DIR}/${file}"
     [[ -s "${STATE_DIR}/${file}" ]] || rm -f "${STATE_DIR}/${file}"
+    pane_closed "${pane}" "${name}"
     n=$((n + 1))
   done <<< "${closable}"
   echo "closed ${n}"

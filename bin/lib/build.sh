@@ -1197,9 +1197,9 @@ stop_back() { [[ -z "${1:-}" || -e "$1" || ! -f "$1.prev" ]] || mv "$1.prev" "$1
 # aside. Dies otherwise. When the
 # brief may have reached an agent that is not running, or herdr cannot list its agents, the file stays
 # aside and the message says what to do. In any other case (herdr surely sent nothing, no pane, a
-# session that is gone or that herdr has no status for), it closes the pane (with no agent listed, the
-# one its tab records for review-<slug>: tab_pane) and puts back the file
-# this start moved, unless a findings file is there again (a quick agent's, which stays). That last
+# session that is gone or that herdr has no status for), it closes the pane and logs its pane-closed
+# line (close_pane; with no agent listed, the one its tab records for review-<slug>: tab_pane) and puts
+# back the file this start moved, unless a findings file is there again (a quick agent's, which stays). That last
 # die names the class and ends ` (try <try>)` when the start ran nothing (start_retryable), its pane
 # is closed and no quick agent's file is there, which review_agent reads as a start to try again.
 review_start_failed() {
@@ -1236,8 +1236,13 @@ review_start_failed() {
       die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. A conductor starts nothing; the lead looks at it (herdr agent read ${name}) and, to review again, closes it (herdr pane close ${pane}) and runs swarm.sh review-agent $1 <PR URL>" ;;
   esac
   if [[ -n "${pane}" ]]; then
-    note=" (its pane ${pane} is closed)"
-    herdr pane close "${pane}" >/dev/null 2>&1 || { note=" (its pane ${pane} could not be closed: close it by hand)"; left=yes; }
+    note=" (its pane ${pane} is closed)"; CLOSE_PANE_KEPT=""
+    # Through close_pane, alone (its tab may hold the builder), so events.tsv has the pane's
+    # pane-closed line; a pane no tab record has closes here, logged the same way.
+    if ! close_pane "${pane}" "${name}" "" alone >/dev/null 2>&1; then
+      if herdr pane close "${pane}" >/dev/null 2>&1; then pane_closed "${pane}" "${name}"; else CLOSE_PANE_KEPT=1; fi
+    fi
+    [[ -z "${CLOSE_PANE_KEPT}" ]] || { note=" (its pane ${pane} could not be closed: close it by hand)"; left=yes; }
   fi
   # A findings file there now is a quick agent's: it ran, so this start is not tried again. Nor is one
   # whose pane is left open, which may still hold the agent's name.

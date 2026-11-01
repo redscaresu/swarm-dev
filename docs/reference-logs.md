@@ -81,6 +81,18 @@ An agent name gets an `s` in front when its slug starts with a digit, so a build
 name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
 the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
+A `pane-closed` line records a pane `swarm.sh` closed. It is not a command of its own. Its target is
+the agent name the pane was closed under, or `-` when its tab record names none, and its outcome is
+`ok`. Its tail is `pane=<pane id>`, then `slug=` and `role=` as on an incident line, so a retired
+`<name>-done` reads as the name before it. `close_pane` writes one for each pane it closes, by itself
+or with the tab it was the last pane of. That covers a pane that `close` finds under its agent's name
+in a tab record, the same close inside `merge`, `reconcile` and `step-up`, and the pane of a review
+agent's start that went wrong. `tidy --yes` writes one for each pane it closes. A pane herdr could not
+close gets no line. Nor does a pane in a tab that `close` sweeps whole by its label (a conductor's
+epic tab, or a tab whose record line names no agent), or a pane closed after a failed `restart` or a
+failed start of any agent but a review agent. The stall rule does not count a `pane-closed` line as
+a sign of life. `unblock --startable`, `hold` and a conductor's check for work left skip it when they read a
+story's last line for a reopen.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
@@ -159,7 +171,7 @@ The outcome field can end in a tail of `key=value` fields, for example
 `EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
 `version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
-Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
+Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `pane-closed` passes `pane=`, `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
 `url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
 `verdict=`. For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
