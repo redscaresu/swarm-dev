@@ -130,7 +130,7 @@ ROOT="$(cd "$(dirname "${SWARM}")/.." && pwd)"
 # The HLD's § Epics, listed here: `swarm.sh finish` deletes the HLD once its epics are built, in a board-only
 # PR that runs no tests, and its rows must still have their columns checked after that.
 HLD="${ROOT}/board/hld/2026-10-28-swarm-dev-0-30-and-0-31.md"
-HLD_EPICS=" delivery-liveness lead-woken merge-safety telemetry-readers telemetry-writers review-rounds-end reference-split machine-usable merge-mechanics flaky-tests deferred-700 board-loose-ends "
+HLD_EPICS=" delivery-liveness lead-woken merge-safety telemetry-readers telemetry-writers review-rounds-end reference-split machine-usable merge-mechanics flaky-tests deferred-700 board-loose-ends review-yield review-follows-head reliable-runs stalls-and-effort doc-hotspot status-speed "
 if [[ -f "${HLD}" ]]; then
   check "HLD_EPICS is the HLD's § Epics, while the HLD is on the board" \
     " $(sed -n '/^## Epics$/,/^## /s|^- \[\([a-z0-9-]*\)\](\.\./epics/.*|\1|p' "${HLD}" | tr '\n' ' ')" "${HLD_EPICS}"
