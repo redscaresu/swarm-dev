@@ -2009,8 +2009,9 @@ close_when_idle() {
 # CLOSE_IDLE_POLL seconds, once <pid> has exited, it reads the tab record's name for <pane>: the -done
 # name retire_agent gave <name>, or it stops with nothing closed (a tidy, a close or a deleted project
 # took the pane first). Then it reads the agent's state: session_state's word for <name>'s session, or, where
-# herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for the agent
-# that <pane> holds under the -done name. Idle, done, or no agent left in the pane: it closes the pane
+# herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for this
+# project's agent under the -done name (list_field over one herdr agent list; a list herdr fails
+# to give reads as unknown, never as no agent). Idle, done, or no agent under that name any more: it closes the pane
 # (close_pane, which closes its tab too when the pane was the record's last) and logs
 # `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
 # `close-when-idle <name> left open: ...`. So is one whose agent is still not idle CLOSE_IDLE_SECONDS
@@ -2037,7 +2038,7 @@ close_idle_wait() {
       state="$(session_state "${name}")"
       if [[ "${state}" == herdr || "${state}" == gone ]]; then
         if agents="$(herdr agent list 2>/dev/null)"; then
-          state="herdr:$(SWARM_PANE="${pane}" SWARM_NAME="${who}" json "next(((a.get('agent_status') or 'unknown') for a in d['result']['agents'] if a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME']), '')" <<< "${agents}" 2>/dev/null || echo unknown)"
+          state="herdr:$(list_field "${who}" agent_status <<< "${agents}")"
         else state="herdr:unknown"; fi
       fi
       case "${state}" in
