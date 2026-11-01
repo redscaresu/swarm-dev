@@ -828,8 +828,9 @@ because the kept PR closed unmerged: until then the kept PR is still the one und
 After each review the agent triages its own findings. It never edits the code: a finding that is
 real and inside the story goes to the builder to fix. From round 3 the round cap narrows that: the
 round's line, in the brief or from `review-agent --next`, has the agent send only a regression the PR
-introduces or a line now false about the code, and decline the rest as `deferred`. A deferral
-carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
+introduces or a line now false about the code, and decline the rest as `deferred`. With
+`demote_kinds` set, rounds 1 and 2 do the same for the kinds it lists, and send the other kinds to the
+builder as before (reference-models.md § Settings). A deferral carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
 finding gets a reason (nit, wrong, out-of-scope, deferred, or the reason an earlier round gave), and
 the agent rebuts them all in one PR comment. It logs each declined finding at once, with
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
@@ -1008,7 +1009,7 @@ findings section, a review agent that timed out or crashed) is not one. A review
 whose findings are all declined is a pass, never sent to the builder. Each declined finding is
 rebutted in the PR with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
 `nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply,
-`deferred` for one the round cap holds back from round 3, and a point already declined with the
+`deferred` for one the round cap holds back from round 3 or `demote_kinds` holds back before it, and a point already declined with the
 reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
 reviewed. A PR whose head has been green and mergeable for `queue_minutes` with no
