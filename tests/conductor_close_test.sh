@@ -96,6 +96,16 @@ finish OPEN; touch "${ROOT}/ghfail"; lay "${ROOT}" "${P}" idle; close; rm -f "${
 is "with gh failing to list the Finish PR, the close fails, closes nothing and says the PR could not be read" "1||yes" \
   "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e could not have its Finish PR read" "${out}")"
 
+# An epic slug long enough that herdr holds its conductor's name cut at 32 characters, closed by the
+# full name, as close takes it: still read as working.
+LONG=a-very-long-epic-slug-for-cut-names; CUT="conduct-${LONG}"; CUT="${CUT:0:32}"
+finish none; lay "${ROOT}" "${P}" idle; echo "${CUT} w:c working" > "${ROOT}/h/agents"
+mkdir -p "${P}/.swarm/briefs"; echo brief > "${P}/.swarm/briefs/conduct-${LONG}.md"; echo "w:c conductor" > "${P}/.swarm/state/${LONG}"
+rc=0; out="$(cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID=w:lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "conduct-${LONG}" 2>&1)" || rc=$?
+is "a working conductor whose name herdr holds cut, closed by its full name: the close fails, closes nothing and says it is working" "1||yes" \
+  "${rc}|$(closes "${ROOT}")|$(has "close: conduct-${LONG} is working, so nothing was closed" "${out}")"
+rm -rf "${P}/.swarm/briefs" "${P}/.swarm/state/${LONG}"
+
 finish none; lay "${ROOT}" "${P}" idle; close
 is "an idle conduct-e with no Finish PR closes, as before" "0|tab close t1|" \
   "${rc}|$(closes "${ROOT}")|$(cat "${P}/.swarm/state/e" 2>/dev/null)"

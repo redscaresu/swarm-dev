@@ -32,7 +32,7 @@ agent_info      deliver_prompt's own read (herdr agent get): before a prompt, an
 agent_field     the definition: the one reader of herdr's agent list
 list_field      agent_field's reader, for a caller that reads herdr's list once and must tell a failed read from a gone agent (tell_queue_pass)
 agent_status    the definition: herdr's status for an agent, used only by the fallbacks here
-read_state      the reader's herdr fallback for tell and free_agent_name: codex, or no session recorded
+read_state      the reader's herdr fallback for tell, free_agent_name and close's conductor guard (conductor_busy): codex, or no session recorded
 herdr_wait      wait's herdr fallback: codex, or no session recorded
 herdr_step      herdr_wait's step, its stream or herdr agent wait: codex, or no session recorded
 herdr_events    herdr_wait's event stream (herdr_events.py): codex, or no session recorded

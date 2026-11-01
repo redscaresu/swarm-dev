@@ -1227,10 +1227,12 @@ merge_pr() {
   fi
   # An epic's Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) has merged: its conductor, which
   # may run this merge in its own pane, closes once this command has exited, it is idle and the lead has
-  # collected it (close_when_idle). A conductor this project's herdr does not list has nothing to close.
+  # collected it (close_when_idle). A conductor this project's herdr does not list has nothing to close;
+  # outside herdr the waiter cannot run (require_herdr), so that is said and the conductor stays open.
   if [[ "${only}" == --board && -n "${oid}" && "${headref}" == board/finish-* && "${headref}" != board/finish-backlog ]]; then
     p="$(conductor_name "${headref#board/finish-}")"; k="$(agent_field "${p}" pane_id)"
-    [[ -z "${k}" ]] || close_when_idle "${p}" "${k}"
+    if [[ -n "${k}" && "${HERDR_ENV:-}" == 1 ]]; then close_when_idle "${p}" "${k}"
+    elif [[ -n "${k}" ]]; then echo "${p} stays open: this merge ran outside herdr, so nothing waits to close it; close it with swarm.sh close ${p} once it is idle"; fi
   fi
   # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
   # commits no release check read, which any release reports; neither ever fails the merge.

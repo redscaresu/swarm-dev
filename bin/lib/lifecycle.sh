@@ -557,17 +557,17 @@ back_to_ready() {
 }
 
 # conductor_busy <conductor> — why closing <conductor> now could cut its work short, or nothing (and
-# it fails): it is working (session_state busy, unless its turn stopped on an API error (api_stopped),
-# whose exit is this close; or herdr's status working where herdr answers for it), or its epic's
+# it fails): it is working (read_state, under herdr's name for it, which agent_name cuts at 32
+# characters: busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or
+# herdr's status working where herdr answers for it), or its epic's
 # Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
 # be running in its pane, where a close would kill it. A list of that branch's PRs gh could not give
 # says so: whether such a merge runs is not known (fail closed). The backlog conductor finishes no
 # epic, and a board outside the project's repo, or a project with no origin, opens no Finish PR.
 conductor_busy() {
-  local state pane epic origin prs open head
-  state="$(session_state "$1")"
-  if [[ "${state}" == herdr || "${state}" == gone ]]; then state="herdr:$(agent_status "$1")"
-  elif [[ "${state}" == busy ]]; then pane="$(agent_field "$1" pane_id)"; ! api_stopped "$1" "${pane}" || state=stopped; fi
+  local state pane epic origin prs open head n
+  n="$(agent_name "$1")"; state="$(read_state "${n}")"
+  if [[ "${state}" == busy ]]; then pane="$(agent_field "${n}" pane_id)"; ! api_stopped "${n}" "${pane}" || state=stopped; fi
   if [[ "${state}" == busy || "${state}" == herdr:working ]]; then echo "is working"; return 0; fi
   epic="$(conduct_epic "$1")"
   [[ "${epic}" != backlog && ${BOARD_IN_REPO} == 1 ]] || return 1
