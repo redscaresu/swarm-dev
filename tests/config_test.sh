@@ -182,9 +182,15 @@ project "${p}" "risky_effort = high"
 check "risky_effort = high: policy code-risky is opus high" "claude opus high" "$(run "${p}" policy code-risky)"
 check "risky_effort = high leaves policy code at opus high" "claude opus high" "$(run "${p}" policy code)"
 check "risky_effort = high leaves policy escalate at fable xhigh" "claude fable xhigh" "$(run "${p}" policy escalate)"
-project "${p}" "risky_effort = medium"
-check "risky_effort = medium is refused, naming file, line, key and value" "yes" \
-  "$(fails_with "${p}/.claude/swarm/config:1: risky_effort must be xhigh or high, not 'medium'" run "${p}" config)"
+project "${p}" "risky_effort = xhigh"
+check "risky_effort = xhigh is read" "xhigh" "$(run "${p}" config risky_effort)"
+check "risky_effort = xhigh: policy code-risky is opus xhigh" "claude opus xhigh" "$(run "${p}" policy code-risky)"
+check "risky_effort = xhigh leaves policy code at opus high" "claude opus high" "$(run "${p}" policy code)"
+for v in medium low max ""; do
+  project "${p}" "risky_effort = ${v}"
+  check "risky_effort = '${v}' is refused, naming file, line, key and value" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: risky_effort must be xhigh or high, not '${v}'" run "${p}" config)"
+done
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
