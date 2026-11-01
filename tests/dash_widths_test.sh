@@ -69,8 +69,12 @@ printf 'w1:p6 is where the brief says to look\n' > "${P}/.swarm/state/brief-x.md
 # A half-written tab record (*.tmp) is skipped, as status and tidy skip it.
 printf 'w1:p7 halfway\n' > "${P}/.swarm/state/e1.tmp"
 printf '2026-10-01\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-1\n2026-10-02\tcode\ts-one\tclaude\topus\thigh\tsess-2\n' > "${P}/.swarm/agents.tsv"
-# Today's cost, the same as `swarm.sh cost <today>`: 1M input at $4 + 1M output at $20.
-printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+# Today's cost, the same as `swarm.sh cost <today>`: 1M input at $4 + 1M output at $20. Every dash
+# here runs on one fixed clock (SWARM_DASH_NOW), and the row's local day comes from it, so a run
+# that crosses midnight still costs the row today.
+export SWARM_DASH_NOW
+SWARM_DASH_NOW="$(date +%s)"
+printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(int(sys.argv[1])))' "${SWARM_DASH_NOW}")" >> "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}}' > "${ROOT}/projects/p/sess-today.jsonl"
 # One escalate agent whose session ran on opus (its first message with a model), not the fable its
 # policy names; the ladder shows the session's model. No docs agent: docs shows 0.
@@ -82,8 +86,7 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 # A chore agent whose log cannot be read: it counts, with no model, and the ladder still draws.
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
-# A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
+# A session log's mtime is a sign of life (the stall rule): x-esc's was written long before now.
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
@@ -142,8 +145,9 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 "${G[@]}" add docs && "${G[@]}" commit -qm board
 "${G[@]}" rm -q docs/stories/s-old.md && "${G[@]}" commit -qm "finish s-old"
 "${G[@]}" checkout -qb story/s-zero && "${G[@]}" commit -q --allow-empty -m work
-# A fixed merge time, so no relative time in recent moves while the pty tests watch.
-"${G[@]}" checkout -q - && GIT_COMMITTER_DATE=2026-10-05T12:00:00Z "${G[@]}" merge -q --no-ff -m "Merge pull request #9 from o/story/s-zero" story/s-zero
+# A fixed merge time, so no relative time in recent moves while the pty tests watch. It is local
+# noon, with no zone, so recent shows it on 10-05 in any TZ.
+"${G[@]}" checkout -q - && GIT_COMMITTER_DATE=2026-10-05T12:00:00 "${G[@]}" merge -q --no-ff -m "Merge pull request #9 from o/story/s-zero" story/s-zero
 echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
