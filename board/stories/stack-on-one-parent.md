@@ -18,3 +18,4 @@ HLD telemetry item 5 (HLD:517-518): 6 of 11 holds in the v0.30.0 build were stor
 - tests/stacked_test.sh: with three parents where only the third conflicts, the second is merged in and the third left out.
 - tests/stacked_test.sh: stacked_parents reads the new stacked event (with a left-out parent) and status prints the Stacked merge line for the parent that was merged in.
 - docs/reference-building.md § Stacked builds says so, and the PR body shows each case red with the change removed.
+- After a left-out conflicting parent, the worktree has no unmerged entries, no MERGE_HEAD and a clean status before the builder starts.

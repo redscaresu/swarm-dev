@@ -19,3 +19,4 @@ No depends_on. model_fit crosses model and effort with kind, risk, size and area
 - With the block removed in a copy of flow_model_fit.py, the new checks fail; the PR says so.
 - docs/features.tsv has the effort trial row, and tests/features_test.sh passes.
 - scripts/select-tests.sh --run and python3 -m py_compile bin/lib/*.py pass.
+- Fixture groups that differ only in risk, kind, model or effort each get their own by_risk row with their own counts and rates.

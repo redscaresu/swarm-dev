@@ -21,3 +21,4 @@ Needs from codex-rate-limit: the rate-limit pattern and its branch in codex_revi
 - Same file: with SWARM_CODEX_SECONDS under the retry wait, codex is called once and the run ends within SWARM_CODEX_SECONDS plus CODEX_GRACE.
 - codex_test.sh and fallback_reviewer_test.sh pass unchanged.
 - docs/reference-building.md's codex-review paragraph states the one retry, its wait, and that a usage limit is not retried.
+- A first rate limit that arrives late, then a retry that hangs, ends within the original codex budget, with the second run cleaned up.

@@ -19,3 +19,4 @@ easy: false
 - tests/merge_rules_test.sh: --upgrade without --release fails with the usage line.
 - commands/swarm.md's release arm asks the user before the merge and passes --upgrade on yes; docs/reference-merging.md § Releases and § Commands and docs/running.md § Updating say merge --release asks.
 - The PR body shows the no-terminal and answer-n cases red with the gate removed.
+- On a terminal, a blank answer, EOF and an unrecognised answer each run no upgrade ([y/N] defaults to no).

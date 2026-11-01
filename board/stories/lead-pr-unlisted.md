@@ -20,3 +20,4 @@ easy: false
 - docs/reference-lead.md names the unlisted: line, docs/lead-by-hand.md has no 'A PR outside any story' block, and tests/doc_check_test.sh passes.
 - Every suite that runs next passes, and the PR body lists any it changed and why.
 - The PR body shows each new case going red with the code it guards removed (worktree-copy method, AGENTS.md).
+- A PR on a non-excluded branch that only an epic's prs: lists gives no unlisted: line.

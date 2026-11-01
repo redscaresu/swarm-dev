@@ -19,3 +19,4 @@ No depends_on. A new config key `risky_effort`: `xhigh` (the default, today's ef
 - config_test.sh's check that method.md's table, CONFIG_KEYS and load_config's arms list the same keys passes with risky_effort in all three.
 - With policy's code-risky line put back to a literal xhigh in a copy, the `high` case fails; the PR says so.
 - scripts/select-tests.sh --run and shellcheck bin/swarm.sh pass.
+- `risky_effort = xhigh` is accepted, and other values (low, max, empty) are refused; a check each.

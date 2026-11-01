@@ -16,3 +16,5 @@ easy: true
 - The board PR has merged. On main, ppid-check-after-review has `epic: board-loose-ends` and no `after:`. unsent-resend-real-pane, reference-split-lead-steps and release-v0-29-0 are gone, or re-homed as the user said. sonnet-share-on is re-homed or gone, as the user decided.
 - release-v0-31-0.md on main has the new step 4, the readings step, and the finish line in its Done when.
 - The PR body has the user's confirmation of each close reason, the codex-agent-name record, and the seven standing steps named as retro-v0.31.0's.
+- ppid-check-after-review's Done when on main says its result is recorded in the PR that finishes it, with no release-v0.29.0 reference left.
+- If the user closes sonnet-share-on, the config PR setting `sonnet_share = 0` has merged.

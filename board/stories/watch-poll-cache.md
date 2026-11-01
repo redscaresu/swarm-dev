@@ -21,3 +21,4 @@ Needs from wait-pr-poll-cache: bin/lib/poll_cache.py (success-only entries, read
 - docs/reference-building.md's watch paragraph says concurrent watches share each poll's reads.
 - Same file: watch_mergeable makes its own pulls/<n> read on every poll, cache on.
 - A wait-pr and a watch on one head, cache on, each read their own output form and print what they print with the cache off.
+- Two watches of a finished, unqueued head share the `ci_gate age` call's check-runs and status reads (merge.sh:2719, 2822).
