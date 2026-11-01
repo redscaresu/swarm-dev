@@ -846,8 +846,10 @@ removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
-hands the PR over too. `review --head` and `merge --head` both refuse a head pushed since the review:
-the agent then writes `head moved:`, sends its conductor a stop note naming that line (below), and
+hands the PR over too. `review --head` refuses a head pushed since the review. So does `merge --head`,
+unless the push added only git's own clean merges of the base, which it merges with no new review
+([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On
+either refusal the agent writes `head moved:`, sends its conductor a stop note naming that line (below), and
 stops. The conductor starts a new review agent on the new head on that note (the lead does when no
 conductor runs). When it was `merge` that refused, the story
 is already in review on a head nobody reviewed, and the agent's reply says so first. `review --head`
@@ -1012,7 +1014,7 @@ rebutted in the PR with a reason and logged with `log-finding --declined <reason
 `deferred` for one the round cap holds back from round 3 or `demote_kinds` holds back before it, and a point already declined with the
 reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
-reviewed. A PR whose head has been green and mergeable for `queue_minutes` with no
+reviewed. `merge --head` also takes a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell

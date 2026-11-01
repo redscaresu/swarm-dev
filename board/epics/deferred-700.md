@@ -25,5 +25,17 @@ Changing tell delivery for the background-shell case (the checkpoint's call, wit
 
 **Areas:** bin/lib/lifecycle.sh:lead_held, bin/lib/lifecycle.sh:prompt_lines, bin/lib/lifecycle.sh:resend pass match, bin/lib/lifecycle.sh:lead-agents workspace, bin/lib/agents.sh:tell_requeue, bin/lib/agents.sh:tell_queue_send (TELL_PANE), bin/lib/agents.sh:pane_where, bin/lib/dash.sh:dash_deadline, bin/lib/dash_slow.py, bin/lib/board.sh:epic_guard renames, bin/lib/flow_review_loops.py:round count match, tests/tell_queue_test.sh, tests/dash_time_limit_test.sh, tests/board_pr_test.sh:epic guard cases, tests/merge_rules_test.sh:epic guard cases, tests/wait_lead_test.sh, tests/stacked_status_test.sh, tests/status_time_limit_test.sh
 
+**The list (read by the user 2026-11-01: no strikes):**
+1. #682: a story in review with several PRs counts as review-agent work. Story agent-work-several-prs.
+2. #682: lead_held misses a reopened ready dependency. Story agent-work-reopened-dep.
+3. #673: pane_where's record-name fallback reads like a herdr tab label. Story pane-where-unlabelled-tab.
+4. #618 prompt_lines poll cost: (b) an extra `ps -A -ww` per poll and (c) the candidate python's own session-log glob, story prompt-poll-one-ps; (d) key a stop on the newest own-work entry and (e) keep the old key while a running wait hides an api-error, story prompt-stop-key; (a) skip prompt_wanted while a conductor sits idle: drop, because an idle box is where a dialog or manual mode shows (#618 round 1, finding 1).
+5. to 7. #626 test gaps (a step-up or top-rung hold taking queued findings, tell_requeue's lock, the TELL_PANE pin). Story tell-queue-gap-tests, tests only.
+8. #626 broad 'could not be read' match. Story brief-unread-exact-match.
+9. and 10. #630 gh child outliving a cut-short frame, and the skip file left behind (dash, status and next). Story dash-frame-leaves-nothing.
+11. #630 dash_deadline as a third copy of the read wrappers. Story report-read-wrappers.
+12. #645 lead-agents workspace: (b) the kept pane protects only while open and (c) a project pane made after an outside pane counts, story lead-agents-pane-order; (a) an old conductor of an epic named lead-agents: drop, because build.sh refuses every such start since #645 and no epic here has that name; #700's 'lock comment and message' were fixed on #645's next head.
+13. #654 delete-and-re-add bypass of the epic guard. Story epic-guard-deleted-agreed.
+
 **Your part:**
 - Read the thirteen-item list in the epic file when the plan PR opens; strike any item you want dropped.
