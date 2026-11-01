@@ -552,8 +552,7 @@ loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") Run a long tes
 (Bash run_in_background), so its end wakes you, and act on its result when it ends. Before you push,
 stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its
 background task (the guard refuses pkill and killall). After the PR opens, push what is ready and put
-further points in the PR body: change the PR only for review findings, a red check or a conflict,
-since each push restarts CI. If \`gh pr view --json mergeable\` says
+further points in the PR body, rather than a push for each: every push restarts CI. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)

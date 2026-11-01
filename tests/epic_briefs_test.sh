@@ -187,7 +187,7 @@ check "a worktree with scripts/select-tests.sh: before the first push and after 
 # a route the guard allows, and after the PR opens pushes what is ready with further points in the body.
 bgrun="Run a long test run in the background (Bash run_in_background), so its end wakes you, and act on its result when it ends."
 stoprun="Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
-oncepr="After the PR opens, push what is ready and put further points in the PR body: change the PR only for review findings, a red check or a conflict, since each push restarts CI."
+oncepr="After the PR opens, push what is ready and put further points in the PR body, rather than a push for each: every push restarts CI."
 check "the builder brief runs a long test run in the background and acts when it ends" "yes" "$(has "${bgrun}" "${plain}")"
 check "the builder brief stops its own test run before a push, by PID or its background task, never pkill or killall" "yes" "$(has "${stoprun}" "${plain}")"
 check "the builder brief, after the PR opens, pushes what is ready and puts further points in the PR body" "yes" "$(has "${oncepr}" "${plain}")"
