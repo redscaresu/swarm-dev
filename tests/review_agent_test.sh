@@ -864,9 +864,11 @@ check "both briefs' first line is still the one review_brief_url reads, and neit
   "$(has "Review ${PRA}, the PR of story h1, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h1.md")")|$(has "Review ${PRB}, the PR of story h2, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h2.md")")|$(grep -ci 'never merge' <<< "${abrief}" || true)|$(grep -ci 'never merge' <<< "${hbrief}" || true)"
 a_review="$(cmd_in "${abrief}" "swarm.sh review h1 --head ")"; a_merge="$(cmd_in "${abrief}" "swarm.sh merge --head ")"
 h_review="$(cmd_in "${hbrief}" "swarm.sh review h2 --head ")"; h_grants="$(cmd_in "${hbrief}" "swarm.sh grants ")"; h_merge="$(cmd_in "${hbrief}" "swarm.sh merge --head ${HEAD_SHA} ")"
+# Besides the head it reviews, the merge = agent brief names merge --head only with a placeholder: the
+# <new head> it never merges itself, and the <sha> a run-merge-again refusal names.
 check "the merge = agent brief has one review --head and one merge --head command on the head it reviews; the merge = human one adds a grants command and none to merge outside it" \
   "SWARM_PROJECT=${p} ${SWARM} review h1 --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} merge --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} review h2 --head ${HEAD_SHA} ${PRB}|SWARM_PROJECT=${p} ${SWARM} grants ${PRB}|0" \
-  "${a_review}|$(grep -v '<new head>' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
+  "${a_review}|$(grep -v -e '<new head>' -e 'merge --head <sha> ' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
 # A head pushed since the review is not reviewed in this session: it ends the agent with head moved:
