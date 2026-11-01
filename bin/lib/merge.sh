@@ -706,7 +706,7 @@ base_ci() {
   next="wait-pr --head ${new} ${url}, then merge --head ${new} ${url}; $(pull_first)"
   out="$(mktemp "${TMPDIR:-/tmp}/swarm-base-ci.XXXXXX")" \
     || { BASE_CI_WHY="base merged, unread: mktemp failed, so CI on ${who} was not read: ${next}"; return 1; }
-  ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}' EXIT
+  ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}' EXIT
     SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
   rc="${PIPESTATUS[0]}"
   [[ ${rc} -ne 0 ]] || { rm -f "${out}"; return 0; }
@@ -2138,6 +2138,11 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # pull_request runs there; one still with no run WAIT_PR_GRACE after the first read that found it
 # missing ends the wait the same way, naming it. With no count read, only the checks are judged.
 # ci_gate's "not waited on:" line is printed once, apart from the checks.
+# Concurrent waits on one head share each poll's reads: the ci_gate call alone gets SWARM_POLL_CACHE
+# (.swarm/poll-cache), SWARM_POLL_CACHE_SECONDS, under one poll and one retry pause, and
+# SWARM_POLL_CACHE_AGE, so a read another wait made that recently stands in for this one's
+# (bin/lib/poll_cache.py). A pending read that took one N seconds old (the age note) pauses N seconds less, so the waits poll in step and each sees a change within a
+# poll. Merge's gates and review-agent --recheck read GitHub every time.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -2160,7 +2165,7 @@ wait_pr() {
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
-  local want="" stale="" usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
+  local want="" stale="" share aged=0 cache=() usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -2176,7 +2181,13 @@ wait_pr() {
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
   limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
+  # The poll cache's max age: under the shorter of a poll and a retry pause, so a lone wait never reads
+  # its own entry; 0 (a poll or pause of 1 s or less) is off.
+  share=$(( (poll < retry ? poll : retry) - 1 )); (( share > 0 )) || share=0
   WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
+  # What the ci_gate call alone gets while the cache is on: its directory, max age and age note.
+  (( share == 0 )) || cache=(SWARM_POLL_CACHE="${PROJECT_DIR}/.swarm/poll-cache" SWARM_POLL_CACHE_SECONDS="${share}"
+    SWARM_POLL_CACHE_AGE="${WAIT_PR_TMP}.age")
   while :; do
     rc=0; left=$((limit - (SECONDS - start)))
     # No read starts at or past the deadline: here, and before the check read below, which follows a head
@@ -2213,7 +2224,12 @@ wait_pr() {
     if [[ ${rc} -eq 0 ]]; then
       left=$((limit - (SECONDS - start)))
       (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
-      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" ${expect[@]+"${expect[@]}"})" || rc=$?
+      # The age note is emptied and read with builtins: no process more per poll.
+      aged=0; (( share == 0 )) || : > "${WAIT_PR_TMP}.age"
+      why="$(within "${left}" env ${cache[@]+"${cache[@]}"} python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" \
+        ${expect[@]+"${expect[@]}"})" || rc=$?
+      (( share == 0 )) || read -r aged 2>/dev/null < "${WAIT_PR_TMP}.age" || true
+      [[ "${aged}" =~ ^[0-9]+$ ]] || aged=0
       note=""; if [[ "${why}" == *$'\n'* ]]; then note="${why#*$'\n'}"; why="${why%%$'\n'*}"; fi
       [[ -z "${note}" || "${note}" == "${noted}" ]] || { echo "${note}"; noted="${note}"; }
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
@@ -2246,7 +2262,9 @@ wait_pr() {
              || wait_pr_fail "${missing}: a pull_request into ${base} runs it, but it has no run on ${head:0:7} after $((SECONDS - unstarted))s (${why})"
          fi
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
-         last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
+         # A read another wait made <aged> seconds ago stood in for this one's: the next poll comes that much
+         # sooner, in step with that wait's.
+         last="${why}"; what="still pending: ${why}"; pause=${poll}; (( aged <= 0 || aged >= poll )) || pause=$((poll - aged)) ;;
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
          # The budget is read once, while the one reset wait is unspent, and never on a secondary limit,

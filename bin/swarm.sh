@@ -97,10 +97,11 @@ event_fields() {
 EV_FIELDS_FILE=""
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
-# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
+# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP, its .expected memo and its .age
+# note) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
-  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 # dropped-lines' exit 1 means base lines were dropped (DROPPED_FOUND), so any other stop, a die or a set
 # -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way. A stop before merge.sh is
