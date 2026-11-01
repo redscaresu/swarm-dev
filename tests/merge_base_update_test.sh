@@ -5,8 +5,9 @@
 # parents are the old head, then a commit on the base, and it changes only what that commit brings. It
 # logs base-merged <new head> from <old head>, prints a base merged: line, waits for the new head's CI and merges it
 # (merge_base_update_wait_test.sh has the wait and its refusals). Any other head, a
-# conflict, another failed request, a request with no answer and a head that never moves refuse, naming
-# the cause, and merge nothing; a 422 once the head has moved checks that head. On merge_fixture.sh, whose stub serves
+# conflict, another failed request, a request with no answer, a 422 whose head gh cannot read again and
+# a head that never moves refuse, naming the cause, and merge nothing: a conflict alone asks the builder
+# to merge the base in, the rest to run merge again; a 422 once the head has moved checks that head. On merge_fixture.sh, whose stub serves
 # update-branch (${FX}/update), the PR's head after it (${FX}/update-head), the new head's commit
 # (commit.<sha>) and each compare of two commits (compare.<from>...<to>).
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -145,10 +146,12 @@ check "a merge that drops the PR's edit for main's version: no base-merged line"
 moved; rm "${FX}/compare.${H1}...${H3}"; merge "${URL}"
 refused "what the merge changes, gh cannot read" "${UNCHECKED}, and what it changes cannot be read (unreadable compare of 1111111 with 3333333"
 
-# --- GitHub cannot merge main in, or the head never moves: the builder merges it in.
+# --- GitHub cannot merge main in, or the head never moves. Only a conflict needs the builder's merge
+# of main; every other failure is GitHub's request, which merge makes again on its next run.
 MOVED="the base main moved past 1111111's CI (1 commits it lacks)"
+AGAIN="merge brings main in itself, with no merge-in from the builder: run merge --head ${H1} ${URL} again"
 moved; rm "${FX}/update-head"; echo "merge conflict between base and head" > "${FX}/update.422"; merge "${URL}"
-refused "a conflict" "${MOVED}, and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head): merge origin/main in, push, and merge the new head"
+refused "a conflict" "${MOVED}, and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head), which only the builder can resolve: merge origin/main in, push, and merge the new head"
 check "a conflict: update-branch was asked" updated
 check "a conflict: no base-merged line" no_base_merged
 # A 422 once the head has moved is no conflict: that head is checked. Here another merge of this PR
@@ -162,13 +165,16 @@ moved; echo "${STALE}" > "${FX}/update.422"; COMMITTER=builder parents "${H1}"; 
 refused "a 422 after a builder's push" "${UNCHECKED}, which GitHub did not make (committer builder, signature verified; GitHub's own merges are web-flow's, verified): review the new head as for any new head"
 check "a 422 after a builder's push: no base-merged line" no_base_merged
 moved; touch "${FX}/update.fail"; merge "${URL}"
-refused "a failed request" "${MOVED}, and asking GitHub to merge it in failed (HTTP 502): merge origin/main in, push, and merge the new head"
+refused "a failed request" "${MOVED}, and asking GitHub to merge it in failed (HTTP 502): ${AGAIN}"
+# A 422 whose head gh cannot read again may be a conflict or a push: merge's next run tells them apart.
+moved; rm "${FX}/update-head"; echo "merge conflict between base and head" > "${FX}/update.422"; touch "${FX}/update.unread"; merge "${URL}"
+refused "a 422 whose head gh cannot read again" "${MOVED}, and GitHub would not merge it in (HTTP 422: merge conflict between base and head), and gh cannot read the head again to tell a conflict from a branch that moved: ${AGAIN}"
 # A request GitHub never answers is cut at the wait, as base_moved's reads are.
 moved; touch "${FX}/update.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
-refused "a request that hangs" "${MOVED}, and GitHub did not answer the request to merge it in within 2s: pull the branch first (GitHub may yet push its merge), then merge origin/main in, push, and merge the new head"
+refused "a request that hangs" "${MOVED}, and GitHub did not answer the request to merge it in within 2s (it may yet push its merge, a head to review): ${AGAIN}"
 check "a request that hangs: no read of the head after it" is_zero_views
 moved; rm "${FX}/update-head"; merge "${URL}"
-refused "a head that never moves" "${MOVED}; GitHub took the request to merge it in, but its head was still 1111111 after 20 reads 0 s apart: pull the branch first (GitHub may yet push its merge), then merge origin/main in, push, and merge the new head"
+refused "a head that never moves" "${MOVED}; GitHub took the request to merge it in, but its head was still 1111111 after 20 reads 0 s apart (it may yet push its merge, a head to review): ${AGAIN}"
 is "a head that never moves: read 20 times, then stops" 20 "$(views_after_put)"
 check "a head that never moves: no base-merged line" no_base_merged
 

@@ -491,8 +491,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1" "${@:2}"; [[ -z "${flis
 # commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
 # some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
 # board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
-# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
-# head is then up to date, so no repo read is needed. With <merged> set, <head> is GitHub's merge of the
+# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, and why: merge cannot go
+# ahead without it, and the head is then up to date, so nothing is left to read. With <merged> set, <head> is GitHub's merge of the
 # base, which the builder's worktree lacks, so each refusal says to pull the branch first. Each read stops after
 # BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through the merge and
 # its read back, so two direct merges into one base cannot both pass it; merges from two projects, or by
@@ -501,6 +501,7 @@ base_moved() {
   local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head" tail=""
   why="cannot tell whether $3 moved past ${2:0:7}'s CI"
   [[ -z "${5:-}" ]] || { fix="pull the branch first (it holds GitHub's merge ${2:0:7}), then ${fix}"; tail="; $(pull_first)"; }
+  fix="merge cannot go ahead until the head has $3 in it, and then nothing is left to check: ${fix}"
   out="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" behind "$1" "$2" "$3" "$(board_paths)" \
     "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
   case ${rc} in
@@ -541,30 +542,34 @@ base_moved() {
 # `base-merged <new head> from <head>`, print a `base merged:` line and set BASE_NEW to the new head, for
 # base_rounds to wait on and merge. A 422 while the head is still <head> is a conflict; a 422 once it has moved (a push since
 # merge read it, or GitHub's merge for another merge of this PR) sends that head through the same
-# checks. A conflict, another failed request, a request with no answer in time and a head that never
-# moves refuse with base_moved's line, ending as it does in merging the base in; with <merged> set,
-# <head> is GitHub's earlier merge, which the builder's worktree lacks, so each of those says to pull
-# the branch first. Any other head, or a
+# checks. A conflict refuses ending in the builder's merge of the base, the one failure here that needs
+# it; with <merged> set, <head> is GitHub's earlier merge, which the builder's worktree lacks, so it says
+# to pull the branch first. Another failed request, a request with no answer in time, a 422 whose head
+# gh cannot read again and a head that never moves need no merge-in: each says merge brings the base in
+# itself and to run `merge --head <head> <PR URL>` again. Any other head, or a
 # read of it that fails, refuses as `base merge unchecked:`, for a review of the new head. Each read
 # stops after BASE_MOVED_WAIT, as base_moved's do. It returns only with BASE_NEW set, and never merges.
 merge_base_update() {
   local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why rc=0
-  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head" first=""
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head" again
   wait="${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
   why="the base ${base} moved past ${head:0:7}'s CI ($5 commits it lacks)"
-  [[ -z "${6:-}" ]] || first="pull the branch first (it holds GitHub's merge ${head:0:7}), then "
+  [[ -z "${6:-}" ]] || fix="pull the branch first (it holds GitHub's merge ${head:0:7}), then ${fix}"
+  # Only a conflict needs the builder's merge-in. Every other failure here is GitHub's request, which
+  # merge makes again on its next run.
+  again="merge brings ${base} in itself, with no merge-in from the builder: run merge --head ${head} ${url} again"
   out="$(within "${limit}" gh api -X PUT -f "expected_head_sha=${head}" "repos/${repo}/pulls/${n}/update-branch" 2>&1 > /dev/null < /dev/null)" || rc=$?
   if [[ ${rc} -eq 142 ]]; then
-    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
+    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s (it may yet push its merge, a head to review): ${again}"
   elif [[ ${rc} -ne 0 ]]; then
     out="${out##*$'\n'}"; out="${out#gh: }"
-    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${first}${fix}"
+    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${again}"
     # A 422 is a conflict while the head is still <head>. GitHub gives one too once the head has moved:
     # a push since merge read it, or GitHub's merge for another merge of this PR. That head is checked below.
     out="${out% (HTTP 422)}"
     new="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")" && [[ -n "${new}" ]] \
-      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: ${first:-pull the branch first, then }${fix}"
-    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}): ${first}${fix}"
+      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: ${again}"
+    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}), which only the builder can resolve: ${fix}"
   fi
   # GitHub merges in the background: the head moves a moment after it says yes.
   if [[ -z "${new}" ]]; then
@@ -577,7 +582,7 @@ merge_base_update() {
   fi
   if [[ -z "${new}" ]]; then
     out="its head was still ${head:0:7}"; [[ -n "${seen}" ]] || out="gh could not read its head"
-    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
+    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart (it may yet push its merge, a head to review): ${again}"
   fi
   why="base merge unchecked: ${url}'s head moved from ${head:0:7} to ${new:0:7}"
   [[ "${new}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "${why}, not a commit SHA: review the new head as for any new head"
