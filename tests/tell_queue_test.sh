@@ -236,10 +236,14 @@ tell "fix round A" >/dev/null
 touch "${ROOT}/promptslow"; state idle
 until_ok compgen -G "${Q}/b1.findings.claimed.*" >/dev/null || true   # the check's delivery claimed it, and waits in herdr's prompt
 later_time() { local t; t="$(cut -d' ' -f1 "${Q}/b1.later" 2>/dev/null)"; echo "${t:-0}"; }
-t0="$(later_time)"
+# later_after <time> — succeed once b1.later holds a stamp after <time> (a rewrite read half-written gives
+# 0), keeping the stamp it read in LATER: a second read could land in the next rewrite.
+LATER=0
+later_after() { LATER="$(later_time)"; [[ ${LATER} -gt $1 ]]; }
+until_ok later_after 0 || true; t0="${LATER}"
 check "findings told at once while a queued one's delivery is sending: queued behind it, nothing sent at once" "${QUEUED} rc=0 yes 0" \
   "$(tell "fix round B") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $(prompts)"
-sleep 2.5; t1="$(later_time)"
+until_ok later_after "${t0}" || true; t1="${LATER}"   # the delivery is held in herdr's prompt (promptslow) throughout
 check "findings told at once while a queued one's delivery is sending: its check stays stamped live through the delivery" yes \
   "$([[ ${t1} -gt ${t0} ]] && echo yes || echo "no (${t0} ${t1})")"
 rm -f "${ROOT}/promptslow"; settle
