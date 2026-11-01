@@ -94,7 +94,8 @@ review() {
   [[ -n "${NOHERDR:-}" ]] || set+=(HERDR_ENV=1)
   [[ -n "${NOSTORY:-}" ]] || set+=(SWARM_STORY=s1)
   printf '%s\n' "$@" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
-  (cd "${p}" && exec env -u SWARM_PROJECT -u SWARM_PR -u HERDR_ENV -u SWARM_STORY "${set[@]+"${set[@]}"}" SWARM_FALLBACK_MIN_SECONDS=1 HERDR_WORKSPACE_ID=w \
+  # umask 022, the usual one, so a file codex-review leaves open to group or other shows it.
+  (cd "${p}" && umask 022 && exec env -u SWARM_PROJECT -u SWARM_PR -u HERDR_ENV -u SWARM_STORY "${set[@]+"${set[@]}"}" SWARM_FALLBACK_MIN_SECONDS=1 HERDR_WORKSPACE_ID=w \
     SWARM_CODEX_RETRY_SECONDS=1 SWARM_CODEX_SECONDS=60 PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
   pid=$!
   for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
@@ -150,14 +151,18 @@ codex_says 1 "a diff about the token rate limit" "+${RATE_MSG}" "ERROR: stream d
 n="$(count)"; review "fallback_reviewer = sonnet"
 check "a failed codex whose diff quotes the rate-limit line logs no incident" "1|${n}|no" "${rc}|$(count)|$(logged '^agent start')"
 
-# --- A failed codex keeps its last 20 lines, under a line with its exit; a run with no story names
-# the file by its base.
+# --- A failed codex keeps its last 20 lines, under a line with its exit, readable by its owner alone;
+# a run with no story names the file by its base.
 { printf '#!/bin/sh\n'; for i in $(seq 1 25); do printf 'echo "codex line %s"\n' "${i}"; done; printf 'exit 3\n'; } > "${BIN}/codex"
 review
 tl="${p}/.swarm/codex/s1.tail"
 check "a failed codex's last 20 lines are kept in .swarm/codex/s1.tail under its exit" \
   "3|yes|21|codex line 6|codex line 25" \
   "${rc}|$(head -1 "${tl}" 2>/dev/null | grep -qE '^# [0-9T:Z-]+ codex exited 3; its last 20 lines:$' && echo yes || echo no)|$(wc -l < "${tl}" 2>/dev/null | tr -d ' ')|$(sed -n 2p "${tl}" 2>/dev/null)|$(tail -1 "${tl}" 2>/dev/null)"
+# group_other <path> — its mode's group and other bits, in octal: 0 when only the owner may read it.
+group_other() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o077))' "$1" 2>&1; }
+check "the kept lines and their directory are the owner's alone, whatever the caller's umask" "0o0|0o0" \
+  "$(group_other "${tl}")|$(group_other "${tl%/*}")"
 codex_says 1 "${RECONNECTS[@]}" "${RATE_MSG}" > "${BIN}/codex"
 NOSTORY=1 review
 check "with no SWARM_STORY, a rate limit's last lines go to .swarm/codex/main.tail, ending in codex's line" "1|${RATE_MSG}" \

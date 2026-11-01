@@ -135,9 +135,12 @@ lists them all.
 
 ## Updating
 
-When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin and
-starts `swarm.sh upgrade` for the running agents itself. Then it asks you to restart the lead
-session (`/exit`, then `claude --continue`). If a PR landed on the base after the release was
+When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin.
+It starts `swarm.sh upgrade` for the running agents only once you agree. The lead asks you before
+the merge and passes `--upgrade` when you say yes; run by hand on a terminal, merge asks
+`Move the running agents onto v<new> now? [y/N]` itself. With no terminal and no `--upgrade`, it
+moves no agent and prints `upgrade not run:` with the command to run in each project. Either way,
+it then asks you to restart the lead session (`/exit`, then `claude --continue`). If a PR landed on the base after the release was
 checked, it names the commits that shipped unchecked and updates nothing. In that case, or when
 you release some other way, update by hand:
 
