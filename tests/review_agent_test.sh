@@ -28,7 +28,8 @@ has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi
 
 # herdr: logs every call; panes are w:<n>. agent start records "<name> <pane> <session>" in agents;
 # agent list shows each working, or idle once done/<name> exists. agent wait <pane> blocks until its
-# agent is done, or fails with a timeout error after --timeout ms.
+# agent is done, or fails with a timeout error after --timeout ms. With the file envmiss, pane wait-output
+# fails: the pane's shell never shows that it took the agent's environment.
 cat > "${STUB_BIN}/herdr" <<EOF
 #!/bin/sh
 H="${ROOT}"
@@ -72,6 +73,7 @@ case "$1 $2" in
                   done
                   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent get")    [ -e "$H/getidle" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "pane wait-output") if [ -e "$H/envmiss" ]; then echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;   # the pane's shell never takes the environment
   "pane close")   awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents" ;;
   "agent list")   [ -e "$H/listfail" ] && { echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1; }
                   if [ -e "$H/sentprompt" ] && [ ! -e "$H/latelogged" ]; then
@@ -421,6 +423,14 @@ echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s6.md"; touch "${ROOT}/startfail"
 check "when herdr cannot start review-s6, review-agent fails and s6's last findings file is put back" "1|head: OLD-REVIEW|no" \
   "$(set +e; run review-agent s6 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s6.md")|$([[ -e "${p}/.swarm/reviews/s6.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/startfail"
+# --- A pane whose shell never takes the agent's environment: review-agent's own 3 starts, one pane each.
+# start_agent's fresh-pane retry stays off inside them (OUTER_START_RETRY), so 3 panes, not 6.
+sed "s/s4/cold1/g" "${b}/stories/s4.md" > "${b}/stories/cold1.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/cold1 "${ROOT}/svc-wt/cold1" origin/main
+echo mark >> "${ROOT}/herdr.log"; touch "${ROOT}/envmiss"
+check "when review-cold1's pane never takes the environment, review-agent fails after 3 panes and no fresh-pane retry inside a start" "1|3|no" \
+  "$(set +e; o="$(run review-agent cold1 "${PR}")"; echo "$?|$(started)|$(grep -q 'tried once more' <<< "${o}" && echo yes || echo no)")"
+rm "${ROOT}/envmiss"
 # --- A start that fails once review-<slug>'s pane exists. herdr surely sent nothing: the pane is
 # closed, the last review put back, and a new start is not refused as still reviewing.
 for s in s8 s10 s11; do
