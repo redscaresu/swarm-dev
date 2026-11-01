@@ -72,6 +72,12 @@ write outside it, which can prompt or be refused, and `swarm.sh wait` then sits 
 Name agents as below (`survey-code`, `hld-lead`, `skeptic-<epic slug>`, `codex`, `critic`), never
 after the HLD: an agent's name is cut at 32 characters, and a dated HLD name fills most of that.
 
+**Closing.** Once you have read an agent's `<project>/.swarm/$1/<name>.json`, run
+`swarm.sh close <name>` for it (each survey, the `hld-lead`, each skeptic, `codex` and the
+`critic`): its work is done, and an open pane sits idle for hours. Never close an agent while only
+its `.partial` exists: that run is unfinished, and the agent may be started again from it. A pane
+still working is left open, and your report names it.
+
 **An expired login.** If a `wait` prints `auth`, that agent stopped on "Login expired · Please run
 /login". No agent can fix that, and only the user's `/login` clears it. Stop, and tell the user to
 run `/login` and nothing else. Once they say it is done, write a file that says "Your login is
