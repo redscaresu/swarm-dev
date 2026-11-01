@@ -322,6 +322,7 @@ printf "env.update(SWARM_PROJECT='%s', SWARM_RESUME='x')\n" "${ROOT}/proj 4" > "
 cp "${ROOT}/agents" "${ROOT}/agents.three"; echo "x w:x ${ROOT}/story sess-4" >> "${ROOT}/agents"
 own_release; merge --release "${OWN}" < /dev/null; mv "${ROOT}/agents.three" "${ROOT}/agents"
 printed="$(grep '^upgrade not run: ' "${ROOT}/out" || true)"; printed="${printed##*, }"
+chmod +x "${NEW}"   # the installed swarm.sh is executable, and the printed command runs it directly
 (eval "${printed}") > /dev/null 2>&1 || true
 is "--release without --upgrade, a project path with a space: its printed upgrade command runs there" "${ROOT}/proj 4 upgrade" "$(upgraded)"
 own_release; merge --upgrade "${OWN}"; refused "--upgrade without --release" "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
