@@ -2054,7 +2054,7 @@ close_when_idle() {
 # closes (close_pane, which closes its tab too when the pane was the record's last). A conductor closes
 # as collect's close closes it (shut_agent: its epic's tabs, its own pane, its session archived), but
 # only once its report is there and the lead has collected it (report_collected tried: a swarm.sh close
-# of it since the report, refused or not); until then it reads as uncollected, since closing it would
+# of it since the report, refused or not, under <name> or, for a cut name, its full conduct-<epic>); until then it reads as uncollected, since closing it would
 # take collect off next, which finds a conductor to collect by its pane. Either logs
 # `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
 # `close-when-idle <name> left open: ...`. So is one whose agent is still not idle (or, for a
@@ -2063,10 +2063,13 @@ close_when_idle() {
 # conductor for collect's close. On its way out it removes CLOSING_DIR/<name>.pid while that holds its
 # own pid.
 close_idle_wait() {
-  local name="$1" pane="$2" pid="$3" who state agents end="" cap conductor="" agent how cmd="the command that retired it"
+  local name="$1" pane="$2" pid="$3" who state agents end="" cap conductor="" full="" agent how cmd="the command that retired it" report
   [[ -n "${name}" && -n "${pane}" && "${pid}" =~ ^[0-9]+$ ]] || die "usage: swarm.sh _close-when-idle <name> <pane> <pid>"
   how="close its pane ${pane} with swarm.sh tidy --yes"
   [[ "${name}" != conduct-* ]] || { conductor=1; how="close it with swarm.sh close ${name}"; cmd="the merge that landed its Finish PR"; }
+  # A long epic's conductor: herdr holds <name> cut at 32 characters, and the lead's close is logged
+  # under the name the lead gave it, most likely the full conduct-<epic> (conduct_epic maps the cut back).
+  [[ -z "${conductor}" ]] || full="conduct-$(conduct_epic "${name}")"
   cap=$((SECONDS + CLOSE_CMD_SECONDS))
   while :; do
     # Nothing is read while <pid> runs: close_when_idle writes the pid file before <pid> can exit.
@@ -2092,7 +2095,8 @@ close_idle_wait() {
       fi
       case "${state}" in
         idle|herdr:idle|herdr:done|herdr:)
-          if [[ -n "${conductor}" ]] && ! report_collected "${name}" "$(conductor_report "${name}")" tried; then
+          [[ -z "${conductor}" ]] || report="$(conductor_report "${name}")"
+          if [[ -n "${conductor}" ]] && ! report_collected "${name}" "${report}" tried && ! report_collected "${full}" "${report}" tried; then
             state=uncollected
           elif [[ -n "${conductor}" ]]; then
             # In a subshell, as merged_review closes one: close_panes dies on a pane it cannot find.

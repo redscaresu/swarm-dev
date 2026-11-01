@@ -5,7 +5,8 @@
 # that Finish PR closes the conductor once the merge has exited, the conductor reads idle and the lead
 # has tried collect's close; with no such close tried it is left open, with a line saying why.
 # herdr, gh and claude are stubs on PATH: herdr lists the agents in <dir>/h/agents ("<name> <pane>
-# <status>" lines) and logs each call to <dir>/h/calls, and a pane close drops its agent; the first
+# <status> [tab]" lines, tab t1 unless given: e's; t2 is the long epic's) and logs each call to
+# <dir>/h/calls, and a pane or tab close drops its agents; the first
 # half's gh answers pr list from ${ROOT}/finish.json, and fails while ${ROOT}/ghfail exists. The second
 # half runs on merge_fixture.sh's project, whose gh answers pr list --head board/finish-e from
 # ${FX}/prlist.finish-e.
@@ -18,9 +19,9 @@ TESTS="$(dirname "${SWARM}")/../tests"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-# stop_waiter <project> — kill conduct-e's close_when_idle waiter by its pid file, so none outlives the test.
-stop_waiter() { local pid; pid="$(cat "$1/.swarm/closing/conduct-e.pid" 2>/dev/null)" || return 0; [[ ! "${pid}" =~ ^[0-9]+$ ]] || kill "${pid}" 2>/dev/null || true; }
-trap 'stop_waiter "${ROOT}/m/proj"; rm -rf "${ROOT}"' EXIT
+# stop_waiter <project> [name] — kill <name>'s (conduct-e's) close_when_idle waiter by its pid file, so none outlives the test.
+stop_waiter() { local pid; pid="$(cat "$1/.swarm/closing/${2:-conduct-e}.pid" 2>/dev/null)" || return 0; [[ ! "${pid}" =~ ^[0-9]+$ ]] || kill "${pid}" 2>/dev/null || true; }
+trap 'stop_waiter "${ROOT}/m/proj"; stop_waiter "${ROOT}/m/proj" conduct-a-very-long-epic-slug-fo; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The waiter looks every 0.2 s here, not every 5.
 export SWARM_CLOSE_IDLE_POLL=0.2
@@ -37,11 +38,11 @@ case "$1 $2" in
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
                      END { print "]}}" }' "$H/agents" ;;
   "pane list") awk 'BEGIN { printf "{\"result\":{\"panes\":[" }
-                    { printf "%s{\"pane_id\":\"%s\",\"tab_id\":\"t1\"}", (NR > 1 ? "," : ""), $2 }
+                    { printf "%s{\"pane_id\":\"%s\",\"tab_id\":\"%s\"}", (NR > 1 ? "," : ""), $2, (NF > 3 ? $4 : "t1") }
                     END { print "]}}" }' "$H/agents" ;;
-  "tab list") echo '{"result":{"tabs":[{"tab_id":"t1","label":"e"}]}}' ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"t1","label":"e"},{"tab_id":"t2","label":"a-very-long-epic-slug-for-cut-names"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "tab close") : > "$H/agents" ;;   # its one tab, t1, holds every pane
+  "tab close") awk -v t="$3" '(NF > 3 ? $4 : "t1") != t' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
   "pane close") awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
 esac
 STUB
@@ -161,6 +162,23 @@ merge_fails=0
   is "with no collect close tried, conduct-e idle is left open past the waiter's limit, and a line says its report was not collected" \
     "0|ended||conduct-e w:c idle|close-when-idle conduct-e left open: its report was still not collected 1s after the merge that landed its Finish PR exited; collect it, and its close closes it" \
     "${rc}|$(waiter)|$(closes "${ROOT}")|$(cat "${ROOT}/h/agents")|$(events | grep '^close-when-idle ' || true)"
+
+  # A long epic: herdr holds its conductor cut at 32 characters, and the lead's collect close names it
+  # in full, as close takes it. Its Finish PR's merge still closes it once it is idle.
+  L=a-very-long-epic-slug-for-cut-names; C="conduct-${L}"; C="${C:0:32}"
+  fresh; rm -f "${S}" "${P}"/.swarm/state/*; echo "${C} w:c idle t2" > "${ROOT}/h/agents"; echo "w:c conductor" > "${P}/.swarm/state/${L}"
+  mkdir -p "${P}/.swarm/briefs"; echo brief > "${P}/.swarm/briefs/conduct-${L}.md"; echo "merged: everything" > "${P}/.swarm/conduct-${L}.report.md"
+  echo "board/finish-${L}" > "${FX}/headref"; echo '{"files":[{"filename":"docs/stories/s.md"}]}' > "${FX}/commit.${M}"
+  printf '[{"url":"%s","state":"OPEN","headRefName":"board/finish-%s"}]\n' "${URL}" "${L}" > "${FX}/prlist.finish-${L}"
+  rc=0; (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID=w:lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "conduct-${L}" > "${ROOT}/out" 2>&1) || rc=$?
+  first="${rc}"; : > "${ROOT}/h/calls"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+  long_waiter() {
+    local i; for ((i = 0; i < 300; i++)); do [[ -e "${P}/.swarm/closing/${C}.pid" ]] || { echo ended; return 0; }; sleep 0.1; done
+    stop_waiter "${P}" "${C}"; echo "stopped: still running after 30 s"
+  }
+  is "a long epic's conductor, its collect close refused under its full name: once its Finish PR's merge has exited, its waiter closes it" \
+    "1|0|ended|tab close t2|close-when-idle ${C} closed (pane w:c)" \
+    "${first}|${rc}|$(long_waiter)|$(closes "${ROOT}")|$(events | grep '^close-when-idle ' || true)"
   exit "${fails}"
 ) &
 wait $! || merge_fails=$?
