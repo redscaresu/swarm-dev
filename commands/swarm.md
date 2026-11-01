@@ -734,7 +734,8 @@ count it:
 The cause says why, one of: `review-rounds`, `false-stall`, `start-failed`, `gpg-locked`,
 `panes-open`, `story-gone`, `pr-no-story`, `dropped-lines`, `pr-churn`, `load-or-logs`,
 `no-conductor`, `flaky-test`, `classifier`, `upgrade`, `stuck-builder`, `red-main`,
-`reported-early`, `missing-review`, `tell-lost`, or `other` when none fits. An unknown cause fails
+`reported-early`, `missing-review`, `tell-lost`, `review-stopped` (a review you started again by hand
+because it stopped on a moved head or waited on a builder that had finished), or `other` when none fits. An unknown cause fails
 and lists them.
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`

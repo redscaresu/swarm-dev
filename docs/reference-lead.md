@@ -136,6 +136,11 @@ The PR heads are read with gh only on a run's first read and then at most once e
 therefore wakes the lead up to 5 minutes after its head turns green. A story that enters review
 waits for the next read of the heads. So does one that leaves review and comes back: a poll that
 finds a story out of review drops its result from that file.
+After a merge the heads pass runs on the next poll: a `merge` line added to `.swarm/events.tsv` since the
+last poll brings it forward. A story whose PRs have all merged since its build last started gets no line,
+though its file stays on the board until reconcile. A `merge` event that ends `ok` or `merged elsewhere`
+and names the PR counts as its merge, and so does one that names a story with one PR. A heads pass that
+reads a PR as merged on GitHub counts too; it reads the PRs of the items awaiting a merge by you.
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It edits the board only to write the fix-main story of a red
