@@ -253,6 +253,11 @@ check "a stop tells the story's conductor in a note, the lead takes it when that
 # the PR sits with nobody on it, and this goes red.
 check "the handoff sends the conductor the stop note after a base-merged nudge and on a merge hold" "yes|yes" \
   "$(has "Then send the conductor the stop note, as for any other refusal below, naming that line, and stop:" "${flat}")|$(has "When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the conductor the stop note, as for any other refusal below, naming that line, so it closes the builder." "${flat}")"
+# GitHub's request to merge the base in failed with no conflict known: merge brings the base in on its
+# next run, so the agent runs it once more and nudges nobody. If the handoff sent the builder to merge
+# the base in instead, each such blip would cost a merge-in and a CI run, and this goes red.
+check "the handoff runs merge once more, nudging nobody, on a refusal that says merge brings the base in itself" "yes" \
+  "$(has "When it refuses with a line that ends \`merge brings <base> in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not merge the base in and nothing is known to conflict: nudge nobody, and run \`${sw} merge --head <sha> ${PR}\`, with the <sha> it names, once more, in the background as before. A second such refusal is one of the other refusals below." "${flat}")"
 check "the handoff sends the conductor the stop note on any other refusal or failure, keeping the pass file" "yes|yes" \
   "$(has "On any other refusal or failure (a merge \`dequeued\` or \`unconfirmed\`, CI on the base red or timed out after the merge, a story held until its parents merge, a story with a PR you did not review), first send the conductor the stop note, leaving ${p}/.swarm/reviews/s1.md as it is" "${flat}")|$(has "\`review-s1 stopped on <the PR's head>: <the line that command printed>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`. Then reply the same way." "${flat}")"
 check "the handoff nudges the builder on a red or conflicting base-merged head and a moved base, and names the conductor's restart on the new head" "yes|yes|yes|yes|no" \

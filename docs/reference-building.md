@@ -348,7 +348,9 @@ checked, since its builder reads the board's own copy.
 the bare file. A bare file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once, even in the same file: git merges edits to
 different parts of one file, and a story names the functions it changes. A builder whose PR
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
-never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
+never sends a story back to `ready`. A builder merges the base in only on a conflict or when a
+swarm.sh line says to (a Stacked line, a merge refusal, a nudge), never just because the base moved:
+`swarm.sh merge` brings the base in itself at merge time, and each merge-in reruns CI. The conductor sends that as a `nudge` tell, which is not a
 review round, and starts a builder in the story's worktree when the one it had was closed after
 `swarm.sh review`. The conductor sends every nudge its brief names as
 `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>`, run in the background,
