@@ -147,5 +147,4 @@ repo, the builder leaves the story file alone and the lead runs `swarm.sh finish
 
 ## Where the rest is
 
-[`reference.md`](reference.md) holds the commands and lists the files that hold the rest: the lead's
-board PRs and wake, epics, model and effort, settings, scoping, building, logs, merging and releases.
+[`reference.md`](reference.md) holds the commands and lists the files that hold the rest: the lead's board PRs and wake, epics, model and effort, settings, scoping, building, logs, merging and releases.
