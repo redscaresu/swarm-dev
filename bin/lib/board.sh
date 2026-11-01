@@ -79,7 +79,7 @@ board_snapshot() {
           else { if ((k0, k) in fa) put("F_" k, fa[k0, k]); if ((k0, k) in fv) put("G_" k, fv[k0, k]) } } } }' \
     "${files[@]}" < /dev/null)" || return 1
   while IFS= read -r line; do
-    [[ "${line%%=*}" =~ ${BOARD_SNAP_RE} ]] || { board_snap_drop; return 1; }
+    [[ "${line%%=*}" =~ ${BOARD_SNAP_RE} ]] || { board_snap_drop; return 1; }  # loose-match: ok BOARD_SNAP_RE is a fixed regex, meant to be read as one
     printf -v "${line%%=*}" '%s' "${line#*=}"
   done <<< "${out}"
   BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"

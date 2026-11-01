@@ -151,6 +151,7 @@ printf '#!/usr/bin/env bash\ntrap ": > %s/exit.mark" EXIT\nsleep 20\n' "${ROOT}"
 # ignored, and a signal ignored on entry cannot be trapped. A terminal's Ctrl-C has no such catch.
 (TMPDIR="${ROOT}/rt" JOBS=2 exec python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
   bash "${REPO}/scripts/test.sh" "${ROOT}/slowint_test.sh" > "${ROOT}/int.out" 2>&1) &
+# shellcheck disable=SC2031 # $! is the background subshell's pid, set here; shellcheck 0.11 reads it as set inside it
 ipid=$!
 for ((i = 0; i < 50; i++)); do grep -q '^run ' "${ROOT}/int.out" 2>/dev/null && pgrep -f "${ROOT}/slowint_test.sh" > /dev/null && break; sleep 0.1; done
 kill -INT -- "-${ipid}"
