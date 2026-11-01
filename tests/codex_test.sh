@@ -140,20 +140,34 @@ check "a codex that keeps starting children is stopped within the limit plus the
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
 left "the forking case"
 
+# The next two cases' checks read what the stub's TERM trap does, so the trap must run as TERM lands.
+# bash runs a trap only once the foreground command it waits on ends, and a child forked after
+# stop_codex read the tree gets no TERM and sleeps on, holding the trap past the KILL (on a loaded
+# machine, a trap set in time had not run when the KILL came). So each stub sleeps in the background
+# and waits on it: wait returns at once on a trapped signal. Their grace, TRAP_GRACE rather than the
+# default 3 s, is room for a trap a loaded runner starts late and for its slow forks.
+TRAP_GRACE=10
+
 # --- One whose TERM trap starts a chain 10 deep in the grace is KILLed to the chain's end: the freeze
-# walks every level of the tree, and the chain's deepest processes are not left as orphans.
-stub "trap '\"\${d}/stubchain\" 10 &' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+# walks every level of the tree, and the chain's deepest processes are not left as orphans. The stub
+# lives on, so codex-review waits out the whole grace, and the chain's end must be up before the KILL
+# or the check proves nothing.
+stub "trap '\"\${d}/stubchain\" 10 &' TERM; while :; do \"\${d}/stubsleep\" 60 & wait \$!; done"
 rm -f "${BIN}/chained"
-review
+SWARM_CODEX_GRACE="${TRAP_GRACE}" review
 check "a codex whose TERM trap starts a deep chain times out, the chain built to its end first" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/chained" ]] && echo yes || echo "no chained")"
 left "the deep chain case"
 
-# --- The grace is real: with a grace of 6 s, a codex that exits on its own 3 s after TERM is not
-# KILLed. The other 3 s are for a loaded machine, where the trap starts late; a grace cut under 3 s
-# fails it.
-stub "trap 'sleep 3; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
-SWARM_CODEX_GRACE=6 review
+# --- The grace is real: with a grace of TRAP_GRACE, a codex that exits on its own TRAP_WORK seconds
+# after its TERM trap starts is not KILLed. codex-review ends as soon as the stub exits, so the spare
+# grace costs a passing run nothing. A grace cut under TRAP_WORK fails it. TRAP_WORK is twice the 3 s
+# a cut must stay under, because codex-review counts its grace in polls, and on a loaded machine
+# a 2 s grace's polls ran 3 s. The trap stops its child first, so one the TERM missed is not left
+# behind when the stub exits.
+TRAP_WORK=6
+stub "trap 'kill \$! 2>/dev/null; sleep ${TRAP_WORK}; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60 & wait \$!; done"
+SWARM_CODEX_GRACE="${TRAP_GRACE}" review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
 left "the grace case"
