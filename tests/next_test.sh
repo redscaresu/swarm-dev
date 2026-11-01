@@ -1033,8 +1033,8 @@ expect_release "a staged draft whose minor before it was never tagged, a newer t
 
 # An open PR of the gh user's that no story or epic lists (#692): next names it on an unlisted: line
 # after the step's lines, and only next does. UNL's gh notes each call in ${UNL_CALLS}, answers
-# `pr list` with ${UNL_PRS} (failing while ${UNL_FAIL} exists) and fails any other call. Three PRs of
-# @me: docs/x listed nowhere, story/s (a story branch) and fix/y, on story s's prs:.
+# `pr list` with ${UNL_PRS} (failing while ${UNL_FAIL} exists) and fails any other call. Four PRs of
+# @me: docs/x listed nowhere, story/s (a story branch), fix/y on story s's prs: and fix/z on epic e's.
 UNL="${STUB_BIN}/unl"; UNL_CALLS="${STUB_BIN}/unl-calls"; UNL_PRS="${STUB_BIN}/unl-prs"; UNL_FAIL="${STUB_BIN}/unl-fail"
 mkdir -p "${UNL}"
 # shellcheck disable=SC2016 # $* and $1 are the stub's, expanded when it runs
@@ -1045,19 +1045,20 @@ UNL_X="https://github.com/o/r/pull/1"
 # last read, this one, is then cut and says not checked.
 UNL_SECONDS=600
 UNL_LINE="unlisted: ${UNL_X} (docs/x): no story or epic lists it; list it under the kind: lead story that covers it with swarm.sh review <slug> ${UNL_X}, then swarm.sh merge ${UNL_X}; with none, it waits on the user"
-UNL_SETUP=("git remote add origin https://github.com/o/r.git" "item stories/s.md 'status: review' 'kind: code' 'prs: https://github.com/o/r/pull/3'")
+UNL_SETUP=("git remote add origin https://github.com/o/r.git" "item stories/s.md 'status: review' 'kind: code' 'prs: https://github.com/o/r/pull/3'"
+  "item epics/e.md 'status: review' 'prs: https://github.com/o/r/pull/4'")
 echo '[]' > "${UNL_PRS}"
 SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "no open PR of yours: the review gate" "gate" "${UNL_SETUP[@]}"
 unl_base="${out}"
 no_text "no open PR of yours: no unlisted: line" "unlisted:"
-printf '[{"url":"%s","headRefName":"docs/x"},{"url":"https://github.com/o/r/pull/2","headRefName":"story/s"},{"url":"https://github.com/o/r/pull/3","headRefName":"fix/y"}]\n' \
+printf '[{"url":"%s","headRefName":"docs/x"},{"url":"https://github.com/o/r/pull/2","headRefName":"story/s"},{"url":"https://github.com/o/r/pull/3","headRefName":"fix/y"},{"url":"https://github.com/o/r/pull/4","headRefName":"fix/z"}]\n' \
   "${UNL_X}" > "${UNL_PRS}"
 : > "${UNL_CALLS}"
-SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "three open PRs of yours: the step is unchanged" "gate" "${UNL_SETUP[@]}"
+SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "four open PRs of yours: the step is unchanged" "gate" "${UNL_SETUP[@]}"
 is_out() { # <name> <want> — next's whole output in out is <want>
   if [[ "${out}" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '${out}'"; fails=$((fails + 1)); fi
 }
-is_out "three open PRs of yours: one unlisted: line, for docs/x alone, after the step's lines" "${unl_base}"$'\n'"${UNL_LINE}"
+is_out "four open PRs of yours: one unlisted: line, for docs/x alone, after the step's lines" "${unl_base}"$'\n'"${UNL_LINE}"
 if grep -q -- '^pr list .*--author @me' "${UNL_CALLS}"; then
   echo "ok   next lists the PRs with --author @me"
 else echo "FAIL next does not list the PRs with --author @me: $(paste -sd'|' - < "${UNL_CALLS}")"; fails=$((fails + 1)); fi
