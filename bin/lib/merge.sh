@@ -701,7 +701,8 @@ pull_first() { echo "the builder pulls its branch (git pull --ff-only) before it
 # of <old> with <base> merged in, with wait-pr's own loop (wait_pr --head <new>, in a subshell, its lines
 # printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds for
 # up to MERGE_CI_SECONDS, a spent rate limit waited out, a conflict with the base ending it. Its grace for
-# no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. Succeed
+# no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. It reads
+# GitHub every poll (WAIT_PR_FRESH): no other wait's read, from the poll cache, stands in for merge's. Succeed
 # on green. Else set BASE_CI_CAUSE to the cause read from how wait-pr ended (red, no check runs, no
 # workflow run, conflict, timed out, head moved, unread) and BASE_CI_WHY to the refusal, `base merged,
 # <cause>:` then what to run next, and fail.
@@ -711,8 +712,8 @@ base_ci() {
   next="wait-pr --head ${new} ${url}, then merge --head ${new} ${url}; $(pull_first)"
   out="$(mktemp "${TMPDIR:-/tmp}/swarm-base-ci.XXXXXX")" \
     || { BASE_CI_WHY="base merged, unread: mktemp failed, so CI on ${who} was not read: ${next}"; return 1; }
-  ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}' EXIT
-    SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
+  ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}' EXIT
+    WAIT_PR_FRESH=1 SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
   rc="${PIPESTATUS[0]}"
   [[ ${rc} -ne 0 ]] || { rm -f "${out}"; return 0; }
   # An exit 1 is red only with wait-pr's red: line: swarm.sh's wait-pr trap, which turns any other exit 1
@@ -762,14 +763,11 @@ base_merged_from() {
 }
 
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
-# only: it changes nothing on the board, and main logs nothing for it. In the clone repo_dir names for
-# <owner/repo>'s name, whose origin URL must end in <owner/repo> (compared lower case), it stops unless
-# gh lists <head> among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most
-# 250). It fetches refs/pull/<n>/head and <base> into refs of this run's own,
-# refs/swarm/dropped-lines/<n>-<pid>/head and /base, kept through the scan so git cannot prune what
-# it reads, and deleted on exit by swarm.sh's trap. It writes no FETCH_HEAD and, with an empty
-# --refmap, no origin/<base>: two runs share neither, and another fetch cannot move the base it scans
-# against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
+# only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
+# among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
+# pr_fetch fetches the PR's head and <base> into refs of this run's own in <owner/repo>'s clone, kept
+# through the scan so git cannot prune what it reads, and deleted on exit by swarm.sh's trap; the
+# fetched head must be <head>, else it stops naming both. The merges on <head>'s
 # first-parent chain since that base commit are scanned, except those events.tsv records as
 # GitHub's merge of the base for any story (base_merged; merge_base_update's `base-merged <sha>`, shown
 # to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
@@ -779,40 +777,24 @@ base_merged_from() {
 # `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src origin own name shas out got tip merges m ver rc=0 keep=()
-  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fetch="${SWARM_DROPPED_FETCH_WAIT:-${DROPPED_FETCH_WAIT}}"
+  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m ver rc=0 keep=()
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
   [[ $# -eq 4 && "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "${n}" =~ ^[0-9]+$ && "${head}" =~ ^[0-9a-f]{40}$ \
      && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"
   url="https://github.com/${repo}/pull/${n}"
-  src="$(repo_dir "${repo#*/}")" || die "dropped-lines: ${src}"
-  origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "dropped-lines: ${src} has no origin, so it is not ${repo}'s clone"
-  # owner/name from the URL's last two parts: https://host/o/r(.git), git@host:o/r(.git) or a path.
-  own="${origin%/}"; own="${own%.git}"; name="${own##*/}"; own="${own%/*}"; own="${own##*[/:]}/${name}"
-  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${own}")" == "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" ]] \
-    || die "dropped-lines: ${src}'s origin is ${origin} (${own}), not ${repo}"
   shas="$(within "${limit}" gh api --paginate "repos/${repo}/pulls/${n}/commits?per_page=100" --jq '.[].sha' < /dev/null 2>&1)" || rc=$?
   [[ ${rc} -ne 142 ]] || die "dropped-lines: gh did not list ${url}'s commits within ${limit}s"
   [[ ${rc} -eq 0 ]] || die "dropped-lines: gh cannot list ${url}'s commits: ${shas##*$'\n'}"
   grep -qxF "${head}" <<< "${shas}" || die "dropped-lines: ${head} is not among ${url}'s commits as gh lists them: the PR's head moved"
-  # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
-  DROPPED_DIR="${src}"; DROPPED_REF="refs/swarm/dropped-lines/${n}-$$"
-  out="$(within "${fetch}" git -C "${src}" fetch --quiet --no-tags --no-write-fetch-head --refmap= origin \
-    "+refs/pull/${n}/head:${DROPPED_REF}/head" "+refs/heads/${base}:${DROPPED_REF}/base" < /dev/null 2>&1)" || rc=$?
-  [[ ${rc} -ne 142 ]] || die "dropped-lines: git did not fetch ${url}'s head and ${base} from ${origin} within ${fetch}s"
-  [[ ${rc} -eq 0 ]] || die "dropped-lines: git cannot fetch ${url}'s head and ${base} from ${origin}: ${out##*$'\n'}"
-  got="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/head^{commit}")" || die "dropped-lines: the fetch of ${url}'s head left no commit at ${DROPPED_REF}/head"
-  tip="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/base^{commit}")" || die "dropped-lines: the fetch of ${base} left no commit at ${DROPPED_REF}/base"
-  [[ "${got}" == "${head}" ]] \
-    || die "dropped-lines: ${url}'s head on ${origin} (refs/pull/${n}/head) is ${got}, not ${head}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"
+  pr_fetch dropped-lines "${repo}" "${n}" "${head}" "${base}"
+  src="${DROPPED_DIR}"; tip="${DROPPED_TIP}"
   merges="$(git -C "${src}" rev-list --first-parent --merges --reverse "${tip}..${head}" --)" \
     || die "dropped-lines: git cannot list the merges in ${base} (${tip:0:7})..${head:0:7}"
   for m in ${merges}; do
     base_merged "" "${m}" || keep+=("${m}")
   done
   [[ ${#keep[@]} -gt 0 ]] || return 0
-  ver="$(git version 2>/dev/null)" || ver=""; ver="${ver#git version }"; ver="${ver%% *}"
-  awk -v v="${ver}" -v min="${DROPPED_GIT_MIN}" 'BEGIN { split(v, a, "."); split(min, b, ".")
-    exit !(a[1] + 0 > b[1] + 0 || (a[1] + 0 == b[1] + 0 && a[2] + 0 >= b[2] + 0)) }' \
+  ver="$(remerge_git)" \
     || die "dropped-lines: git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which the scan of ${url}'s merges reads: update git"
   rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${keep[@]}")" || rc=$?
   case ${rc} in
@@ -826,8 +808,89 @@ dropped_lines() {
   esac
 }
 
-# dropped_refs_drop — delete dropped_lines' two fetched refs (DROPPED_REF's head and base, in the clone
-# DROPPED_DIR); a ref that is not there is no error. swarm.sh's EXIT trap runs it, once the run ends.
+# pr_fetch <who> <owner/repo> <n> <head> <base> — fetch PR <n>'s head and <base> for a read of its
+# commits (dropped_lines, base_merges_only). In the clone repo_dir names for <owner/repo>'s name, whose
+# origin URL must end in <owner/repo> (compared lower case), it fetches refs/pull/<n>/head and <base>
+# into refs of this run's own, refs/swarm/dropped-lines/<n>-<pid>/head and /base. It writes no
+# FETCH_HEAD and, with an empty --refmap, no origin/<base>: two runs share neither, and another fetch
+# cannot move the base read against. The fetched head must be <head>, else it stops naming both. It
+# sets DROPPED_DIR (the clone) and DROPPED_REF, whose refs dropped_refs_drop deletes, and DROPPED_TIP,
+# the fetched base commit. Every stop is a die whose line starts `<who>: `.
+pr_fetch() {
+  local who="$1" repo="$2" n="$3" head="$4" base="$5" url="https://github.com/$2/pull/$3" src origin own name out got rc=0
+  local fetch="${SWARM_DROPPED_FETCH_WAIT:-${DROPPED_FETCH_WAIT}}"
+  src="$(repo_dir "${repo#*/}")" || die "${who}: ${src}"
+  origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "${who}: ${src} has no origin, so it is not ${repo}'s clone"
+  # owner/name from the URL's last two parts: https://host/o/r(.git), git@host:o/r(.git) or a path.
+  own="${origin%/}"; own="${own%.git}"; name="${own##*/}"; own="${own%/*}"; own="${own##*[/:]}/${name}"
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${own}")" == "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" ]] \
+    || die "${who}: ${src}'s origin is ${origin} (${own}), not ${repo}"
+  # shellcheck disable=SC2034 # read by dropped_refs_drop, from an EXIT trap
+  DROPPED_DIR="${src}"; DROPPED_REF="refs/swarm/dropped-lines/${n}-$$"
+  out="$(within "${fetch}" git -C "${src}" fetch --quiet --no-tags --no-write-fetch-head --refmap= origin \
+    "+refs/pull/${n}/head:${DROPPED_REF}/head" "+refs/heads/${base}:${DROPPED_REF}/base" < /dev/null 2>&1)" || rc=$?
+  [[ ${rc} -ne 142 ]] || die "${who}: git did not fetch ${url}'s head and ${base} from ${origin} within ${fetch}s"
+  [[ ${rc} -eq 0 ]] || die "${who}: git cannot fetch ${url}'s head and ${base} from ${origin}: ${out##*$'\n'}"
+  got="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/head^{commit}")" || die "${who}: the fetch of ${url}'s head left no commit at ${DROPPED_REF}/head"
+  DROPPED_TIP="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/base^{commit}")" || die "${who}: the fetch of ${base} left no commit at ${DROPPED_REF}/base"
+  [[ "${got}" == "${head}" ]] \
+    || die "${who}: ${url}'s head on ${origin} (refs/pull/${n}/head) is ${got}, not ${head}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"
+}
+
+# remerge_git — print git's version, and succeed when it is DROPPED_GIT_MIN or newer, the first with
+# git show --remerge-diff (dropped_lines.py's read, and base_merges_only's).
+remerge_git() {
+  local ver
+  ver="$(git version 2>/dev/null)" || ver=""; ver="${ver#git version }"; ver="${ver%% *}"
+  echo "${ver}"
+  awk -v v="${ver}" -v min="${DROPPED_GIT_MIN}" 'BEGIN { split(v, a, "."); split(min, b, ".")
+    exit !(a[1] + 0 > b[1] + 0 || (a[1] + 0 == b[1] + 0 && a[2] + 0 >= b[2] + 0)) }'
+}
+
+# base_merges_only <owner/repo> <n> <reviewed> <head> <base> — whether PR <n>'s <head> adds to
+# <reviewed>, the head a review passed, nothing but git's own clean merges of <base>, so merge --head
+# <reviewed> may merge <head> with no new review (merge_pr). It needs git at DROPPED_GIT_MIN or newer,
+# fetches as dropped_lines does (pr_fetch), and walks <head>'s first parents back to <reviewed>, which
+# must be on that walk, not only somewhere in <head>'s history. Every commit on the walk must have two
+# parents, the second on the fetched <base>, and an empty git show --remerge-diff: its tree is the one
+# git's own merge of its parents makes, so it holds no resolved conflict, no dropped base line and no
+# edit; --no-show-signature keeps a signed merge's gpg lines (log.showSignature) out of that diff, and
+# --ignore-submodules=none keeps a submodule pointer set by hand in it whatever diff.ignoreSubmodules
+# or a .gitmodules ignore = all says. It prints those merges, oldest first, and succeeds; otherwise it prints why on one line (or a
+# die's line on stderr) and fails. Its body is a subshell whose EXIT trap drops the refs pr_fetch made
+# (dropped_refs_drop), as dropped_hold's is: merge_pr's own EXIT trap is base_wait's to replace.
+base_merges_only() (
+  local gh_repo="$1" pr="$2" want="$3" new="$4" into="$5" ver chain c p1 p2 more out merges=""
+  trap dropped_refs_drop EXIT
+  ver="$(remerge_git)" \
+    || { echo "git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which reads its merges"; exit 1; }
+  pr_fetch base-merges "${gh_repo}" "${pr}" "${new}" "${into}"
+  git -C "${DROPPED_DIR}" merge-base --is-ancestor "${want}" "${new}" 2>/dev/null \
+    || { echo "${want:0:7} is not in its history"; exit 1; }
+  # Each line a commit and its parents, newest first, from <head> down to the child of <reviewed>.
+  chain="$(git -C "${DROPPED_DIR}" rev-list --first-parent --parents "${want}..${new}" --)" \
+    || { echo "git cannot list its commits since ${want:0:7}"; exit 1; }
+  read -r c p1 _ <<< "${chain##*$'\n'}"
+  [[ "${p1}" == "${want}" ]] || { echo "${want:0:7} is not on its first-parent chain"; exit 1; }
+  while read -r c p1 p2 more; do
+    [[ -n "${p2}" ]] || { echo "${c:0:7}, after ${want:0:7}, is a commit of its own, not a merge of ${into}"; exit 1; }
+    [[ -z "${more}" ]] || { echo "${c:0:7}, after ${want:0:7}, merges more than two parents"; exit 1; }
+    git -C "${DROPPED_DIR}" merge-base --is-ancestor "${p2}" "${DROPPED_TIP}" 2>/dev/null \
+      || { echo "merge ${c:0:7}'s second parent ${p2:0:7} is not on ${into}"; exit 1; }
+    merges="${c}${merges:+ ${merges}}"
+  done <<< "${chain}"
+  for c in ${merges}; do
+    out="$(git -C "${DROPPED_DIR}" -c merge.conflictStyle=merge show --remerge-diff --format= --no-color --no-ext-diff \
+      --no-textconv --no-show-signature --ignore-submodules=none "${c}" -- 2>&1)" || { echo "git cannot remerge ${c:0:7}: ${out##*$'\n'}"; exit 1; }
+    [[ -z "${out}" ]] \
+      || { echo "merge ${c:0:7} is not git's own merge of its parents: its remerge-diff is not empty (a resolved conflict, a dropped line or an edit)"; exit 1; }
+  done
+  echo "${merges}"
+)
+
+# dropped_refs_drop — delete the two refs pr_fetch made (DROPPED_REF's head and base, in the clone
+# DROPPED_DIR); a ref that is not there is no error. swarm.sh's EXIT trap runs it once the run ends, and
+# so do the subshells dropped_hold and base_merges_only run their reads in.
 dropped_refs_drop() {
   [[ -n "${DROPPED_REF}" ]] || return 0
   git -C "${DROPPED_DIR}" update-ref -d "${DROPPED_REF}/head" 2>/dev/null || true
@@ -966,8 +1029,10 @@ short_shas() {
   echo "${out:-none}"
 }
 
-# merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
-# refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
+# merge [--board|--release [--upgrade]] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
+# refuse unless merge_caller allows it, the head is <sha> (with --head; or a head that adds to <sha> only
+# git's own clean merges of the base, as base_merges_only reads it: merge then prints an accepted: line
+# and merges that head, the head for every check below), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
 # passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
@@ -1015,17 +1080,19 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
       --head) want="$2"; shift 2 ;;
+      --upgrade) upgrade=yes; shift ;;
       *) break ;;
     esac
   done
   url="${1:-}"; MERGE_TARGET="${url:--}"
   [[ -z "${clash}" ]] || merge_fail "--board and --release do not go together"
-  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board|--release] [--head <sha>] <pr-url>"
+  [[ $# -eq 1 && ( -z "${upgrade}" || "${only}" == --release ) ]] \
+    || merge_fail "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
@@ -1038,7 +1105,17 @@ merge_pr() {
   [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
-  [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
+  # A head that adds to the reviewed one only git's own clean merges of the base brings no code the review
+  # did not read: merge it, saying so. Any other head is new code for a new review, a merge that drops a
+  # base line too, refused here before dropped_hold runs: its remerge-diff is not empty.
+  if [[ -n "${want}" && "${want}" != "${head}" ]]; then
+    why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)" || {
+      why="$(tr -d '\000-\037\177' <<< "${why##*$'\n'}")"; why="${why#swarm: }"
+      [[ "${why}" != base-merges:* ]] || why="its merges cannot be read: ${why#base-merges: }"
+      merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}, and ${why:-the read of its merges said nothing}: review the new head"
+    }
+    echo "accepted: ${url}'s head ${head:0:7} adds only clean merges of ${base} ($(short_shas "${why##*$'\n'}")) to ${want:0:7}, the reviewed head; merging ${head:0:7}"
+  fi
   # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).
   [[ "${CFG_merge}" != agent ]] || merge_hold "${url}"
   # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
@@ -1230,11 +1307,12 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
-  # commits no release check read, which any release reports; neither ever fails the merge.
+  # A release of this plugin moves the installed plugin onto it, and the running agents with --upgrade
+  # or a yes on a terminal, unless it shipped commits no release check read, which any release reports;
+  # neither ever fails the merge.
   if [[ "${only}" == --release && -n "${oid}" ]]; then
     p=checked; release_parent "${repo}" "${oid}" "${base}" || p=""
-    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}"
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}" "${upgrade}"
   fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
@@ -2181,6 +2259,12 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # pull_request runs there; one still with no run WAIT_PR_GRACE after the first read that found it
 # missing ends the wait the same way, naming it. With no count read, only the checks are judged.
 # ci_gate's "not waited on:" line is printed once, apart from the checks.
+# Concurrent waits on one head share each poll's reads: the ci_gate call alone gets SWARM_POLL_CACHE
+# (.swarm/poll-cache), SWARM_POLL_CACHE_SECONDS, under one poll and one retry pause, and
+# SWARM_POLL_CACHE_AGE, so a read another wait made that recently stands in for this one's
+# (bin/lib/poll_cache.py). A pending read that took one N seconds old (the age note) pauses N seconds less, so the waits poll in step and each sees a change within a
+# poll. Merge's gates, its own wait on a head it made by merging the base in (base_ci sets WAIT_PR_FRESH,
+# which turns the cache off) and review-agent --recheck read GitHub every time.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -2203,7 +2287,7 @@ wait_pr() {
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
-  local want="" stale="" usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
+  local want="" stale="" share aged=0 cache=() usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -2219,7 +2303,14 @@ wait_pr() {
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
   limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
+  # The poll cache's max age: under the shorter of a poll and a retry pause, so a lone wait never reads
+  # its own entry; 0 (a poll or pause of 1 s or less, or merge's own wait: WAIT_PR_FRESH) is off.
+  share=$(( (poll < retry ? poll : retry) - 1 )); (( share > 0 )) || share=0
+  [[ -z "${WAIT_PR_FRESH:-}" ]] || share=0
   WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
+  # What the ci_gate call alone gets while the cache is on: its directory, max age and age note.
+  (( share == 0 )) || cache=(SWARM_POLL_CACHE="${PROJECT_DIR}/.swarm/poll-cache" SWARM_POLL_CACHE_SECONDS="${share}"
+    SWARM_POLL_CACHE_AGE="${WAIT_PR_TMP}.age")
   while :; do
     rc=0; left=$((limit - (SECONDS - start)))
     # No read starts at or past the deadline: here, and before the check read below, which follows a head
@@ -2256,7 +2347,12 @@ wait_pr() {
     if [[ ${rc} -eq 0 ]]; then
       left=$((limit - (SECONDS - start)))
       (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
-      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" ${expect[@]+"${expect[@]}"})" || rc=$?
+      # The age note is emptied and read with builtins: no process more per poll.
+      aged=0; (( share == 0 )) || : > "${WAIT_PR_TMP}.age"
+      why="$(within "${left}" env ${cache[@]+"${cache[@]}"} python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" \
+        ${expect[@]+"${expect[@]}"})" || rc=$?
+      (( share == 0 )) || read -r aged 2>/dev/null < "${WAIT_PR_TMP}.age" || true
+      [[ "${aged}" =~ ^[0-9]+$ ]] || aged=0
       note=""; if [[ "${why}" == *$'\n'* ]]; then note="${why#*$'\n'}"; why="${why%%$'\n'*}"; fi
       [[ -z "${note}" || "${note}" == "${noted}" ]] || { echo "${note}"; noted="${note}"; }
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
@@ -2289,7 +2385,9 @@ wait_pr() {
              || wait_pr_fail "${missing}: a pull_request into ${base} runs it, but it has no run on ${head:0:7} after $((SECONDS - unstarted))s (${why})"
          fi
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
-         last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
+         # A read another wait made <aged> seconds ago stood in for this one's: the next poll comes that much
+         # sooner, in step with that wait's.
+         last="${why}"; what="still pending: ${why}"; pause=${poll}; (( aged <= 0 || aged >= poll )) || pause=$((poll - aged)) ;;
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
          # The budget is read once, while the one reset wait is unspent, and never on a secondary limit,
@@ -2333,18 +2431,20 @@ wait_pr() {
   done
 }
 
-# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> — after merge
-# --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set (the
-# merge commit is on the base release_check read: release_parent): once release_confirmed, update the
-# marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
-# UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
-# each of agent_projects, and ask the user to restart the lead session in this project and each of
-# those: the update is global, and Claude Code loads a plugin's hooks only at startup. A step that
-# fails warns, naming what to run by hand; an upgrade that fails, times out or finds another upgrade
-# running there (it starts nothing then and still exits 0) warns and moves on to the next project.
-# The release is done either way. Each claude, gh and herdr call is bounded (within).
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> <upgrade> — after
+# merge --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set
+# (the merge commit is on the base release_check read: release_parent): once release_confirmed, update
+# the marketplace and the plugin. Then, once release_move says yes (<upgrade> set by --upgrade, or a y
+# on a terminal), start the new version's swarm.sh upgrade (detached; bounded by UPGRADE_START_WAIT;
+# with release_path's PATH, so the agents it restarts find the new swarm.sh) in each of
+# agent_projects; else start none and print `upgrade not run: <why>` with the command for each. Last,
+# ask the user to restart the lead session in this project and each of those: the update is global,
+# and Claude Code loads a plugin's hooks only at startup. A step that fails warns, naming what to run
+# by hand; an upgrade that fails, times out or finds another upgrade running there (it starts nothing
+# then and still exits 0) warns and moves on to the next project. The release is done either way.
+# Each claude, gh and herdr call is bounded (within).
 release_upgrade() {
-  local own new d hint out restart="${PROJECT_DIR}" rc path
+  local own new d hint out restart="${PROJECT_DIR}" rc path dirs why cmds=""
   own="$(plugin_repo)" || { echo "the plugin's plugin.json names no GitHub repository, so it is not updated"; return 0; }
   [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]] || { echo "$1 is not this plugin's repo (${own}), so the plugin is not updated"; return 0; }
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
@@ -2359,8 +2459,17 @@ release_upgrade() {
   fi
   [[ -f "${new}" ]] || { echo "warning: the plugin update left no ${new}, so no agent was moved: ${hint}"; return 0; }
   path="$(release_path "${new%/swarm.sh}")"
+  dirs="$(agent_projects)"
   while IFS= read -r d; do
     [[ "${d}" == "${PROJECT_DIR}" ]] || restart+=", ${d}"
+    cmds+="${cmds:+, }$(printf 'SWARM_PROJECT=%q %q upgrade' "${d}" "${new}")"   # shell-quoted, ready to paste
+  done <<< "${dirs}"
+  if ! why="$(release_move "$3" "$7")"; then
+    echo "upgrade not run: ${why}: pass --upgrade to swarm.sh merge --release next time, or run ${cmds}"
+    dirs=""
+  fi
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
     rc=0; out="$(within "${SWARM_UPGRADE_START_WAIT:-${UPGRADE_START_WAIT}}" env SWARM_PROJECT="${d}" PATH="${path}" bash "${new}" upgrade </dev/null 2>&1)" || rc=$?
     [[ -z "${out}" ]] || printf '%s\n' "${out}"
     if [[ ${rc} -eq 142 ]]; then
@@ -2370,8 +2479,21 @@ release_upgrade() {
     elif [[ "${out}" == *"already runs here"* ]]; then
       echo "warning: another swarm.sh upgrade runs in ${d}, so $3's started nothing: once it ends, run SWARM_PROJECT=${d} ${new} upgrade"
     fi
-  done <<< "$(agent_projects)"
+  done <<< "${dirs}"
   echo "Restart the lead session in ${restart} (/exit, then claude --continue): Claude Code loads $3's hooks only at startup"
+}
+
+# release_move <version> <upgrade> — whether merge --release moves the running agents onto <version>:
+# yes with <upgrade> set (--upgrade); else, with stdin a terminal, only when the user answers y to
+# the question it prints; else no. On no it prints why: no terminal to confirm it, or the answer.
+release_move() {
+  local ans=""
+  [[ -z "$2" ]] || return 0
+  [[ -t 0 ]] || { echo "no terminal to confirm it"; return 1; }
+  printf 'Move the running agents onto v%s now? [y/N] ' "$1" >&2
+  read -r ans || ans=""
+  [[ -t 2 ]] || echo >&2
+  [[ "${ans}" == [yY] || "${ans}" == [yY][eE][sS] ]] || { echo "the answer was '${ans:-no answer}', not y"; return 1; }
 }
 
 # release_path <new bin> — PATH for the new version's upgrade: upgrade_path's, with <new bin> first
@@ -2468,7 +2590,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue   # loose-match: ok newline-padded, so a whole line
     out+="${d}"$'\n'
   done <<< "${rows}"
-  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} is upgraded" >&2
+  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} counts as running agents" >&2
   [[ -n "${out}" ]] || out="${PROJECT_DIR}"$'\n'
   printf '%s' "${out}"
 }
@@ -3075,19 +3197,27 @@ fetch_branch() {
   return 1
 }
 
-# stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
-# event just before its last ok `story <child>` (main logs story once the build is done), or one
-# with no story after it yet (a build still starting). A later ok build with no stacked event
-# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
-# follows belongs to no build: a failed or abandoned start. Outcomes are read without their key=value
-# tail (EVENT_OUTCOME_AWK).
+# stacked_parents <child> [on|left] — the parents the child's current build stacked on: the `stacked
+# <child>` event just before its last ok `story <child>` (main logs story once the build is done), or
+# one with no story after it yet (a build still starting). A later ok build with no stacked event
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset follows
+# belongs to no build: a failed or abandoned start. The event is stack_start's `ok (on <merged>)`,
+# with a `; left <p>: conflicts with <q> in <files>` part per parent it left out. With no mode, every
+# parent, merged in then left out (a handover's Merge after names them all); with on, those merged
+# in, whose branches the child holds; with left, those left out, whose code reaches the child only
+# through the base. Outcomes are read without their key=value tail (EVENT_OUTCOME_AWK).
 stacked_parents() {
-  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
+  awk -F'\t' -v s="$1" -v want="${2:-}" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
     { oc = outcome($5) }
-    $2 == "stacked" && index(oc, "ok (on ") == 1 { pend = substr(oc, 8, length(oc) - 8) }
-    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; next }
-    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
-    END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
+    # has: a stacked event waits for its story line, even one whose left list is empty.
+    $2 == "stacked" && index(oc, "ok (on ") == 1 {
+      n = split(substr(oc, 8, length(oc) - 8), part, "; left "); has = 1; lft = ""
+      for (i = 2; i <= n; i++) lft = lft (i > 2 ? " " : "") substr(part[i], 1, index(part[i] ":", ":") - 1)
+      pend = (want == "on" ? part[1] : want == "left" ? lft : part[1] (lft != "" ? " " lft : ""))
+    }
+    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; has = 0; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = ""; has = 0 }
+    END { print (has ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # stacked_parent <repo-dir> <child-ref> <p> — what the child must do about parent p: `merge
@@ -3113,13 +3243,16 @@ stacked_parent() {
 
 # stacked_child <story> — stacked_lines' lines for one story. The child's branch is origin's (fetched),
 # so a merge not yet pushed still shows; its local branch only while origin has none. Parents that
-# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC).
+# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC). A parent
+# stack_start left out (stacked_parents left) gives no `merge origin/story/<p>` line while its PR is
+# open, as that merge conflicts; once it merges, it is in the base line.
 stacked_child() {
-  local child src parents p line have builder="" done_ps="" rc=0
+  local child src parents left p line have builder="" done_ps="" rc=0
   child="$(basename "$1" .md)"
   src="$(repo_dir "$(fm "$1" repo)")" || return 0
   [[ -d "$(worktree_for "${src}" "${child}")" ]] || return 0
-  parents="$(stacked_parents "${child}")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "${child}" on)"; [[ -n "${parents}" ]] || return 0
+  left=" $(stacked_parents "${child}" left) "
   # Outside herdr the agents cannot be read, so no line claims the builder is gone.
   [[ "${HERDR_ENV:-}" != 1 || "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
   fetch_branch "${src}" "story/${child}" || rc=$?
@@ -3128,9 +3261,11 @@ stacked_child() {
     2) have="story/${child}" ;;
     *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
   esac
-  for p in ${parents//,/ }; do
+  for p in ${parents//,/ } ${left}; do
     if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
     line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
+    # A left-out parent's branch conflicts with the child's: it arrives through the base line below.
+    [[ "${left}" != *" ${p} "* || "${line}" != "merge origin/story/${p}" ]] || continue
     case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
   done
   [[ -n "${done_ps}" ]] || return 0
