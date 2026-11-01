@@ -499,7 +499,7 @@ line's exit comes first. In review it already names `swarm.sh review-agent`. For
 restart brings the builder back, and the next poll prints `no-review:`. The exit starts `review-<slug>`, so the next poll
 is quiet. When no review agent can start, the exit's `or the fallback reviewer` means the lead
 reviews the PR itself with `swarm.sh codex-review`, run from the story's worktree (codex-review
-reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage limit the
+reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage or rate limit the
 model `fallback_reviewer` names. The lead runs it only while the worktree is at the PR's head with
 nothing uncommitted, as `review-agent` checks; otherwise the builder is still at work. Its findings
 go to the builder with `swarm.sh tell <slug> findings <file>`, which is a round under way, so the
