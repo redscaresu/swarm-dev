@@ -3068,6 +3068,66 @@ stop_lines() {
   done
 }
 
+# plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
+# agents have all written their output: a tab record scope-<epic> (has_records' overflow scope-<epic>-<n>
+# too) of an epic on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit,
+# that lists at least one `<pane> <name>` and has no plan board PR worktree (plan_pr_open; _board-plan-<hld>
+# for an HLD). Each <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only
+# when it is newer than its planner's resume reference and parses as JSON. The reference is the epic file;
+# for split-critic the scope worktree, which is gone here, so a listed split critic never counts; for an
+# HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing reference counts
+# nothing. Board and .swarm files, one python3 for the JSON of a swarm whose outputs are all fresh; no gh or herdr.
+plan_lines() {
+  local f label kind slug item groups="" names name n ref out exit done_list files
+  for f in "${STATE_DIR}"/scope-?* "${STATE_DIR}"/plan-?*; do
+    [[ -f "${f}" ]] || continue
+    label="${f##*/}"
+    [[ "${label}" != *.* ]] || continue   # a codex brief copy or a temporary file, as cut_names skips
+    kind="${label%%-*}"; slug="${label#*-}"
+    item="${BOARD}/epics"; [[ "${kind}" == scope ]] || item="${BOARD}/hld"
+    if [[ ! -f "${item}/${slug}.md" && "${slug}" =~ ^(.+)-[0-9]+$ && -f "${item}/${BASH_REMATCH[1]}.md" ]]; then
+      slug="${BASH_REMATCH[1]}"   # an overflow tab of the same swarm
+    fi
+    [[ -f "${item}/${slug}.md" ]] || continue
+    groups+="${kind} ${slug}"$'\n'
+  done
+  while read -r kind slug; do
+    [[ -n "${slug}" ]] || continue
+    if [[ "${kind}" == scope ]]; then
+      ! plan_pr_open "${slug}" || continue
+      exit="/swarm-dev:plan-epic ${slug}"
+    else
+      [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || continue
+      exit="/swarm-dev:plan-hld ${slug}"
+    fi
+    names=""
+    for f in "${STATE_DIR}/${kind}-${slug}" "${STATE_DIR}/${kind}-${slug}"-*; do
+      { [[ -f "${f}" ]] && label_record "${f}" "${kind}-${slug}"; } || continue
+      names+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+    done
+    done_list=""; files=()
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      n="${name%-"${slug}"}"
+      [[ " ${done_list//,/} " != *" ${n} "* ]] || continue
+      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"
+      if [[ "${kind}" == plan ]]; then
+        ref="${PROJECT_DIR}/.swarm/${slug}/base-rev"; [[ "${BOARD_IN_REPO}" == 1 ]] || ref="${BOARD}/hld/${slug}.md"
+      elif [[ "${n}" == split-critic ]]; then ref="$(worktree_for "${PROJECT_DIR}" "_board-scope-${slug}")"
+      else ref="${BOARD}/epics/${slug}.md"; fi
+      # -nt alone is true against a missing reference.
+      [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]] || { files=(); break; }
+      files+=("${out}"); done_list+=", ${n}"
+    done < <(awk '!seen[$0]++' <<< "${names}")
+    [[ ${#files[@]} -gt 0 ]] || continue
+    python3 -I -c 'import json, sys
+for p in sys.argv[1:]:
+    with open(p, encoding="utf-8") as fh:
+        json.load(fh)' "${files[@]}" 2>/dev/null || continue
+    echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+  done < <(awk '!seen[$0]++' <<< "${groups}")
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
@@ -3081,7 +3141,8 @@ stop_lines() {
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
 # whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
-# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
+# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list, and plan_lines'
+# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
@@ -3124,6 +3185,7 @@ lead_queue() {
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
   stop_lines
+  plan_lines
   stuck_lines
   pr_lines
   main_red_lines

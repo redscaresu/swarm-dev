@@ -378,6 +378,10 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` line means every agent
+     open in that plan's tab has written its output, so the step they ran is over. Run the exit
+     (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
+     plan's next step. The line comes again at the end of each later step, since its names change. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
      next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
