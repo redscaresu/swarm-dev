@@ -130,16 +130,24 @@ check "a DIE_FILE from the environment is never written" test ! -e "${ROOT}/plan
 # Signals, sent to swarm.sh's pid alone (no process group), must stop it at once. A logged command
 # (tell, its stubbed prompt hanging) is logged as interrupted, leaves no temp file, and keeps the
 # exit status 128+N. A read-only one (wait, its stubbed wait hanging) just stops.
-# shellcheck disable=SC2016 # the stub's own shell expands these
 # The prompt's sleep carries this run's pid, so the pgrep below never sees a second copy of this test running beside it (live_logs_test.sh runs one).
-printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") exec sleep 37.%s ;; "agent wait") exec sleep 38 ;; esac\nexec "%s" "$@"\n' "$$" "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
+# Each hang first leaves ${UNDER_WAY}: the command got that far, past its temp files and its TERM trap.
+UNDER_WAY="${ROOT}/under-way"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") : > "%s"; exec sleep 37.%s ;; "agent wait") : > "%s"; exec sleep 38 ;; esac\nexec "%s" "$@"\n' \
+  "${UNDER_WAY}" "$$" "${UNDER_WAY}" "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
 chmod +x "${ROOT}/slow/herdr"; mkdir -p "${ROOT}/sigtmp"; echo "w:1 s1" > "${P}/.swarm/state/t1"
-# term_pid <swarm args...> — start it, TERM its pid once it is under way, and print "<exit> <seconds>".
+# until_ok <test...> — wait (30 s at most) until <test> succeeds.
+until_ok() { local i; for ((i = 0; i < 300; i++)); do "$@" && return 0; sleep 0.1; done; return 1; }
+# term_pid <swarm args...> — start it, TERM its pid once it is under way (its stubbed herdr hangs), and
+# print "<exit> <seconds>".
 term_pid() {
   local pid code=0 t0
+  rm -f "${UNDER_WAY}"
   (cd "${P}" || exit 1; HERDR_ENV=1 HERDR_PANE_ID=w:me TMPDIR="${ROOT}/sigtmp" PATH="${ROOT}/slow:${ROOT}/bin:${PATH}" exec bash "${SWARM}" "$@" >/dev/null 2>&1) &
   pid=$!
-  sleep 2; t0=${SECONDS}; kill -TERM "${pid}" || true
+  until_ok test -e "${UNDER_WAY}" || true
+  t0=${SECONDS}; kill -TERM "${pid}" || true
   { wait "${pid}"; } 2>/dev/null || code=$?
   echo "${code} $((SECONDS - t0))"
 }
@@ -148,7 +156,9 @@ read -r code took <<< "$(term_pid tell s1 findings findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -qE \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
-sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37[.]$$\$' >/dev/null"
+gone() { ! pgrep -f "sleep 37[.]$$\$" >/dev/null; }
+until_ok gone || true
+check "a TERM leaves nothing of the command running" gone
 read -r code took <<< "$(term_pid wait s1)"
 check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 
