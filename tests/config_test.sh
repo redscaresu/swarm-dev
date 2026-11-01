@@ -175,6 +175,16 @@ check "lead_epics = on is read" "on" "$(run "${p}" config lead_epics)"
 project "${p}" "lead_epics = yes"
 check "lead_epics = yes is refused, naming file and line" "yes" \
   "$(fails_with "${p}/.claude/swarm/config:1: lead_epics must be off or on, not 'yes'" run "${p}" config)"
+# risky_effort: the effort policy's code-risky role builds at. It ships xhigh, so nothing changes until set.
+check "risky_effort ships xhigh" "xhigh" "$(project "${p}"; run "${p}" config risky_effort)"
+check "with no risky_effort, policy code-risky is opus xhigh" "claude opus xhigh" "$(run "${p}" policy code-risky)"
+project "${p}" "risky_effort = high"
+check "risky_effort = high: policy code-risky is opus high" "claude opus high" "$(run "${p}" policy code-risky)"
+check "risky_effort = high leaves policy code at opus high" "claude opus high" "$(run "${p}" policy code)"
+check "risky_effort = high leaves policy escalate at fable xhigh" "claude fable xhigh" "$(run "${p}" policy escalate)"
+project "${p}" "risky_effort = medium"
+check "risky_effort = medium is refused, naming file, line, key and value" "yes" \
+  "$(fails_with "${p}/.claude/swarm/config:1: risky_effort must be xhigh or high, not 'medium'" run "${p}" config)"
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
