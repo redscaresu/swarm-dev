@@ -964,14 +964,16 @@ codex_limit() {
 # .swarm/codex/<SWARM_STORY, or base>.tail, under a line with the time and the exit, replacing the
 # story's last one. Each run writes a temp file of its own (<file>.<pid>.tmp) and moves it into place,
 # so two runs that fail together on one story each replace the file whole, and the last to finish
-# wins. A file it cannot write gets a warning, never a failed review.
+# wins. Under umask 077, as the run's own log in its mode-700 directory: codex's output can hold command
+# output or source, so the directory, temp file and file are the owner's alone. A file it cannot write
+# gets a warning, never a failed review.
 codex_keep_tail() {
   local unsafe='[^A-Za-z0-9.-]' f t
   f="${PROJECT_DIR}/.swarm/codex/${SWARM_STORY:-${1//${unsafe}/-}}.tail"; t="${f}.$$.tmp"
-  { mkdir -p "${f%/*}" \
+  ( umask 077 && mkdir -p "${f%/*}" \
     && { printf '# %s codex exited %s; its last %s lines:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$3" "${CODEX_TAIL_LINES}"
          tail -n "${CODEX_TAIL_LINES}" "$2"; } > "${t}" \
-    && mv "${t}" "${f}"; } 2>/dev/null || { rm -f "${t}"; echo "swarm: could not keep codex's last lines in ${f}" >&2; }
+    && mv "${t}" "${f}" ) 2>/dev/null || { rm -f "${t}"; echo "swarm: could not keep codex's last lines in ${f}" >&2; }
 }
 
 # FALLBACK_MIN_SECONDS: the least of codex_minutes that must be left for a fallback reviewer to be

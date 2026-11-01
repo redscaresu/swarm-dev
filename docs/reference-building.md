@@ -1077,7 +1077,8 @@ output, stderr merged into stdout, to the screen and to a log in a temp director
 it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
 too) it stops the copy, so a child of codex left holding the output cannot hang the caller. When codex
 fails, codex-review keeps its last 20 lines in `.swarm/codex/<story>.tail` (`<base>.tail` with no
-`SWARM_STORY`), under a line with the time and codex's exit, replacing that story's last one. Two runs
+`SWARM_STORY`), under a line with the time and codex's exit, replacing that story's last one. The file
+and its directory are readable by you only, as codex's output can hold command output or source. Two runs
 that fail together on one story each replace the file whole, and the last to finish wins. A limit
 message no pattern below matches can still be read there. If codex fails and its last 5 lines hold its
 own limit message, codex-review logs a `codex-limit` incident in events.tsv, with `codex-<story>` as its
