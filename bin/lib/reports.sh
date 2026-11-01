@@ -80,7 +80,7 @@ record_finding() {
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ${FINDING_KIND_RE} && ${#kind} -le ${FINDING_KIND_MAX} ]] \
-    || die "kind '${kind}' must be short kebab-case (${FINDING_KIND_MAX} characters at most), like vacuous-test"
+    || die "kind '${kind}' must be short kebab-case (${FINDING_KIND_MAX} characters at most), like vacuous-test"   # loose-match: ok FINDING_KIND_RE is a fixed regex
   text="${text:0:200}"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"

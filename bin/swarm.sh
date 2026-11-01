@@ -324,7 +324,7 @@ load_config() {
         [[ "${value}" != *, ]] || words+=("")
         for w in ${words[@]+"${words[@]}"}; do
           [[ "${w}" =~ ${FINDING_KIND_RE} && ${#w} -le ${FINDING_KIND_MAX} ]] \
-            || die "${where}: demote_kinds: '${w}' is not a finding kind; name kinds separated by commas, each short kebab-case (${FINDING_KIND_MAX} characters at most), such as duplicate-code,efficiency, not '${value}'"
+            || die "${where}: demote_kinds: '${w}' is not a finding kind; name kinds separated by commas, each short kebab-case (${FINDING_KIND_MAX} characters at most), such as duplicate-code,efficiency, not '${value}'"   # loose-match: ok FINDING_KIND_RE is a fixed regex
         done ;;
       lead_epics)
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
