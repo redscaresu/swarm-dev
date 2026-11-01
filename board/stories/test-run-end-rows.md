@@ -17,3 +17,4 @@ Of 1186 start rows in .swarm/test-runs.tsv, 218 have no end row (156 of 252 full
 - A new test sends TERM between the start row and the first job and finds the run's end row; it goes red with the trap moved back after the start row.
 - A new test SIGKILLs a run after its start row, starts another run, and finds exactly one end row for the killed run (its start and PID, status 137); it goes red with the sweep removed.
 - make test still passes; docs/running.md and docs/reference-logs.md's test_runs paragraph say what a status-137 end row means.
+- Two successor runs started together against one stale start row write exactly one recovered end row between them.

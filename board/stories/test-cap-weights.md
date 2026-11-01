@@ -18,3 +18,4 @@ Uses the weight from cap-weight-decision, and builds on test-run-end-rows' scrip
 - Two full runs and some selected runs started together under cap 1 all finish (no deadlock from partial takes).
 - The existing invariants in test_cap_test.sh still pass: atomic slot rename, nothing under ~/.swarm with no, empty or 0 cap, a nested run takes none.
 - The PR names the weight and the durations it came from; AGENTS.md's cap paragraph and docs/running.md say a selected run counts as that fraction.
+- Cap 2: two full runs, or 2k selected runs, hold at once and the next waits.

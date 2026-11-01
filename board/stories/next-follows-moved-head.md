@@ -18,3 +18,4 @@ When no findings went out since the round started, review_next (bin/lib/build.sh
 - With the PR's head still the one in .head, the existing 'there is no next round' and 'round 2 of n1 has started already' checks (tests/review_agent_test.sh:543-544, 575-576) still pass and change no file under .swarm/reviews.
 - A moved head with the worktree behind the PR's head, or with uncommitted changes, is refused as review_at_head refuses it, and no file under .swarm/reviews changes; a check each.
 - review --head's moved-head refusal names `review-agent --next` for a head that moved after a pass, and the check at tests/review_agent_test.sh:891 pins the new text.
+- Both same-round follow cases print the round's instructions and the dropped-lines command pinned to H2.

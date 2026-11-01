@@ -15,6 +15,6 @@ Builds on test-run-end-rows' text in the test_runs paragraph of docs/reference-l
 
 **Done when:**
 - tests/flow_test_runs_test.sh: fixtures with 3 test.sh reap lines in the window, 1 outside it and 1 codex reap give timeouts 3; it goes red with the reap read removed.
-- With no test-runs.tsv the section still prints its header and timeouts 0.
+- With no test-runs.tsv and no reap line the section prints its header and timeouts 0; with no test-runs.tsv but reap lines in events.tsv it counts them.
 - With no reap line in the window the column says 0, and the paragraph says what 0 means (rules.md rule 6).
 - docs/reference-logs.md's test_runs paragraph names the column.
