@@ -297,18 +297,35 @@ check "the new builder is restarted with the rest" "0|yes|yes" \
   "${rc}|$(has 'agent start b4 --kind claude --pane w:b4' "$(calls 'agent start b4')")|$(has "b4: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
 rm -f "${H}/onhandover"
 
-# --- A conductor whose restart fails before its claude exits (herdr gives no session) is told to carry on.
+# --- herdr lists no session for b1 (herdr 0.9.5 lists none): it resumes the one agents.tsv recorded
+# (s0, from before its /clear) with its launch flags, and the output says where the id came from.
+for n in conduct-e b2 b4; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
+echo 0.21.0 > "${P}/.swarm/versions/b1"; claude_list idle idle idle
+sed -i.bak 's/^b1 w:b1 s1$/b1 w:b1 -/' "${H}/agents"
+upgrade e
+check "with no session from herdr, b1 restarts with --resume of agents.tsv's id and its launch flags" "0|yes" \
+  "${rc}|$(has 'agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s0 --model sonnet --effort high --permission-mode auto' "$(calls 'agent start b1')")"
+check "it says the session came from agents.tsv, and b1 moved" "yes|yes" \
+  "$(has 'b1: herdr lists no session for it; resuming s0, the one agents.tsv recorded' "$(cat "${H}/out")")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+check "the resume command and the report to herdr carry that id" "yes|yes" \
+  "$(has $'claude\n--resume\ns0\n--model' "$(cat "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s0.argv")")|$(has '--agent-session-id s0 -- python3 -I' "$(calls 'pane report-agent w:b1')")"
+sed -i.bak 's/^b1 w:b1 -$/b1 w:b1 s1/' "${H}/agents"
+
+# --- A conductor whose restart fails before its claude exits (neither herdr nor agents.tsv gives a
+# session) is told to carry on.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; claude_list idle idle idle
 sed -i.bak 's/^conduct-e w:c sc$/conduct-e w:c -/' "${H}/agents"
+cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.keep"
+printf '2026-10-22\tconduct\tconduct-e\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"   # its newest record has no session
 upgrade e
-check "it is named, never sent a key, and told to carry on on the version it runs" "1|yes||1" \
-  "${rc}|$(has 'conduct-e: herdr gives no session for it' "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')|$(calls 'agent prompt w:c' | grep -c 'could not restart you, so you stay on the version you run')"
+check "it is named with both sources, never sent a key or restarted, and told to carry on on the version it runs" "1|yes||0|1" \
+  "${rc}|$(has 'conduct-e: neither herdr nor agents.tsv gives a session for it' "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')|$(calls 'agent start conduct-e' | grep -c .)|$(calls 'agent prompt w:c' | grep -c 'could not restart you, so you stay on the version you run')"
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; touch "${H}/sayfail"
 upgrade e
 check "one that cannot even be told that is named in the summary, to be told by hand" "1|1" \
   "${rc}|$(sed -n '/: left on /,$p' "${H}/out" | grep -cx 'conduct-e: could not be told to carry on; tell it by hand')"
 rm -f "${H}/sayfail"
-sed -i.bak 's/^conduct-e w:c -$/conduct-e w:c sc/' "${H}/agents"
+sed -i.bak 's/^conduct-e w:c -$/conduct-e w:c sc/' "${H}/agents"; cp "${H}/agents.tsv.keep" "${P}/.swarm/agents.tsv"
 
 # --- A conductor whose session goes right after the request is named at once; its builders are held.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; claude_list idle idle idle; touch "${H}/nohandover"

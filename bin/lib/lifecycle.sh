@@ -5237,9 +5237,10 @@ UPGRADE_HINT=""
 # <end-ms>), write this version's resume command (resume_file), send ctrl+c twice at once (claude
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
 # through clean_env with this version's bin first on PATH and <env-names> and agent_env's names
-# (agent_env_names): --resume of herdr's session for the pane,
-# with the flags its claude ran with (herdr pane process-info). Any failure once claude has exited
-# keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
+# (agent_env_names): --resume of herdr's session for the pane, or when herdr lists the pane with none
+# the one agents.tsv recorded (recorded_session; it says so; a list herdr cannot answer resumes
+# nothing), with the flags its claude ran with (herdr pane process-info). Any failure once claude
+# has exited keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
 # stops only this agent.
 upgrade_one() {
   local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try names
@@ -5252,7 +5253,15 @@ upgrade_one() {
     die "${name}: still busy at the end of the wait, left on ${old}"
   fi
   session="$(session_for_pane "${pane}")"
-  [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+  if [[ -z "${session}" ]]; then
+    # Only when herdr answers and lists the pane with no session: a list that cannot be read says nothing,
+    # and agents.tsv's id may be one from before a /clear.
+    out="$(herdr agent list 2>/dev/null </dev/null | json "sum(1 for a in d['result']['agents'] if a.get('pane_id')=='${pane}')" 2>/dev/null)" || out=""
+    [[ "${out}" == 1 ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+    session="$(recorded_session "${name}")"
+    [[ -n "${session}" ]] || die "${name}: neither herdr nor agents.tsv gives a session for it, so it cannot be resumed; left on ${old}"
+    echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, the one agents.tsv recorded" >&2
+  fi
   out="$(upgrade_flags "${pane}")" && rc=0 || rc=$?
   [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"
   [[ ${rc} -ne 4 ]] || die "${name}: herdr pane process-info could not be read, so it is left as it is, on ${old}"

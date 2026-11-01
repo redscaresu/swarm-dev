@@ -782,9 +782,11 @@ round, though that agent reads idle by the end. A codex review agent holds nothi
 A restart sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
-<session>` with the flags its claude ran with (`herdr pane process-info`; the session from `herdr
-agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
-guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
+<session>` with the flags its claude ran with (`herdr pane process-info`). The session is the one
+`herdr agent list` shows for the pane; when herdr lists the pane with none (herdr 0.9.5 lists none), it is the one
+`agents.tsv` recorded, and the log says so. With neither, the agent is left on its old version and
+its line names both sources. A list herdr cannot answer resumes nothing: the agent is left as it is. Once claude is back, upgrade gives herdr the resume command, as a first start does, so a herdr
+restart keeps its guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
 since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
