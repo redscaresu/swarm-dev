@@ -121,9 +121,9 @@ is "a working conductor whose name herdr holds cut, closed by its full name: the
   "${rc}|$(closes "${ROOT}")|$(has "close: conduct-${LONG} is working, so nothing was closed" "${out}")"
 rm -rf "${P}/.swarm/briefs" "${P}/.swarm/state/${LONG}"
 
-finish none; lay "${ROOT}" "${P}" idle; close
-is "an idle conduct-e with no Finish PR closes, as before" "0|tab close t1|" \
-  "${rc}|$(closes "${ROOT}")|$(cat "${P}/.swarm/state/e" 2>/dev/null)"
+finish none; lay "${ROOT}" "${P}" idle; export CLAUDE_STUB_LOG="${ROOT}/claude.log"; : > "${CLAUDE_STUB_LOG}"; close; unset CLAUDE_STUB_LOG
+is "an idle conduct-e with no Finish PR closes, as before, reading Claude Code's agent list once for the guard and the close" "0|tab close t1||1" \
+  "${rc}|$(closes "${ROOT}")|$(cat "${P}/.swarm/state/e" 2>/dev/null)|$(grep -c '^agents --json$' "${ROOT}/claude.log")"
 
 # --- merge --board of conduct-e's Finish PR, on merge_fixture.sh's project, in a subshell, since its
 # helpers share these names. It runs from conduct-e's own pane while conduct-e works: the merge closes

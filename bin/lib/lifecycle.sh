@@ -556,41 +556,46 @@ back_to_ready() {
   [[ "$(fm "${f}" status)" != review ]] || state_set "${f}" status ready prs "" kept ""
 }
 
-# conductor_busy <conductor> — why closing <conductor> now could cut its work short, or nothing (and
-# it fails): it is working (session_state over close_lists' Claude Code list, under herdr's name for
-# it, which agent_name cuts at 32 characters: busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or
-# herdr's status working where herdr answers for it, or for a session Claude Code no longer lists), its
-# state could not be read (unknown: Claude Code's list failed; fail closed), or its epic's
+# conductor_busy <conductor> — succeed, with BUSY_WHY saying why, when closing <conductor> now could
+# cut its work short, else fail with BUSY_WHY empty. It is busy when it is working (session_state over
+# close_lists' Claude Code list, under herdr's name for it, which agent_name cuts at 32 characters:
+# busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or herdr's
+# status working where herdr answers for it, or for a session Claude Code no longer lists), when its
+# state could not be read (unknown: Claude Code's list failed; fail closed), or when its epic's
 # Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
 # be running in its pane, where a close would kill it. A list of that branch's PRs gh could not give
 # says so: whether such a merge runs is not known (fail closed). The backlog conductor finishes no
 # epic, and a board outside the project's repo, or a project with no origin, opens no Finish PR.
+BUSY_WHY=""
 conductor_busy() {
   local state pane epic origin prs open head n
   # Over the close's own lists (close_lists, which close_panes then keeps: CLOSE_KEEP_READ), so the
   # close reads Claude Code's list once. A session that list does not have (none recorded, or gone)
   # reads herdr's status from CLOSE_AGENTS, empty when herdr gave no list, as agent_status was.
-  close_lists; CLOSE_KEEP_READ=1
+  # Never in a subshell, or the lists it reads are lost to the close: it sets BUSY_WHY instead of
+  # printing.
+  BUSY_WHY=""; close_lists; CLOSE_KEEP_READ=1
   n="$(agent_name "$1")"; state="$(session_state "${n}" "${CLOSE_CLAUDE}" </dev/null)"
   [[ "${state}" != herdr && "${state}" != gone ]] || state="herdr:$(awk -v n="${n}" '$3 == n { print $2; exit }' <<< "${CLOSE_AGENTS}")"
   if [[ "${state}" == busy ]]; then pane="$(agent_field "${n}" pane_id)"; ! api_stopped "${n}" "${pane}" || state=stopped; fi
-  if [[ "${state}" == busy || "${state}" == herdr:working ]]; then echo "is working"; return 0; fi
-  if [[ "${state}" == unknown ]]; then echo "could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0; fi
+  if [[ "${state}" == busy || "${state}" == herdr:working ]]; then BUSY_WHY="is working"; return 0; fi
+  if [[ "${state}" == unknown ]]; then BUSY_WHY="could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0; fi
   epic="$(conduct_epic "$1")"
   [[ "${epic}" != backlog && ${BOARD_IN_REPO} == 1 ]] || return 1
   origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
   head="board/finish-${epic}"
   if ! prs="$(gh pr list -R "${origin}" --head "${head}" --state all --json url,state,headRefName 2>/dev/null)" \
      || ! open="$(SWARM_HEAD="${head}" json "' '.join(p['url'] for p in d if p.get('headRefName') == e['SWARM_HEAD'] and p['state'] == 'OPEN')" <<< "${prs}")"; then
-    echo "could not have its Finish PR read (gh could not list the PRs on ${head}), so whether a swarm.sh merge --board of it still runs in its pane is not known"; return 0
+    BUSY_WHY="could not have its Finish PR read (gh could not list the PRs on ${head}), so whether a swarm.sh merge --board of it still runs in its pane is not known"; return 0
   fi
   [[ -n "${open}" ]] || return 1
-  echo "has its Finish PR ${open} open, and the swarm.sh merge --board that lands it may be running in its pane"
+  BUSY_WHY="has its Finish PR ${open} open, and the swarm.sh merge --board that lands it may be running in its pane"
+  return 0
 }
 
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
-# A conductor (conduct-<name>, no story of that name) that conductor_busy names a reason for is
-# refused before anything closes, the refusal naming it.
+# A conductor (conduct-<name>, no story of that name) that conductor_busy finds busy is refused before
+# anything closes, the refusal naming why (BUSY_WHY).
 # A close that would end a failed build whose PR is still open closes the builder alone and puts the
 # story in review with that PR (keep_build); impossible, paused and cleared-on-error, which would hand
 # the story on, are refused instead. Only with CLOSE_DROP set (close --drop) does it go on to clear
@@ -614,8 +619,8 @@ close_agent() {
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
-  if [[ "$1" == conduct-* && ! -f "${f}" ]] && why="$(conductor_busy "$1")"; then
-    die "close: $1 ${why}, so nothing was closed: close it again once it is idle and no Finish PR of its is open. A swarm.sh merge --board that lands its Finish PR closes $1 itself, once that merge has exited and $1 is idle, as this close was tried"
+  if [[ "$1" == conduct-* && ! -f "${f}" ]] && conductor_busy "$1"; then
+    die "close: $1 ${BUSY_WHY}, so nothing was closed: close it again once it is idle and no Finish PR of its is open. A swarm.sh merge --board that lands its Finish PR closes $1 itself, once that merge has exited and $1 is idle, as this close was tried"
   fi
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
