@@ -5238,8 +5238,9 @@ UPGRADE_HINT=""
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
 # through clean_env with this version's bin first on PATH and <env-names> and agent_env's names
 # (agent_env_names): --resume of herdr's session for the pane, or when herdr lists the pane with none
-# the one agents.tsv recorded (recorded_session; it says so; a list herdr cannot answer resumes
-# nothing), with the flags its claude ran with (herdr pane process-info). Any failure once claude
+# the one agents.tsv recorded, followed through its resume command to where a /clear moved it
+# (recorded_session, restart_session; it says so; a list herdr cannot answer resumes nothing), with
+# the flags its claude ran with (herdr pane process-info). Any failure once claude
 # has exited keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
 # stops only this agent.
 upgrade_one() {
@@ -5254,13 +5255,17 @@ upgrade_one() {
   fi
   session="$(session_for_pane "${pane}")"
   if [[ -z "${session}" ]]; then
-    # Only when herdr answers and lists the pane with no session: a list that cannot be read says nothing,
-    # and agents.tsv's id may be one from before a /clear.
+    # Only when herdr answers and lists the pane with no session: a list that cannot be read says nothing.
     out="$(herdr agent list 2>/dev/null </dev/null | json "sum(1 for a in d['result']['agents'] if a.get('pane_id')=='${pane}')" 2>/dev/null)" || out=""
     [[ "${out}" == 1 ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
     session="$(recorded_session "${name}")"
     [[ -n "${session}" ]] || die "${name}: neither herdr nor agents.tsv gives a session for it, so it cannot be resumed; left on ${old}"
-    echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, the one agents.tsv recorded" >&2
+    # agents.tsv holds the agent's first session. A /clear moves it in <session>.argv (hooks/agent-state.sh),
+    # so follow that to the session the agent is in now, as swarm.sh restart does; the raw id when the file is not resume_file's.
+    out="$(restart_session "${session}" 2>/dev/null)" || out="${session}"
+    if [[ "${out}" == "${session}" ]]; then echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, the one agents.tsv recorded" >&2
+    else echo "swarm: ${name}: herdr lists no session for it; resuming ${out}, which a /clear moved agents.tsv's ${session} to" >&2; fi
+    session="${out}"
   fi
   out="$(upgrade_flags "${pane}")" && rc=0 || rc=$?
   [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"

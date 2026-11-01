@@ -783,9 +783,11 @@ A restart sends ctrl+c twice at once (Claude Code exits only on a second press r
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
 <session>` with the flags its claude ran with (`herdr pane process-info`). The session is the one
-`herdr agent list` shows for the pane; when herdr lists the pane with none (herdr 0.9.5 lists none), it is the one
-`agents.tsv` recorded, and the log says so. With neither, the agent is left on its old version and
-its line names both sources. A list herdr cannot answer resumes nothing: the agent is left as it is. Once claude is back, upgrade gives herdr the resume command, as a first start does, so a herdr
+`herdr agent list` shows for the pane. When herdr lists the pane with none (herdr 0.9.5 lists none),
+it is the one `agents.tsv` recorded, followed through its resume command (the `.argv` file in
+`swarm-dev/resume` under Claude's config folder, which a `/clear` updates) to the session the agent
+is in now; the log says which. With neither, the agent is left on its old version and its line names both sources. A list
+herdr cannot answer resumes nothing: the agent is left as it is. Once claude is back, upgrade gives herdr the resume command, as a first start does, so a herdr
 restart keeps its guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
 since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
