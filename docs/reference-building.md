@@ -391,15 +391,21 @@ a gh failure. A story that only an old build keeps from starting stays blocked t
 `not stacked: <slug>` for the lead. `story` fetches each parent's branch and checks that its PR is still open. If one is not,
 the story goes back to `blocked` and nothing is made. Otherwise the worktree starts at
 `origin/story/<first parent>` with each other parent's branch merged in, events.tsv gets a
-`stacked <slug>` line, and the brief says to open the PR against the base with
-`Merge after <parent PR URLs>` in its body. A merge conflict fails, naming the two branches that
-conflict and their files, and leaves no worktree or branch. The overlap check skips a story's own
+`stacked <slug>` line (`ok (on <parents merged in>)`), and the brief says to open the PR against
+the base with `Merge after <parent PR URLs>` in its body. A parent whose branch conflicts with one
+already merged in is left out: `story` aborts that merge and goes on, so the worktree stays on the
+parents merged so far. The stacked line then reads `ok (on <merged>; left <p>: conflicts with <q> in
+<files>)`, and the brief names `<p>` too. `<p>`'s code reaches the child through the base once its PR
+merges. Until then the child's Stacked line never says to merge `<p>`'s branch, since that merge
+conflicts; once it merges, the line to merge `origin/<base>` covers it. Any other failed merge
+(unrelated histories, say) fails, naming what the parent was merged into and git's reason, and
+leaves no worktree or branch. The overlap check skips a story's own
 parents and its own children, so neither holds the other back under `--strict`. While a parent is
 still on the board, `swarm.sh review` holds the child: it sets it `blocked` with `held_by: <parents>`,
 keeps its `prs:` line, builder, worktree and branch, puts nothing in review, and exits with
 `held: <slug> waits for <p> to merge`, pointing at the child's Stacked line for what comes next. A held child still counts as open in the overlap check, since
 its PR is. The child's review agent, which ran that review, stops there, and the child's builder
-stays open. When a parent's branch moves, the conductor tells the child to merge it in. A held child
+stays open. When a parent's branch moves, the conductor tells the child to merge it in, unless `story` left that parent out. A held child
 is readied again only once every parent has finished, as `ready: <slug> (held: merge origin/<base>,
 review again)` while its worktree is still there. With the worktree gone it is readied plainly,
 without `held_by:` or the `prs:` line, and `story` builds it fresh. A parent squash-merges, so its
