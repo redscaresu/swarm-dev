@@ -64,12 +64,14 @@ outside() { local p="${P}" l="${LOG}" rc=0; P="${ROOT}/nogit"; LOG="${P}/.swarm/
 lines() { if [[ -f "${LOG}" ]]; then wc -l < "${LOG}" | tr -d ' '; else echo 0; fi; }
 
 # appends <name> <n> <command> <target> <outcome-prefix> <swarm args...> — run it; exactly <n> new
-# lines, each five tab-separated fields: ISO UTC time, command, target, actor, outcome.
+# lines, each five tab-separated fields: ISO UTC time, command, target, actor, outcome. A pane-closed
+# line (close_pane's, one per pane the command closed) is the pane's, not the command's: left out
+# here, and checked on its own below.
 appends() {
   local name="$1" n="$2" cmd="$3" target="$4" outcome="$5" was new; shift 5
   was="$(lines)"; run "$@" || true
-  new="$(tail -n +"$((was + 1))" "${LOG}" 2>/dev/null || true)"
-  check "${name}: ${n} line(s)" test "$(( $(lines) - was ))" -eq "${n}"
+  new="$(tail -n +"$((was + 1))" "${LOG}" 2>/dev/null | awk -F'\t' '$2 != "pane-closed"' || true)"
+  check "${name}: ${n} line(s)" test "$(grep -c . <<< "${new}" || true)" -eq "${n}"
   [[ ${n} -gt 0 ]] || return 0
   # shellcheck disable=SC2016 # an awk program
   check "${name}: well-formed" awk -F'\t' -v c="${cmd}" -v t="${target}" -v o="${outcome}" \
@@ -93,7 +95,10 @@ appends "a tell with no kind" 1 tell s1 "tell: the kind must be findings, nudge 
 appends "a tell with an unknown kind" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 bogus findings.md
 appends "the old form, tell <slug> <file>" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 /tmp/f.md
 check "tell never logs the file's contents" bash -c "! grep -q SECRET-CONTENT '${LOG}'"
+was_close="$(lines)"
 appends "close" 1 close s1 ok close s1
+check "close s1, its pane w:1 recorded, also writes one pane-closed line for it" \
+  test "$(tail -n +"$((was_close + 1))" "${LOG}" | awk -F'\t' '$2 == "pane-closed" { print $3 "|" $5 }' | no_version)" = "s1|ok ~~ pane=w:1 slug=s1"
 # A close's cause goes with its command too (close:<cause>), and the target stays the slug.
 appends "close with a cause" 1 close:bound s1 ok close s1 bound
 appends "tidy --yes" 1 tidy - ok tidy --yes

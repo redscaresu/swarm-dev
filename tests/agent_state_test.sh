@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # agent_state_test.sh — structural: herdr's agent_status is read only where the agent-state epic
-# allows, so a Claude agent's state always comes from its session. An awk walk over swarm.sh,
+# allows, so a Claude agent's state always comes from its session (tidy_panes, the one caller with no
+# session, is also run below: its pane-closed lines). An awk walk over swarm.sh,
 # bin/lib/*.sh and bin/lib/*.py tracks the enclosing bash function (a .py file is named for the one it runs for) and,
 # inside panes.py, the python def; every non-comment line naming
 # agent_status must sit in an allowlisted place. Also: agent_state is called without a session only
@@ -109,6 +110,31 @@ for fn in $(awk 'NF {print $1}' <<< "${ALLOWED}") "${NO_SESSION_CALLER}" "${HERD
   check "allowlisted ${fn} is defined" grep -Eq "^${fn}\(\) *\{" "${SWARM}" "${LIB}"/*.sh
 done
 check "panes.py's agent_state has its session branch" grep -q '^    if s is not None:$' "${LIB}/panes.py"
+
+# --- tidy --yes, tidy_panes run: one pane-closed line per pane it closes, its target the retired
+# agent's name, with pane= and agent_fields' slug= and role= (a -done name reads the name before it).
+# w:2 and w:3 hold retired builders; herdr refuses to close w:4 (its pane id is in ${iso}/stuck), which
+# gets no line. herdr is a stub on PATH that answers from the files under ${iso}.
+p="${iso}/proj"; mkdir -p "${p}/.claude/swarm" "${p}/.swarm/state" "${iso}/bin"; : > "${p}/.claude/swarm/config"
+printf '%s\n' "w:2 ta" "w:3 tb" "w:4 tc" > "${p}/.swarm/state/t"; echo w:4 > "${iso}/stuck"
+printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\tsess-%s\n' ta ta tb tb tc tc > "${p}/.swarm/agents.tsv"
+echo '{"result":{"panes":[{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"}]}}' > "${iso}/panes.json"
+echo '{"result":{"agents":[{"pane_id":"w:2","name":"ta-done","agent_status":"idle"},{"pane_id":"w:3","name":"tb-done","agent_status":"idle"},{"pane_id":"w:4","name":"tc-done","agent_status":"idle"}]}}' > "${iso}/agents.json"
+printf '#!/bin/sh\nI="%s"\n' "${iso}" > "${iso}/bin/herdr"
+cat >> "${iso}/bin/herdr" <<'STUB'
+case "$1 $2" in
+  "agent list") cat "$I/agents.json" ;;
+  "pane list") cat "$I/panes.json" ;;
+  "pane close") if grep -qxF "$3" "$I/stuck"; then exit 1; fi ;;
+esac
+STUB
+chmod +x "${iso}/bin/herdr"
+(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:0 PATH="${iso}/bin:${PATH}" bash "${SWARM}" tidy --yes >/dev/null 2>&1) || true
+closed="$(awk -F'\t' '$2 == "pane-closed" { print $3 "|" $5 }' "${p}/.swarm/events.tsv" 2>/dev/null | no_version | sort)"
+check "tidy --yes over two retired panes writes two pane-closed lines, one per pane id, slug= and role= from the name before -done" \
+  test "${closed}" = "ta-done|ok ~~ pane=w:2 slug=ta role=code"$'\n'"tb-done|ok ~~ pane=w:3 slug=tb role=code"
+check "a pane herdr could not close (w:4) writes no pane-closed line, and stays on record" \
+  test "$(grep -c 'pane=w:4' <<< "${closed}")|$(cat "${p}/.swarm/state/t")" = "0|w:4 tc"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
