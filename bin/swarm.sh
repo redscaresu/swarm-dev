@@ -557,7 +557,7 @@ done
 INTERVENE_KINDS="lead-hand user-caught"
 
 # INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
-INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost other"
+INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost review-stopped other"
 
 # intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
 # -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field
