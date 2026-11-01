@@ -6,7 +6,7 @@
 # it that failed. A file passes only on its job's ok result. Under a cap in ~/.swarm/test-cap (below)
 # a run may first wait for a slot. Exits 1 when any file failed, or when xargs stopped before every
 # file had run, or before any file runs when the cap file holds no whole number or a slot cannot be
-# used; an interrupt (INT, HUP, TERM) stops every job and its test first, as the cleanup below does.
+# used; an interrupt (INT, HUP, TERM, PIPE) stops every job and its test first, as the cleanup below does.
 # Under codex it refuses before anything else.
 set -uo pipefail
 
@@ -176,7 +176,12 @@ fi
 # files; then ` shard i/N` for a SHARD. A run going is a file named by its PID in test-runs.d beside
 # the log, there from its start to its end; one whose PID has gone is stale, and removed. TEST_RUNS_LOG,
 # when set, is the file instead, and set empty for the jobs, so a run a test starts itself logs
-# nothing and is no run going. A write that fails is skipped.
+# nothing and is no run going. A write that fails is skipped. A run that ends by a signal it can trap
+# (INT, HUP, TERM, PIPE) writes its end line with that signal's status (130, 129, 143, 141). A run
+# that died with no end line (KILLed: nothing in it runs) left its mark, which holds its start line:
+# the next run to count the runs going finds the mark's PID gone, claims the mark by renaming it, so
+# of two runs only one does, and appends that run's end line, its status 137 and its end, seconds,
+# load, CPUs and other runs `-`, which no run measured; never a second end line for a run that has one.
 runs_log="${TEST_RUNS_LOG-}"
 if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
   runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
@@ -222,6 +227,7 @@ export TEST_REAP_BRANCH="${branch}"   # for the jobs' reap lines
 trap 'exit 130' INT
 trap 'exit 129' HUP
 trap 'exit 143' TERM
+trap 'exit 141' PIPE   # untrapped, bash runs the EXIT trap with the last command's status, often 0
 
 # The cap: ~/.swarm/test-cap, a whole number N above 0, lets at most N runs go at once on this
 # machine, whatever their project; absent, empty or 0, there is no cap and nothing is made under
@@ -336,50 +342,80 @@ if [[ "${cap:-0}" -gt 0 ]]; then
 fi
 
 t_start=${SECONDS} t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# others — how many other runs are going: live marks but this run's.
+# others — how many other runs are going: live marks but this run's. A mark whose PID has gone is
+# ended (end_dead), and so is a claim on one whose claiming run has gone too.
 others() {
-  local m n=0
+  local m p n=0
   for m in "${marks}"/*; do
     [[ -e "${m}" && "${m##*/}" != "$$" ]] || continue
-    if kill -0 "${m##*/}" 2>/dev/null; then n=$((n + 1)); else rm -f "${m}"; fi
+    if kill -0 "${m##*/}" 2>/dev/null; then n=$((n + 1)); else end_dead "${m}" "${m##*/}"; fi
+  done
+  for m in "${marks}"/.dead.*; do
+    if [[ -e "${m}" && "${m##*.}" != "$$" ]] && ! kill -0 "${m##*.}" 2>/dev/null; then
+      p="${m#"${marks}"/.dead.}"
+      end_dead "${m}" "${p%.*}"
+    fi
   done
   echo "${n}"
 }
-# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot.
-log_run() {
-  [[ -n "${runs_log}" ]] || return 0
-  { mkdir -p "${marks}" && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
-    "$(LC_ALL=C uptime | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN)" "$(others)" "$3" "$$" >> "${runs_log}"; } 2>/dev/null || true
+# end_dead <mark> <pid> — a gone run's mark, or a gone run's claim on one: claim it by renaming it to
+# .dead.<pid>.<this PID>, which fails for every run but the first, then append that run's end line
+# when the mark holds its start line (11 fields, end and status empty, its PID last) and the log has
+# no end line for that start and PID yet, and remove the claim. An empty mark (a run KILLed before its
+# start line, or one from a test.sh before marks held it) ends with no line.
+end_dead() {
+  local claim="${marks}/.dead.$2.$$" line=""
+  mv "$1" "${claim}" 2>/dev/null || return 0
+  [[ ! -f "${runs_log}" ]] || line="$(awk -F'\t' -v OFS='\t' -v pid="$2" -v lf="${runs_log}" '
+    FILENAME == lf { if ($10 != "" && $11 == pid) ended[$1] = 1; next }
+    FNR == 1 && NF == 11 && $2 == "" && $10 == "" && $11 == pid && !($1 in ended) {
+      $2 = $3 = $7 = $8 = $9 = "-"; $10 = 137; print }' "${runs_log}" "${claim}")"
+  [[ -z "${line}" ]] || printf '%s\n' "${line}" >> "${runs_log}"
+  rm -f "${claim}"
 }
-[[ -z "${runs_log}" ]] || { mkdir -p "${marks}" && : > "${marks}/$$"; } 2>/dev/null
-log_run "" "" ""
+# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot. For
+# the start line (status empty) it first makes this run's mark, empty, so a run that counts the runs
+# going while this one builds its line counts it; then it puts the line in the mark, then in the log.
+log_run() {
+  local line
+  [[ -n "${runs_log}" ]] || return 0
+  { mkdir -p "${marks}" && { [[ -n "$3" ]] || : > "${marks}/$$"; } && line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
+    "$(LC_ALL=C uptime | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN)" "$(others)" "$3" "$$")" &&
+    { [[ -n "$3" ]] || printf '%s\n' "${line}" > "${marks}/$$"; } && printf '%s\n' "${line}" >> "${runs_log}"; } 2>/dev/null || true
+}
 
-run="$(mktemp -d)" || exit 1
-mkdir -p "${run}/logs" "${run}/jobs"
 # On any exit, stop the jobs left (only after xargs stopped early, or an interrupt, can there be
 # any): TERM each, which stops its test's group, and give them 5 s; then TERM the group of any still
 # there, and KILL it 2 s later, and the job. Only then do the logs go, and last the slot.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
   local rc=$? j i g left
-  for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
-  for ((i = 50; i > 0; i--)); do
-    left=""
-    for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -0 "${j##*/}" 2>/dev/null && left=1; done
-    [[ -n "${left}" ]] || break
-    sleep 0.1
-  done
-  for j in "${run}"/jobs/*; do
-    [[ -e "${j}" ]] || continue
-    g="$(cat "${j}" 2>/dev/null)"; [[ -z "${g}" ]] || stop_group "${g}" 2
-    kill -KILL "${j##*/}" 2>/dev/null
-  done
-  rm -rf "${run}"
+  if [[ -n "${run}" ]]; then
+    for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
+    for ((i = 50; i > 0; i--)); do
+      left=""
+      for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -0 "${j##*/}" 2>/dev/null && left=1; done
+      [[ -n "${left}" ]] || break
+      sleep 0.1
+    done
+    for j in "${run}"/jobs/*; do
+      [[ -e "${j}" ]] || continue
+      g="$(cat "${j}" 2>/dev/null)"; [[ -z "${g}" ]] || stop_group "${g}" 2
+      kill -KILL "${j##*/}" 2>/dev/null
+    done
+    rm -rf "${run}"
+  fi
   log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
   [[ -z "${runs_log}" ]] || rm -f "${marks}/$$"
   free_slot
 }
+# Set before the start line, so every exit after it, a trapped signal's too, writes the end line.
+run=""
 trap cleanup EXIT
+log_run "" "" ""
+
+run="$(mktemp -d)" || exit 1
+mkdir -p "${run}/logs" "${run}/jobs"
 
 failed=0
 # show <file>... — after a phase: each failed file's log, whole, and any file whose job ended with no

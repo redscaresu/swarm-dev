@@ -958,6 +958,19 @@ review_own_pane() {
     || die "${REVIEW_CMD}: only review-$1, in its pane ${pane}, runs its wording recheck, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; ${REVIEW_UNDONE}"
 }
 
+# review_moved <slug> <PR URL> — for review_next: REVIEW_FROM is the head .swarm/reviews/<slug>.head
+# records when gh reads the PR's head as another one, else empty (the same head, or no head on record).
+# Dies, as review-agent --next, when gh cannot read the PR's head. Not for $(...): main logs its die's message.
+review_moved() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.head" was head
+  REVIEW_FROM=""
+  { IFS= read -r was < "${f}"; } 2>/dev/null && [[ -n "${was}" ]] || return 0
+  head="$(gh pr view "$2" --json headRefOid --jq .headRefOid 2>/dev/null)" || head=""
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "review-agent --next: could not read $2's head (gh pr view --json headRefOid), so whether it moved since this round started is unknown; no round was started: run swarm.sh review-agent --next $1 <PR URL> again"
+  [[ "${head}" == "${was}" ]] || REVIEW_FROM="${was}"
+}
+
 # review_next <slug> <PR URL> — review-agent --next: the next review round of review-<slug>, run from its
 # own pane, in the same session; it starts no agent. Once the worktree is at the PR's head with nothing
 # uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
@@ -968,10 +981,15 @@ review_own_pane() {
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
 # round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
 # when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
-# has started already (review_rounds): no findings round since, so its review would be lost.
-# review_agent's refusal while review-<slug> is live stays for every other caller.
+# has started already (review_rounds): no findings round since, so its review would be lost. Two of those
+# refusals, the round-1 one and the started-already one, give way in one case: once this build has an ok
+# start and no findings round came since it (round == started), a PR head that moved from the one in <slug>.head (review_moved) is followed. The same round
+# is printed again, naming both heads, with the same checks, files and lines as a next round, so the
+# round count stays: main's review-agent:next line logs the same round, which review_rounds reads as
+# the round already started. A follow whose head is back at the recorded one by review_at_head's read is
+# refused, touching nothing. review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
-  local slug="$1" pr="$2" out pane round rounds base
+  local slug="$1" pr="$2" out pane round rounds started base lead
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
@@ -986,24 +1004,35 @@ review_next() {
   fi
   [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
     || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
-  rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
-  # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
-  # build's story event resets the count), there is no next round.
-  [[ "${round}" -gt 1 ]] \
-    || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
-  # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
-  [[ "${rounds#* }" -gt 0 ]] \
-    || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
-  [[ "${rounds#* }" -lt "${round}" ]] \
-    || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: send this round's findings with swarm.sh tell ${slug} findings <file> first, then run it again"
+  rounds="$(review_rounds "${slug}")"; round="${rounds% *}"; started="${rounds#* }"
+  # A head pushed since this build's round started, with no findings sent since, is that round's to follow.
+  REVIEW_FROM=""
+  if [[ "${started}" -gt 0 && "${round}" -eq "${started}" ]]; then review_moved "${slug}" "${pr}"; fi
+  if [[ -z "${REVIEW_FROM}" ]]; then
+    # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
+    # build's story event resets the count), there is no next round.
+    [[ "${round}" -gt 1 ]] \
+      || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
+    # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
+    [[ "${started}" -gt 0 ]] \
+      || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
+    [[ "${started}" -lt "${round}" ]] \
+      || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: send this round's findings with swarm.sh tell ${slug} findings <file> first, then run it again"
+  fi
   review_at_head "${slug}" "${pr}" next
+  # review_moved read the head once; a push back to the recorded head since leaves nothing to follow.
+  [[ -z "${REVIEW_FROM}" || "${REVIEW_HEAD}" != "${REVIEW_FROM}" ]] \
+    || die "review-agent --next: ${pr}'s head is back at ${REVIEW_FROM}, the head round ${round} of ${slug} started on, since --next first read it; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again"
   base="$(base_for "${REVIEW_SRC}")" \
     || die "review-agent --next: could not tell ${slug}'s base branch, which its dropped-lines check needs; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   # The brief pins the head of the round it started: this round's head replaces it there.
-  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  lead="Review round ${round} of story ${slug}:"
+  [[ -z "${REVIEW_FROM}" ]] \
+    || lead="Review round ${round} of story ${slug} again: ${pr}'s head moved from ${REVIEW_FROM} to ${REVIEW_HEAD} with no findings sent since this round started, so the round stays ${round};"
+  echo "${lead} review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
   echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` in the background and act on its exit as your brief's dropped-lines check says."
 }
