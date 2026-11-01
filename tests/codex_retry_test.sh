@@ -20,6 +20,8 @@ cleanup() {
   rm -rf "${ROOT}"
 }
 trap cleanup EXIT
+# No agent starts here, but swarm.sh reads Claude Code's config: never the real one.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 BIN="${ROOT}/stub-bin"; mkdir -p "${BIN}"
 fails=0
 
@@ -118,18 +120,20 @@ under() { python3 -c 'import sys; print("yes" if sys.argv[2] != "none" and float
 
 # --- Less of codex's time than the wait plus the fallback's least time: no retry, and the run ends
 # within that time plus the grace, counted from codex's first call (swarm.sh's own start is not codex's
-# time). The 20 s wait a retry would add is far past it.
+# time, nor are its own steps after codex, which a busy machine slows by seconds). The 40 s wait a retry
+# would add is far past it.
 stubs; { echo "${STAMP} '${ROOT}/t.first'"; echo 'sleep 1'; echo "echo \"${RATE_MSG}\" >&2"; echo 'exit 1'; } > "${ROOT}/codex.1"
 nr="$(count codex-retry)"
-RETRY=20 review 8
-check "with 8 s of codex's time and a 20 s retry wait, codex runs once and the run ends within 8 s plus the grace" \
-  "1|1|${nr}|yes" "${rc}|$(calls)|$(count codex-retry)|$(under 9 "$(since "${ROOT}/t.first")")"
+RETRY=40 review 15
+check "with 15 s of codex's time and a 40 s retry wait, codex runs once and the run ends within 15 s plus the grace" \
+  "1|1|${nr}|yes" "${rc}|$(calls)|$(count codex-retry)|$(under 16 "$(since "${ROOT}/t.first")")"
 
-# --- A late rate limit, then a retry that hangs: the hung codex is stopped within the first budget,
+# --- A late rate limit (6 s), then a retry that hangs: the hung codex is stopped within the first budget,
 # counted from codex's first call to its last sign of life (it writes the time every 0.2 s until it is
-# killed), and it and its child are gone.
+# killed), and it and its child are gone. 20 s leaves room for the 4 s wait and a busy machine's slow
+# starts; a retry given a fresh budget would run about 30 s.
 stubs
-{ echo "${STAMP} '${ROOT}/t.first'"; echo 'sleep 3'; echo "echo \"${RATE_MSG}\" >&2"; echo 'exit 1'; } > "${ROOT}/codex.1"
+{ echo "${STAMP} '${ROOT}/t.first'"; echo 'sleep 6'; echo "echo \"${RATE_MSG}\" >&2"; echo 'exit 1'; } > "${ROOT}/codex.1"
 cat > "${ROOT}/codex.2" <<EOF
 echo \$\$ > '${ROOT}/pid.codex'
 sleep 600 &
@@ -137,12 +141,12 @@ echo \$! > '${ROOT}/pid.child'
 while :; do ${STAMP} '${ROOT}/t.last.tmp' && mv '${ROOT}/t.last.tmp' '${ROOT}/t.last'; sleep 0.2; done
 EOF
 nreap="$(count reap)"
-RETRY=2 review 10
+RETRY=4 review 20
 gone() { if [[ -f "$1" ]] && ! kill -0 "$(cat "$1")" 2>/dev/null; then echo yes; else echo no; fi; }
 ran="$(python3 -c 'import sys; print("%.1f" % (float(open(sys.argv[2]).read()) - float(open(sys.argv[1]).read())))' "${ROOT}/t.first" "${ROOT}/t.last" 2>/dev/null || echo none)"
-check "a late rate limit then a hung retry: two calls, the retry stopped within the 10 s budget (2 s allowed: the whole-second clock and a poll), as a timeout" \
+check "a late rate limit then a hung retry: two calls, the retry stopped within the 20 s budget (2 s allowed: the whole-second clock and a poll), as a timeout" \
   "2|yes|yes|$((nreap + 1))" \
-  "$(calls)|$(under 12 "${ran}")|$(has "codex skipped: timed out" "${out}")|$(count reap)"
+  "$(calls)|$(under 22 "${ran}")|$(has "codex skipped: timed out" "${out}")|$(count reap)"
 check "the hung retry and its child are stopped" "yes|yes" "$(gone "${ROOT}/pid.codex")|$(gone "${ROOT}/pid.child")"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
