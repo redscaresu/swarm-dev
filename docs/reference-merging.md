@@ -567,8 +567,28 @@ stories, it sends the epic's running conductor one note naming them (`swarm.sh t
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
 builder limits. A conductor that has written its report has finished and counts as not running.
 When no conductor runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says
-when). It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
-as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
+when). When it starts none, one line says why:
+
+- `no conductor started for <url>: it made no story ready`, when the PR readied no story.
+- `no conductor started: no story is ready to build`, when no story on the board is ready.
+- `no conductor started: only fix-main stories are ready, and swarm.sh next names them first`, when
+  the only ready stories are `fix-main` ones.
+- `no conductor started: conduct-<epic> runs already`, for an epic with newly ready stories whose
+  conductor runs and gets the note (`conduct-backlog-<dir>-<hash>` for stories with no epic).
+- `no conductor started for <url>: the board's checkout has no upstream to pull it from; pull the
+  board, then run swarm.sh next`, when the main checkout has no upstream.
+- The lines of [reference-building.md § Building](reference-building.md#building), where a
+  conductor has reported, is gone, or cannot start yet.
+
+An epic the PR set active that has no stories gets no conductor: its stop rule would have it write
+its report at once, with the epic unplanned. Merge prints `epic <epic> is active with no stories:
+plan it (next offers plan-epic <epic>)`, or `plan it once next offers plan-epic <epic>` while `next`
+does not offer it yet (something it depends on is still open, say). For a built epic, one whose
+stories have all merged and left the board, it prints `epic <epic> is active with its stories all
+built: no conductor started for it`, since next never plans it again.
+
+It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged as a
+`reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
 cannot list its agents, or when a note or a start fails. After the first two it starts no conductor
 either, since the board was not pulled. After a failed reconcile, each running conductor still gets
 a note that the board PR merged, naming the failure, since which stories it made ready is not known.

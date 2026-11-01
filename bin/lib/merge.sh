@@ -1290,15 +1290,26 @@ group_of() { if [[ "$1" == - ]]; then echo "with no epic"; else echo "of epic $1
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
+# With --say <groups> (ready_tell's call; next's has none, so its lines stay as they are), it also
+# says why it starts none where it would otherwise be silent: when no story is ready to build (or only
+# fix-main ones, which next names), and for
+# each of <groups> (board_ready's epic column, one a line) whose conductor runs already.
 # Under a report's deadline (next runs it with next_reads on), its reads are cut there too, and it
 # fails closed: once a read made since it began is cut (report_cuts), no conductor starts, and each it
 # would have started is named with a line telling the lead to run next again. A cut read could hide a
 # conductor stopped on an expired login or an API error. The start itself runs without next_reads'
 # forms, so it is never cut.
 conduct_ready() {
-  local e name arg ready log c why todo report stop said="" rc=0 cuts
-  ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
-  [[ -n "${ready}" ]] || return 0
+  local e name arg ready all log c why todo report stop said="" rc=0 cuts say="" groups=""
+  [[ "${1:-}" != --say ]] || { say=1; groups="${2:-}"; }
+  all="$(board_ready --started)"
+  ready="$(awk '$1 !~ /^fix-main-/' <<< "${all}")"
+  if [[ -z "${ready}" ]]; then
+    if [[ -z "${say}" ]]; then :
+    elif [[ -n "${all}" ]]; then echo "no conductor started: only fix-main stories are ready, and swarm.sh next names them first"
+    else echo "no conductor started: no story is ready to build"; fi
+    return 0
+  fi
   cuts="$(report_cuts)"
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
@@ -1315,7 +1326,8 @@ conduct_ready() {
     [[ -n "${e}" ]] || continue
     name="$(group_conductor "${e}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
     if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
-      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
+      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"
+      elif [[ -n "${say}" ]] && grep -qxF -- "${e}" <<< "${groups}"; then echo "no conductor started: ${name} runs already"; fi
       continue
     fi
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || { echo "no conductor started: another project's agent holds the name ${name}"; continue; }
@@ -1549,16 +1561,24 @@ story_note() {
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now (conductor_note); with none running,
-# say so. Then conduct_ready starts the conductors ready work lacks. With no upstream nothing is
-# pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one) is a
+# say so. With no new story, say that <url> made none ready. An epic <url> made active that has no
+# stories gets no conductor, whose stop rule (stop_rule) would have it report at once with the epic
+# unplanned: a line says to plan it, and whether next offers plan-epic for it yet (plannable_epics),
+# or, for a built one (epic_built), which next never plans again, that none started.
+# Then conduct_ready --say starts the conductors ready work lacks, and says why it starts none for a
+# group of new stories whose conductor runs, or when nothing is ready. With no upstream nothing is
+# pulled, so nothing is new and nothing starts, and a line says so. A failed reconcile (logged as merge logs one) is a
 # warning, and each running conductor still gets a note that <url> merged, naming the failure, its
 # herdr calls bounded (bound_herdr). That, a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d
+  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d k
   d="$(board_rel)"
-  has_upstream || return 0
+  if ! has_upstream; then
+    echo "no conductor started for ${url}: the board's checkout has no upstream to pull it from; pull the board, then run swarm.sh next"
+    return 0
+  fi
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
   # shellcheck disable=SC2034 # read in another file
@@ -1613,7 +1633,24 @@ ready_tell() {
     conductor_note "${e}" "${note}" "${slugs}"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
-  conduct_ready || true   # a failed start has printed its warning
+  [[ -n "${new}" ]] || echo "no conductor started for ${url}: it made no story ready"
+  # An epic <url> made active with no stories waits for its plan, not a conductor.
+  while IFS=$'\t' read -r p k; do
+    [[ "${k}" == 0 && "${p}" == "${d}epics/"*.md ]] || continue
+    e="$(basename "${p}" .md)"
+    # Still active on the pulled board: a later PR pulled with it may have changed or deleted it.
+    [[ "$(fm "${BOARD}/epics/${e}.md" status 2>/dev/null)" == active ]] || continue
+    ! epic_has_stories "${e}" || continue
+    # A built epic (its stories merged and gone) is never planned again: next's conduct step has it.
+    if epic_built "${e}"; then
+      echo "epic ${e} is active with its stories all built: no conductor started for it"
+    elif grep -qxF -- "${e}" <<< "$(plannable_epics)"; then
+      echo "epic ${e} is active with no stories: plan it (next offers plan-epic ${e})"
+    else
+      echo "epic ${e} is active with no stories: plan it once next offers plan-epic ${e}"
+    fi
+  done <<< "${was}"
+  conduct_ready --say "$(awk '{ print $2 }' <<< "${new}" | sort -u)" || true   # a failed start has printed its warning
 }
 
 # run_fail_lines <owner/repo> <run id> <end> [attempt] — the FAIL lines of a run's failed jobs (of
