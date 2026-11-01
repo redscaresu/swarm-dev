@@ -352,10 +352,12 @@ cache off (the tests whose `gh` stub changes between runs do).
 
 `swarm.sh wait-pr` keeps its CI reads in `.swarm/poll-cache/` (`bin/lib/poll_cache.py`) for under one
 poll, so waits on one head share them. Each file is one read's output, named by a hash of the gh
-command and holding that command, so a different command never reads it. A read is kept only once
+command and holding that command and when the read started, so a different command never reads it
+and a slow read is kept as old as it is. A read is kept only once
 it parsed whole, written to a temp file and renamed. While one wait makes a read, a `.lock` file
-holding its pid makes another wait for the result instead of reading too; a lock whose pid has
-exited, or one held past the max age, no longer holds the others. Any file in the directory older
+holding its pid makes another wait for the result instead of reading too. A lock whose pid has
+exited, or one older than the waiting reader's max age (its reader stopped, hung, or killed before it
+wrote its pid), no longer holds the others, and neither does any lock once a reader has waited its max age. Any file in the directory older
 than 10 minutes is deleted whenever a read is kept.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over

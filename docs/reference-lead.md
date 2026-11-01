@@ -160,7 +160,8 @@ whether a builder is at work or not. For each one it prints:
 - `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` when GitHub reads the PR as
   mergeable, its checks are green, `.swarm/reviews/<slug>.md` is a pass on its head (as `review_pass` reads
   it), and the PR was opened and that file last written `queue_minutes` or more ago. `<sha>` is that
-  reviewed head, so a push after the line leaves merge refusing the PR. When the file lists findings, the
+  reviewed head, so a push after the line leaves merge refusing the PR, unless it added only git's own
+  clean merges of the base. When the file lists findings, the
   exit is `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head <sha> <PR URL> once every finding is
   declined`: a pass means only that a review finished on the head. Green here is narrower than
   `ci_gate`'s rule: every check run and status in the rollup GitHub returns passed (success, skipped or
@@ -394,12 +395,15 @@ builder was recorded). A hold answers the alert but starts nothing, so if no age
 back by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
 review the exit is never an unpinned merge. With one PR and a findings file
 `.swarm/reviews/<slug>.md` that passes on its 40-hex `head:` line, it is
-`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
+`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since, unless the move added
+only git's own clean merges of the base ([reference-merging.md § Merging](reference-merging.md#merging),
+Held for dropped base lines). With several PRs, or
 no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
 each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
 compares the head wait-pr printed with the exit's `<sha>`: the same, it merges; different, the PR was
-pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead, since merge
-refuses the old pin and the line, already seen, would not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead: merge refuses
+the old pin unless the push added only clean merges of the base, and the line, already seen, would
+not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
 checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
 story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
 base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same

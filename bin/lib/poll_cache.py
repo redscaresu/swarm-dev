@@ -5,7 +5,7 @@
 # a lone waiter never reads its own entry; every other gh read goes to GitHub.
 #
 # One JSON file per command form (gh's argv and the output filter, if any), named by its sha256, holding
-# that form, the time it was written and gh's output. A reader takes it only when the form matches its
+# that form, the time its read started and gh's output. A reader takes it only when the form matches its
 # own exactly and it is younger than the reader's max age. An entry is written only after the caller
 # accepted the output (through's accept returned), by a temp file renamed over the old one (macOS has
 # no flock), so no reader sees half of one. Writing one deletes any file in the directory older than
@@ -13,8 +13,9 @@
 #
 # Two readers that miss together make one read: the first to create <key>.lock (holding its pid) reads,
 # and the others wait for its entry. A waiter reads for itself when the lock goes with no entry written
-# (the read failed or was not accepted), when the pid in it has exited (killed before it wrote), or
-# once it has waited its max age.
+# (the read failed or was not accepted), when the pid in it has exited (killed before it wrote), when
+# the lock is older than the waiter's max age (its reader stopped or hung, or killed before it wrote its
+# pid), or once it has waited its max age.
 #
 # A reader that took an entry writes its age, the oldest it took, in whole seconds, to the file
 # SWARM_POLL_CACHE_AGE names, if any: wait-pr pauses that much less before its next poll, so a wait that
@@ -55,13 +56,14 @@ def took(secs):
         except OSError:
             pass
 
-def put(path, form, out):
-    """Keeps out for form at path, best effort: a failed write costs only a later read."""
+def put(path, form, out, at):
+    """Keeps out for form at path as read at at (epoch seconds), best effort: a failed write costs only a
+    later read."""
     tmp = None
     try:
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"form": form, "at": time.time(), "out": out}, f)
+            json.dump({"form": form, "at": at, "out": out}, f)
         os.replace(tmp, path)
         tmp = None
     except (OSError, TypeError, ValueError):
@@ -125,6 +127,13 @@ def release(path, pid):
     if owner(path) == pid:
         remove(path)
 
+def stale(path, age):
+    """Whether the lock at path was made age seconds ago or more."""
+    try:
+        return time.time() - os.stat(path).st_mtime >= age
+    except OSError:
+        return False
+
 def holder(path):
     """The lock's state and pid: "gone", "dead" (its pid has exited) or "alive" (one still being written
     too)."""
@@ -164,8 +173,9 @@ def through(argv, filt, fetch, accept):
         if held is not False or time.time() >= end:
             break
         state, pid = holder(lk)
-        if state == "dead":
-            # Killed before it wrote or let go: the next pass takes the lock (one waiter does).
+        if state == "dead" or (state == "alive" and stale(lk, age)):
+            # Killed before it wrote or let go, or held past the max age (a reader stopped, hung, or killed
+            # before it wrote its pid): the next pass takes the lock (one waiter does).
             release(lk, pid)
         elif state == "alive":
             time.sleep(LOCK_PAUSE)
@@ -175,9 +185,11 @@ def through(argv, filt, fetch, accept):
             out = entry(path, form, age)
             if out is not None:
                 return accept(out)
+        # Stamped with when the read started: a read slower than the max age is kept as old as it is.
+        at = time.time()
         out = fetch()
         got = accept(out)
-        put(path, form, out)
+        put(path, form, out, at)
         return got
     finally:
         if held:

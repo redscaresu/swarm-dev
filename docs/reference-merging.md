@@ -84,7 +84,9 @@ blocked story once every slug in its `depends_on` is finished. It leaves an old 
 story's findings file. The review agent runs `swarm.sh review <slug> --head <that SHA> <PR URL>`, then
 `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
-Both refuse a head pushed since the review. Reconcile pulls the board the way it does for you, and finishes
+`review --head` refuses a head pushed since the review. `merge --head` refuses one too, unless all the push
+added is git's own clean merges of the base: it merges that head with no new review (Held for dropped
+base lines, below). Reconcile pulls the board the way it does for you, and finishes
 the story, closing its builder. Nobody closes the builder before that, because closing
 a story that is still `ready` counts a failed build. Each review agent merges as soon as its own
 review passes, so on a base with a merge queue the queue tests the PRs together and merges them in
@@ -164,7 +166,8 @@ first story it found uncovered. A board outside the project's repo never covers 
 covered release still goes through the docs check below.
 
 `swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
-unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
+unless the PR is open, its head is `<sha>` when `--head` names one (or adds to `<sha>` only git's own
+clean merges of the base, Held for dropped base lines), and a story or epic in `review`
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
 under the board instead. Under either merge mode, it also refuses a story PR or a `--board` PR that
@@ -235,6 +238,20 @@ since the record separates its entries with ` | `. A later `swarm.sh merge` that
 removes the record. `--release` reads no commits, since a release PR changes only `plugin.json`. A
 commit that puts a dropped line back does not clear the hold: the scan reads each merge as it was made.
 Only a branch rebuilt without that merge, or your merge by hand, ends it.
+
+Under `merge --head <reviewed>`, a head that has moved past the reviewed one is checked first, at
+the head check. `merge` takes it with no new review when every commit on its first-parent chain back
+to `<reviewed>` is a merge with two parents, the second on the base, and an empty `git show
+--remerge-diff`. Such a merge holds exactly the tree git's own merge of its parents makes,
+so a resolved conflict, a dropped line or a hand edit cannot hide in it. It prints `accepted: <PR URL>'s head <new> adds only clean merges of <base> (<merges>) to
+<reviewed>, the reviewed head; merging <new>`, and every check after that, the dropped-lines check
+included, reads the new head. Any other head is refused with a line that says why and ends `review the new head`: a
+commit of the PR's own, a merge with a resolved conflict or an edit, a merge of a branch that is not
+on the base, a reviewed head that is not on the new head's first-parent chain (a branch reset to the
+commit before it and merged with the base, say), or git below 2.36. A merge that drops a base line
+always has a non-empty remerge-diff, so under `--head` it is refused there, for a new review, before
+the dropped-lines check could hold it. The check fetches the way `dropped-lines` does, into refs of
+its own, and deletes them when it ends.
 
 **A base that moved.** A PR's CI ran against its base as the base was then. Two PRs can each pass
 alone and break the base together: in v0.28.0, #527 and #530 each passed CI before #529 landed, and
@@ -1020,6 +1037,7 @@ Where the base has a merge queue, `merge` enqueues the PR.
 Where it has none and the base gained code since the head's CI ran, `merge` has GitHub merge the base in, waits for the new head's CI and merges that head ([§ Merging](reference-merging.md#merging)).
 If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](reference-merging.md#merging)).
 Under either merge mode it holds a story or `--board` PR whose own merge of the base dropped a line of the base, or whose merges it cannot check, and refuses one whose head moved on GitHub for a new review ([§ Merging](reference-merging.md#merging), Held for dropped base lines).
+With `--head <sha>`, it merges a head that moved past `<sha>` only when all it added is git's own clean merges of the base (same section).
 
 **`swarm.sh review <slug> [--head <sha>] <PR URL>...`**
 Put a story or epic whose PRs are green and reviewed in review, with its PRs on its `prs:` line; a story whose `depends_on` parents are still open is held instead.

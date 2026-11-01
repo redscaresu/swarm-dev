@@ -4,12 +4,14 @@
 # read per poll between two waiters, two with the cache off; two that miss together make one read; a
 # fetcher killed before it writes, or one whose read fails, leaves the other to read for itself; a new
 # head is read from GitHub; a flip to green is seen within one poll, by a waiter out of step with the
-# other too; and ci_gate head without SWARM_POLL_CACHE reads GitHub while a fresh entry is on disk.
+# other too; ci_gate head without SWARM_POLL_CACHE reads GitHub while a fresh entry is on disk; and a lock
+# older than the max age holds no one.
 # gh is a stub on PATH: it logs "<epoch> <waiter> <args>" for every call to gh.log; pr view answers the
 # head in ${FX}/head; check runs are one check, pending until ${FX}/green exists. With ${FX}/hold, a
 # check-runs read writes "<its ci_gate's pid> <waiter> <its pid>" to ${FX}/arrived.<pid> and waits for
 # ${FX}/release (30 s at most); with ${FX}/fail, the first check-runs read fails with HTTP 502; with
-# ${FX}/short, check-runs answers one of a total_count of 2, a read ci_gate does not accept. One
+# ${FX}/short, check-runs answers one of a total_count of 2, a read ci_gate does not accept; with
+# ${FX}/slow, a check-runs read takes that many seconds. One
 # workflow, ci.yml (on: pull_request), always has a green pull_request run. python3 is a wrapper on PATH
 # that logs "<waiter>" to passes.log for each ci_gate head run, then runs the real python3.
 set -euo pipefail
@@ -50,6 +52,7 @@ case "${a}" in
       for _ in $(seq 600); do [ ! -e "${FX}/release" ] || break; sleep 0.05; done
     fi
     if [ -e "${FX}/fail" ] && mkdir "${FX}/failed" 2>/dev/null; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+    [ ! -e "${FX}/slow" ] || sleep "$(cat "${FX}/slow")"
     if [ -e "${FX}/short" ]; then echo '{"total_count":2,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'; exit 0; fi
     if [ -e "${FX}/green" ]; then s=completed c='"success"'; else s=in_progress c=null; fi
     printf '{"total_count":1,"check_runs":[{"name":"test","status":"%s","conclusion":%s}]}\n' "${s}" "${c}" ;;
@@ -247,5 +250,33 @@ is "direct: without SWARM_POLL_CACHE it reads all three, the entries fresh" "1 1
 is "direct: with SWARM_POLL_CACHE again it reads none of them" "0 0 0" "$(reads)"
 : > "${ROOT}/gh.log"; gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=0
 is "direct: SWARM_POLL_CACHE_SECONDS=0 is off, so it reads all three" "1 1 1" "$(reads)"
+
+# --- A read slower than the max age is kept as old as it is, stamped with when it started: the next call
+# reads check runs again rather than take a snapshot from before it as fresh.
+fresh "${H}"; touch "${FX}/green"; echo 4 > "${FX}/slow"
+gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=3
+rm "${FX}/slow"; : > "${ROOT}/gh.log"
+gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=3
+is "slow read: the next call ends green" 0 "${rc}"
+is "slow read: the next call reads check runs again" 1 "$(reads | cut -d' ' -f1)"
+
+# --- A lock older than the max age holds no one, though its pid lives (a wait stopped with Ctrl-Z, a read
+# that hangs) or it holds no pid (its reader killed before it wrote one): the next read goes ahead at
+# once. The locks name a sleep this test starts, the first is empty, all are aged 60 s, and no entry is
+# left. Kept 10 s, a lock that held would hold each of the three reads that long.
+fresh "${H}"; touch "${FX}/green"
+gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=10
+sleep 120 & live=$!; PIDS+=("${live}"); first=1
+for e in "${CACHE}"/*.json; do
+  if [[ -n "${first}" ]]; then : > "${e%.json}.lock"; first=""; else echo "${live}" > "${e%.json}.lock"; fi
+  rm "${e}"
+done
+perl -e '$t = time - 60; utime $t, $t, @ARGV' "${CACHE}"/*.lock
+: > "${ROOT}/gh.log"; t0=${SECONDS}
+gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=10; took=$((SECONDS - t0))
+kill "${live}" 2>/dev/null || true
+is "stale lock: ci_gate head ends green" 0 "${rc}"
+is "stale lock: reads all three from GitHub" "1 1 1" "$(reads)"
+check "stale lock: waits on no lock (${took}s; a lock that held would hold each read 10 s)" test "${took}" -le 8
 
 if [[ ${fails} -eq 0 ]]; then echo "all wait-pr poll-cache tests passed"; else echo "${fails} wait-pr poll-cache test(s) failed"; exit 1; fi
