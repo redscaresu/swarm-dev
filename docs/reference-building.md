@@ -274,7 +274,17 @@ and a reserved name: one from the list above or starting `LC_`, `SWARM_`, `XDG_`
 own Claude Code session's (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`); and one that loads code
 into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes through a command line:
 swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
-deletes itself, so the pane's scrollback shows the launch line with no value in it.
+deletes itself, so the pane's scrollback shows the launch line with no value in it. swarm.sh then
+waits up to 60 seconds for that shell to print that it has the agent's environment, and never starts
+the agent in a pane where it did not. If the shell misses that wait, or herdr refuses twice to type
+the line, a start that nothing else retries (`swarm.sh agent`, `conduct`, a step-up, a restart that
+starts a fresh builder, the fallback reviewer) gets one more try: swarm.sh closes the pane, prints a
+line on stderr saying the start is tried once more in a fresh pane, and runs the same steps there. A
+second miss stops the start, as before. A restart that resumes the builder's session gets no retry
+and stops at the first miss. Each retried start logs one `start-retry` line in events.tsv, `ok` when the fresh
+pane saved it, and `flow`'s `start_failures` section counts these lines. A pane that cannot be closed
+may still be open, so in that case the start stops at once and opens no second pane. `story` and
+`review-agent` starts skip this retry, since they already start again on their own, up to 3 starts.
 
 `agent_env = NAME ...` in `.claude/swarm/config` adds names for every agent of every role: the HLD
 and epic co-authors, planners, conductors, builders and review agents. A restart keeps the names.

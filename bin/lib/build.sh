@@ -684,11 +684,12 @@ build_story() {
   # tried again in this process, with the same worktree and brief, after a 3-second nap and once the
   # failed try's pane is closed, up to STARTS_PER_REVIEW starts in all. Each retried failure is a story
   # event ending (try N of STARTS_PER_REVIEW); the last try's is the command's own, from the die here.
+  # OUTER_START_RETRY keeps start_agent's own fresh-pane retry off, so the two never nest.
   # Not `if start_agent`: there set -e is ignored inside start_agent too (tell_deliver). Its die is the
   # subshell's, so it writes no outcome, and the die below gives the command its line.
   for (( try = 1; ; try++ )); do
     since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
-    set +e; { err="$( set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+    set +e; { err="$( set -e; OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
     if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; break; fi
     if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; exit "${rc}"; fi
     why="${err##*swarm: }"; [[ -z "${err%swarm: *}" ]] || printf '%s' "${err%swarm: *}" >&2
@@ -728,7 +729,8 @@ build_story() {
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # a reader of it sees only this head's. A start that ran nothing (start_retryable) is tried again, after
-# a 3-second nap, up to STARTS_PER_REVIEW starts in all; each retried failure is a review-agent event
+# a 3-second nap, up to STARTS_PER_REVIEW starts in all (with start_agent's own fresh-pane retry off:
+# OUTER_START_RETRY); each retried failure is a review-agent event
 # ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Each try is logged as it begins,
 # before its files go aside and start_agent sends the brief, as `review-agent:try <slug> (try N of STARTS_PER_REVIEW) started`,
 # so a try cut off with no outcome reads as one that may have sent it (review_restart_try). The first
@@ -789,7 +791,7 @@ review_agent() {
     moved=""
     if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
     if [[ -f "${stop}" ]]; then mv "${stop}" "${stop}.prev"; fi
-    if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
+    if { OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
         | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
       rm -f "${out}.prev" "${stop}.prev"; break
     fi
