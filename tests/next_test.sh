@@ -1031,6 +1031,52 @@ rm -rf "${rdir}" "${rdir}-wt"
 expect_release "a staged draft whose minor before it was never tagged, a newer tag on the base: the stage step" "stage v1.2.0" 0 \
   "${GRANTED}" "$(staged q v1.2.0)" "${COMMIT}"
 
+# An open PR of the gh user's that no story or epic lists (#692): next names it on an unlisted: line
+# after the step's lines, and only next does. UNL's gh notes each call in ${UNL_CALLS}, answers
+# `pr list` with ${UNL_PRS} (failing while ${UNL_FAIL} exists) and fails any other call. Three PRs of
+# @me: docs/x listed nowhere, story/s (a story branch) and fix/y, on story s's prs:.
+UNL="${STUB_BIN}/unl"; UNL_CALLS="${STUB_BIN}/unl-calls"; UNL_PRS="${STUB_BIN}/unl-prs"; UNL_FAIL="${STUB_BIN}/unl-fail"
+mkdir -p "${UNL}"
+# shellcheck disable=SC2016 # $* and $1 are the stub's, expanded when it runs
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$1 $2" = "pr list" ] && [ ! -e "%s" ] && exec cat "%s"\nexit 1\n' \
+  "${UNL_CALLS}" "${UNL_FAIL}" "${UNL_PRS}" > "${UNL}/gh"; chmod +x "${UNL}/gh"
+UNL_X="https://github.com/o/r/pull/1"
+# A deadline no loaded machine reaches: under the default 30 s the step's reads can use it all, and the
+# last read, this one, is then cut and says not checked.
+UNL_SECONDS=600
+UNL_LINE="unlisted: ${UNL_X} (docs/x): no story or epic lists it; list it under the kind: lead story that covers it with swarm.sh review <slug> ${UNL_X}, then swarm.sh merge ${UNL_X}; with none, it waits on the user"
+UNL_SETUP=("git remote add origin https://github.com/o/r.git" "item stories/s.md 'status: review' 'kind: code' 'prs: https://github.com/o/r/pull/3'")
+echo '[]' > "${UNL_PRS}"
+SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "no open PR of yours: the review gate" "gate" "${UNL_SETUP[@]}"
+unl_base="${out}"
+no_text "no open PR of yours: no unlisted: line" "unlisted:"
+printf '[{"url":"%s","headRefName":"docs/x"},{"url":"https://github.com/o/r/pull/2","headRefName":"story/s"},{"url":"https://github.com/o/r/pull/3","headRefName":"fix/y"}]\n' \
+  "${UNL_X}" > "${UNL_PRS}"
+: > "${UNL_CALLS}"
+SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "three open PRs of yours: the step is unchanged" "gate" "${UNL_SETUP[@]}"
+is_out() { # <name> <want> — next's whole output in out is <want>
+  if [[ "${out}" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '${out}'"; fails=$((fails + 1)); fi
+}
+is_out "three open PRs of yours: one unlisted: line, for docs/x alone, after the step's lines" "${unl_base}"$'\n'"${UNL_LINE}"
+if grep -q -- '^pr list .*--author @me' "${UNL_CALLS}"; then
+  echo "ok   next lists the PRs with --author @me"
+else echo "FAIL next does not list the PRs with --author @me: $(paste -sd'|' - < "${UNL_CALLS}")"; fails=$((fails + 1)); fi
+touch "${UNL_FAIL}"
+SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" expect "gh pr list fails: the step is unchanged" "gate" "${UNL_SETUP[@]}"
+is_out "gh pr list fails: one line says the unlisted check did not run, after the step's lines" \
+  "${unl_base}"$'\n'"unlisted: not checked (gh pr list failed, exit 1): an open PR of yours that no story or epic lists would not show here"
+rm -f "${UNL_FAIL}"
+# status runs next_step every frame, never unlisted_prs: no `pr list --author` call in the stub's log
+# (the cases above show the stub is on PATH).
+unl_dir="$(mktemp -d)"
+(cd "${unl_dir}" && git init -q && mkdir -p docs/stories docs/epics docs/hld && echo "# Stories" > docs/stories/README.md \
+  && for step in "${UNL_SETUP[@]}"; do eval "${step}"; done)
+: > "${UNL_CALLS}"
+(cd "${unl_dir}" && env -u HERDR_ENV SWARM_REPORT_SECONDS="${UNL_SECONDS}" PATH="${UNL}:${PATH}" bash "${SWARM}" status > /dev/null 2>&1) || true
+if ! grep -q -- 'pr list.*--author' "${UNL_CALLS}"; then echo "ok   status makes no pr list --author call"
+else echo "FAIL status makes a pr list --author call: $(paste -sd'|' - < "${UNL_CALLS}")"; fails=$((fails + 1)); fi
+rm -rf "${unl_dir}"
+
 # A red main that merge recorded (main-red, with its fix-main story ready and unstarted on the board)
 # comes before everything, a working conductor's wait too. A later main-green of the same repo and
 # base clears it, one of another base does not; once the fix has started or is in review, the usual
