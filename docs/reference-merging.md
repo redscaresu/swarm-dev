@@ -803,13 +803,26 @@ background commands, subagents and monitors stopped (it is told to start them ag
 waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
 busy, are never interrupted and wait for a later round. A builder that goes busy between the round's
 read and its restart is waited for one round (60 seconds) at most, then waits for the next, so a
-round never stalls and the paused conductors' markers stay fresh. One whose session is gone or unknown is named at once and not restarted.
+round never stalls and the paused conductors' markers stay fresh.
+upgrade skips closed agents. Before the first round acts on any agent, it reads Claude Code's list
+of sessions once and uses it with the round's first read of herdr's list. An agent whose Claude
+session is gone is skipped as closed. So is a Claude agent of the run whose pane a tab record in
+`.swarm/state` names while herdr lists it in none of the project's panes (a pane closed by hand;
+`swarm.sh` drops the record of a pane it closes). A session that goes later, up to the restart's own
+idle check, is skipped the same way, a conductor's too once its handover is in. A conductor whose
+session goes while upgrade waits for its handover is named as left, as below. A skipped agent is
+never waited on, sent a key or restarted, and counts as neither moved nor left, so it does not fail
+the run; its conductor hears it was skipped. All of them are named once, on one `skipped (closed):
+<names>` line. When that first read of herdr's list fails, upgrade says the closed check did not
+run; when Claude Code's list cannot be read, it says the check skipped no agent for a gone session.
+Either way a session found gone later in the run is still skipped.
 A builder also waits while its story's review agent (`review-<slug>`), which reviews its PR, is a
 Claude agent on the old version that is not idle. The review agent is restarted once it is idle, as
 any agent is. One left on the old version (its restart failed) still holds its builder while it is
 busy. One still busy at the end of the wait is named as left, and so is its builder, with the reason
 `its review agent review-<slug> stayed busy`; so is a builder its review agent held in the last
-round, though that agent reads idle by the end. A codex review agent holds nothing.
+round, though that agent reads idle by the end. A codex review agent holds nothing, and neither does
+a review agent skipped as closed.
 A restart sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -824,12 +837,13 @@ restart keeps its guards. If process-info cannot be read, the agent is left as i
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
 since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
-restarted and which were left: restarted and told to carry on, or, if it was already on the new
+restarted, which were left and which were skipped as closed: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.
 upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. When it is done
 it prints one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or
 `<name>: already on <new>` (with a reason, when a conductor already on it wrote no handover: it is
-never left, and fails nothing), then `upgrade done: <n> moved, <m> left (exit <code>)`, so a log
+never left, and fails nothing), the `skipped (closed):` line when it skipped any, then `upgrade
+done: <n> moved, <m> left (exit <code>)`, so a log
 that ends without that line was cut off. Only an agent whose version changed counts as moved. The
 run is logged as one event, the detached worker's, with its epic as the target. `swarm.sh version` in a pane confirms the version. If a restart
 fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's line names the
@@ -837,12 +851,13 @@ fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's li
 could not be told to carry on gets a line saying to tell it by hand. A TERM to the run (a HUP does
 not reach it: the worker runs under `nohup`) names
 each agent it had not moved as left (one cut off mid-restart with its `claude --resume` line), tells
-each conductor it paused which of its builders were restarted and to carry on as before, and ends
+each conductor it paused which of its builders were restarted and to carry on as before (one skipped
+as closed is told nothing, and stays skipped), and ends
 the log on `upgrade stopped: <n> moved, <m> left (exit 143)`. A KILL or a reboot
 cannot, and leaves that conductor waiting for a prompt. An agent that leaves herdr's agent list
 before it is moved is named as left, never forgotten; when it is a paused conductor, its builders no
 longer wait on it. A session Claude Code reports as unknown (a bad read of its list) waits for the
-next round, as a busy one does; only a gone one is left. A run that never reads herdr's list exits
+next round, as a busy one does; a gone one is skipped as closed. A run that never reads herdr's list exits
 1 and says no agent was moved. upgrade stops when every agent is moved or left,
 or after `SWARM_UPGRADE_WAIT_MS` (2 hours, for the whole run). An agent still busy then is left on
 its old version. A conductor with no handover by then, or still busy after writing one, is told to
