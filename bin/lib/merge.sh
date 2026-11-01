@@ -701,7 +701,8 @@ pull_first() { echo "the builder pulls its branch (git pull --ff-only) before it
 # of <old> with <base> merged in, with wait-pr's own loop (wait_pr --head <new>, in a subshell, its lines
 # printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds for
 # up to MERGE_CI_SECONDS, a spent rate limit waited out, a conflict with the base ending it. Its grace for
-# no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. Succeed
+# no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. It reads
+# GitHub every poll (WAIT_PR_FRESH): no other wait's read, from the poll cache, stands in for merge's. Succeed
 # on green. Else set BASE_CI_CAUSE to the cause read from how wait-pr ended (red, no check runs, no
 # workflow run, conflict, timed out, head moved, unread) and BASE_CI_WHY to the refusal, `base merged,
 # <cause>:` then what to run next, and fail.
@@ -712,7 +713,7 @@ base_ci() {
   out="$(mktemp "${TMPDIR:-/tmp}/swarm-base-ci.XXXXXX")" \
     || { BASE_CI_WHY="base merged, unread: mktemp failed, so CI on ${who} was not read: ${next}"; return 1; }
   ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}' EXIT
-    SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
+    WAIT_PR_FRESH=1 SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
   rc="${PIPESTATUS[0]}"
   [[ ${rc} -ne 0 ]] || { rm -f "${out}"; return 0; }
   # An exit 1 is red only with wait-pr's red: line: swarm.sh's wait-pr trap, which turns any other exit 1
@@ -2185,7 +2186,8 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # (.swarm/poll-cache), SWARM_POLL_CACHE_SECONDS, under one poll and one retry pause, and
 # SWARM_POLL_CACHE_AGE, so a read another wait made that recently stands in for this one's
 # (bin/lib/poll_cache.py). A pending read that took one N seconds old (the age note) pauses N seconds less, so the waits poll in step and each sees a change within a
-# poll. Merge's gates and review-agent --recheck read GitHub every time.
+# poll. Merge's gates, its own wait on a head it made by merging the base in (base_ci sets WAIT_PR_FRESH,
+# which turns the cache off) and review-agent --recheck read GitHub every time.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -2225,8 +2227,9 @@ wait_pr() {
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
   limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
   # The poll cache's max age: under the shorter of a poll and a retry pause, so a lone wait never reads
-  # its own entry; 0 (a poll or pause of 1 s or less) is off.
+  # its own entry; 0 (a poll or pause of 1 s or less, or merge's own wait: WAIT_PR_FRESH) is off.
   share=$(( (poll < retry ? poll : retry) - 1 )); (( share > 0 )) || share=0
+  [[ -z "${WAIT_PR_FRESH:-}" ]] || share=0
   WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
   # What the ci_gate call alone gets while the cache is on: its directory, max age and age note.
   (( share == 0 )) || cache=(SWARM_POLL_CACHE="${PROJECT_DIR}/.swarm/poll-cache" SWARM_POLL_CACHE_SECONDS="${share}"
