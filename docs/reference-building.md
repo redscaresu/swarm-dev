@@ -478,8 +478,8 @@ herdr's working for one herdr answers for) has not changed its pane for `stall_m
 transcript shows no background task still running (a shell, an async subagent or a monitor it
 started, with no `<task-notification>` carrying a `<status>` for it since). A test suite running in
 its pane (`make test`, `make check` or `scripts/test.sh`, as under `stall_minutes`) also keeps it
-from being stuck, for a conductor as for a builder, but only until the run is 3 times
-`stall_minutes` old: a hung one gives `stuck` after that. It sends nothing then: read the pane. `stuck` is
+from being stuck, for a conductor as for a builder, for as long as the run is alive, with no limit on
+its age. It sends nothing when it says `stuck`: read the pane. `stuck` is
 not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
 ("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
 "Wait here, then continue automatically" (the user's standing choice) once per dialog (a keypress
@@ -492,8 +492,9 @@ it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane 
 and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, own work in the session log or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, its own work in its session log, a PR update, a swarm action on its story, a test suite
-running in its pane or a background task its session waits on, each up to 3 times `stall_minutes` old) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
+worktree, its own work in its session log, a PR update, a swarm action on its story, a background
+task its session waits on, up to 3 times `stall_minutes` old, or a test suite running in its pane, at
+any age) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
 Before it calls a builder stalled, once its PRs show no update either, it asks the signer probe
 (`sign_blocked`, over the builder's worktree) whether git can sign the uncommitted work there without a
 prompt. The probe says `blocked` when `commit.gpgsign` is on, the tree has changes, and gpg-agent holds no
