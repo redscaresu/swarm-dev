@@ -786,7 +786,8 @@ claude exits. It then starts claude again in the same pane: a fresh allowlisted 
 `herdr agent list` shows for the pane. When herdr lists the pane with none (herdr 0.9.5 lists none),
 it is the one `agents.tsv` recorded, followed through its resume command (the `.argv` file in
 `swarm-dev/resume` under Claude's config folder, which a `/clear` updates) to the session the agent
-is in now; the log says which. With neither, the agent is left on its old version and its line names both sources. A list
+is in now; the log says which. The idle check reads that same session, and the restore files keep
+agents.tsv's id as their name, so a later `/clear` and `swarm.sh restart` find them. With neither, the agent is left on its old version and its line names both sources. A list
 herdr cannot answer resumes nothing: the agent is left as it is. Once claude is back, upgrade gives herdr the resume command, as a first start does, so a herdr
 restart keeps its guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
