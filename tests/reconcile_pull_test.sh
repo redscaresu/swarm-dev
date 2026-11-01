@@ -517,6 +517,17 @@ waiting() {
   pid="$(cat "$1/.swarm/closing/$2.pid" 2>/dev/null)" || { echo none; return 0; }
   if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then echo running; else echo "none (stale pid file)"; fi
 }
+# polled <stub dir> — wait up to 30 s for two `herdr agent list` calls in the stub's call log, which
+# the caller cleared once the command that retired the agent had exited: each of the waiter's polls
+# makes one, so with two its first poll since then has read the agent and decided. yes, or no.
+polled() {
+  local i
+  for ((i = 0; i < 300; i++)); do
+    [[ "$(grep -cx 'agent list' "$1/h/calls" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }
+    sleep 0.1
+  done
+  echo no
+}
 # waiter <project> <name> — wait up to 30 s for <name>'s close_when_idle waiter to end (it removes its
 # pid file): ended, or, still running then, stopped, killed by its pid, so it never outlives the test.
 waiter() {
@@ -625,9 +636,10 @@ merged_review_fails=0
     fresh; rm -f "${P}"/.swarm/state/*; item s "status: review" "prs: ${URL}" ${epic:+"epic: ${epic}"}; lay "${ROOT}" "${P}" s "${epic}"
     working working; : > "${ROOT}/h/calls"
     merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
-    is "${what}, merged from review-s's pane while it works: s's builder closes, review-s stays open, retired, with no close of its pane, and its waiter runs" \
-      "0|${epic:+conduct-e@e }lead@lead review-s-done@${label}|yes||running" \
-      "${rc}|$(panes_in "${ROOT}")|$(grep -qx 'w:r review-s-done' "${P}/.swarm/state/${label}" && echo yes)|$(closes "${ROOT}" w:r t1)|$(waiting "${P}" review-s)"
+    shut="$(closes "${ROOT}" w:r t1)"; : > "${ROOT}/h/calls"; seen="$(polled "${ROOT}")"
+    is "${what}, merged from review-s's pane while it works: s's builder closes, review-s stays open, retired, and its waiter, having read it working since the merge exited, closes nothing and runs on" \
+      "0|yes|${epic:+conduct-e@e }lead@lead review-s-done@${label}|yes|||running" \
+      "${rc}|${seen}|$(panes_in "${ROOT}")|$(grep -qx 'w:r review-s-done' "${P}/.swarm/state/${label}" && echo yes)|${shut}|$(closes "${ROOT}" w:r t1)|$(waiting "${P}" review-s)"
     close="pane close w:r"; [[ -n "${epic}" ]] || close="tab close t1"
     working idle
     is "${what}: once the merge has exited and review-s reads idle, its waiter closes it (${close}), leaving no tab of s, and logs it" \
