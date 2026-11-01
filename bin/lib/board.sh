@@ -2,10 +2,129 @@
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
 # <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
-# (item_gone); one that is there but cannot be read fails, with sed's error.
+# (item_gone); one that is there but cannot be read fails, with sed's error. During a report it answers
+# from the board's snapshot when it can (board_snap_read), starting no process.
 fm() {
+  board_snap_read F "$1" "$2" && return 0
   state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
     || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
+
+# BOARD_SNAP: while a report's snapshot of the board stands (board_snapshot), the BOARD and
+# BOARD_STATE_DIR it was taken of, joined by a tab; empty when there is none. Not exported: a swarm.sh
+# a report starts reads the board for itself.
+BOARD_SNAP=""
+# BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
+# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+BOARD_SNAP_MARK=""
+# BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
+# before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
+# value) or __G_<key> (get_fm's) after it for a key's value.
+BOARD_SNAP_RE='^_BS_[seh]_[A-Za-z0-9_]+$'
+
+# board_snapshot <mark-file> — report_start's one read of the board: every story, epic and HLD file
+# and its state file (BOARD_STATE_DIR), in one awk, into shell variables that fm and get_fm_or_gone
+# answer from (board_snap_read) until the report ends or a board-state write drops them. Per file it
+# keeps each key's first line anywhere (fm's rule) and its front-matter value (get_fm's), with a
+# SET_FM_KEYS value from the state file over both where state_read would take it (its @base rule).
+# bash 3.2 has no associative arrays, so each value is a variable of its own, named for the file and
+# key (BOARD_SNAP_RE): _ - and . in a file's name are encoded as _5f, _2d and _2e. A file whose name
+# has any other character, or that cannot be read, and an item whose state file cannot be read, are
+# left out, so they are read as before (and fail as before). <mark-file> becomes BOARD_SNAP_MARK.
+# Fails, with no snapshot, when awk does; every read then goes to the files.
+board_snapshot() {
+  local d f s line out files=()
+  board_snap_drop
+  [[ -z "${BOARD_SNAP_MARK}" || ! -e "${BOARD_SNAP_MARK}" ]] || rm -f "${BOARD_SNAP_MARK}"
+  BOARD_SNAP_MARK="$1"
+  # awk takes an operand like k=v for an assignment; one that starts with / never is.
+  [[ "${BOARD}" == /* && "${BOARD_STATE_DIR}" == /* ]] || return 1
+  for d in stories epics hld; do
+    for f in "${BOARD}/${d}"/*.md; do
+      [[ -f "${f}" && -r "${f}" && "${f##*/}" =~ ^[A-Za-z0-9._-]+\.md$ ]] || continue
+      s="${BOARD_STATE_DIR}/${d}/${f##*/}"; s="${s%.md}"
+      if [[ "${d}" == hld || ! -f "${s}" ]]; then files+=("${f}")
+      elif [[ -r "${s}" ]]; then files+=("${f}" "${s}"); fi
+    done
+  done
+  # With no file, awk would read stdin: a report's caller's input, or the terminal.
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  # shellcheck disable=SC2016 # $0 is awk's
+  out="$(SNAP_BOARD="${BOARD}" SNAP_STATE="${BOARD_STATE_DIR}" SNAP_KEYS="${SET_FM_KEYS}" awk '
+    function val(l, p) { l = substr(l, p + 1); sub(/^ +/, "", l); return l }
+    function put(k, v) { print k0 "__" k "=" v }
+    BEGIN { split(ENVIRON["SNAP_KEYS"], K, " "); for (j in K) setk[K[j]] = 1
+      B = ENVIRON["SNAP_BOARD"]; S = ENVIRON["SNAP_STATE"]
+      t["stories"] = "s"; t["epics"] = "e"; t["hld"] = "h"
+      for (j = 1; j < ARGC; j++) { f = ARGV[j]; d = f; sub(/\/[^\/]*$/, "", d); n = substr(f, length(d) + 2)
+        x = d; sub(/^.*\//, "", x); r = substr(d, 1, length(d) - length(x) - 1)
+        if (r == B && n ~ /^[A-Za-z0-9._-]+\.md$/) { sub(/\.md$/, "", n); st[f] = 0 }
+        else if (r == S && n ~ /^[A-Za-z0-9._-]+$/) st[f] = 1
+        else { ARGV[j] = ""; continue }
+        gsub(/_/, "_5f", n); gsub(/-/, "_2d", n); gsub(/\./, "_2e", n); key[f] = "_BS_" t[x] "_" n
+        if (!st[f]) { items[++ni] = key[f]; print key[f] "=1" } } }
+    FNR == 1 { m = 0; k0 = key[FILENAME] }
+    st[FILENAME] { if ((p = index($0, ":")) > 1) { k = substr($0, 1, p - 1)
+        if (k ~ /@base$/) { k = substr(k, 1, length(k) - 5); if (!((k0, k) in b)) b[k0, k] = val($0, p) }
+        else if (!((k0, k) in sv)) { sv[k0, k] = val($0, p); hs[k0] = hs[k0] " " k } }
+      next }
+    $0 ~ /^---$/ { m++; next }
+    match($0, /^[A-Za-z_][A-Za-z0-9_]*:/) { k = substr($0, 1, RLENGTH - 1)
+      if (!((k0, k) in fa)) { fa[k0, k] = val($0, RLENGTH); ks[k0] = ks[k0] " " k }
+      if (m == 1 && !((k0, k) in fv)) fv[k0, k] = val($0, RLENGTH) }
+    END { for (i = 1; i <= ni; i++) { k0 = items[i]; delete used; n = split(ks[k0] hs[k0], L, " ")
+        for (j = 1; j <= n; j++) { k = L[j]; if (k in used) continue; used[k] = 1
+          if ((k0, k) in sv && k in setk && k0 !~ /^_BS_h_/ && !((k0, k) in b && b[k0, k] != fv[k0, k])) {
+            if (sv[k0, k] != "") { put("F_" k, sv[k0, k]); put("G_" k, sv[k0, k]) } }
+          else { if ((k0, k) in fa) put("F_" k, fa[k0, k]); if ((k0, k) in fv) put("G_" k, fv[k0, k]) } } } }' \
+    "${files[@]}" < /dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "${line%%=*}" =~ ${BOARD_SNAP_RE} ]] || { board_snap_drop; return 1; }  # loose-match: ok BOARD_SNAP_RE is a fixed regex, meant to be read as one
+    printf -v "${line%%=*}" '%s' "${line#*=}"
+  done <<< "${out}"
+  BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"
+}
+
+# board_snap_read <F|G> <file> <key> — print <key>'s value for <file> from the report's snapshot (F:
+# fm's rule, G: get_fm's) and succeed, starting no process: only builtins and parameter expansion.
+# Fails, so the caller reads <file> itself, with no snapshot (or one of another board), for a <file>
+# not in it (made after it, or not a story, epic or HLD file named as board_snapshot lists them), a
+# <file> now gone (its caller reads that as no value), or a <key> that is not a plain name. When a
+# board-state write made the mark (board_snap_written), in this shell or a subshell, it drops the
+# snapshot first, so every read after the write sees it.
+board_snap_read() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 1
+  if [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]]; then board_snap_drop; return 1; fi
+  local n="${2##*/}" t
+  case "${2%/*}" in
+    "${BOARD}/stories") t=s ;;
+    "${BOARD}/epics") t=e ;;
+    "${BOARD}/hld") t=h ;;
+    *) return 1 ;;
+  esac
+  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${n}" =~ ^[A-Za-z0-9._-]+\.md$ && -e "$2" ]] || return 1
+  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; n="_BS_${t}_${n//./_2e}"
+  [[ -n "${!n:-}" ]] || return 1
+  n+="__$1_$3"
+  [[ -z "${!n+x}" ]] || printf '%s\n' "${!n}"
+}
+
+# board_snap_drop — end the snapshot in this shell: its variables go, and every read goes to the files.
+board_snap_drop() {
+  BOARD_SNAP=""
+  # shellcheck disable=SC2046 # the names split on purpose; BOARD_SNAP_RE allows no space
+  unset $(compgen -v _BS_ || true)
+}
+
+# board_snap_written — after a board-state write (state_set, state_drop) during a report: make the mark,
+# so every shell that holds the snapshot drops it at its next read, and drop it here. A mark that cannot
+# be made is said on stderr: a shell that took the snapshot before this one could then still read the
+# value from before the write.
+board_snap_written() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 0
+  : 2>/dev/null > "${BOARD_SNAP_MARK}" \
+    || echo "warning: board state written, but ${BOARD_SNAP_MARK} could not be made: reads later in this run may show the value from before" >&2
+  board_snap_drop
 }
 
 # ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
@@ -51,8 +170,10 @@ state_name() {
 }
 
 # state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
-# escalated block (escalated_file), so a later item with its slug starts with no state.
+# escalated block (escalated_file), so a later item with its slug starts with no state. During a report
+# it ends the board's snapshot first (board_snap_written), as state_set does.
 state_drop() {
+  board_snap_written
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
   [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
@@ -758,7 +879,7 @@ next_report() {
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
   # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}' '${BOARD_SNAP_MARK}'" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).
@@ -2478,11 +2599,14 @@ set_fm() {
 # value now, which state_value compares. A value <file> already has needs no line, so its lines go and
 # the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
 # left with no line goes. It holds the item's lock (state_lock) from its read to its write, so two
-# writers to one item keep each other's keys. Dies naming the state file when any step fails.
+# writers to one item keep each other's keys. Dies naming the state file when any step fails. During a
+# report it first ends the board's snapshot (board_snap_written), in every shell that holds it, so the
+# next read of the item sees the write.
 state_set() {
   local f="$1" s pairs="" rc=0
   state_path "${f}"; s="${STATE_PATH}"
   [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
+  board_snap_written
   shift
   while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
   # Checked first, or the lock's mkdir would fail as if it were held.
@@ -2542,8 +2666,10 @@ state_write() {
 get_fm() { get_fm_or_gone "$1" "$2" || gone_ok $?; }
 
 # get_fm_or_gone <file> <key> — get_fm, but failing with ITEM_GONE for a <file> that is gone
-# (item_read), so pr_stories can list the board again.
+# (item_read), so pr_stories can list the board again. During a report it answers from the board's
+# snapshot when it can (board_snap_read), starting no process.
 get_fm_or_gone() {
+  board_snap_read G "$1" "$2" && return 0
   # shellcheck disable=SC2016 # $0 is awk's
   state_value "$1" "$2" || item_read "$1" awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
