@@ -2011,7 +2011,8 @@ close_when_idle() {
 # took the pane first). Then it reads the agent's state: session_state's word for <name>'s session, or, where
 # herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for this
 # project's agent under the -done name (list_field over one herdr agent list; a list herdr fails
-# to give reads as unknown, never as no agent). Idle, done, or no agent under that name any more: it closes the pane
+# to give reads as unknown, never as no agent), and prints `read <state>` to its log. Idle, done, or no
+# agent under that name any more: it closes the pane
 # (close_pane, which closes its tab too when the pane was the record's last) and logs
 # `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
 # `close-when-idle <name> left open: ...`. So is one whose agent is still not idle CLOSE_IDLE_SECONDS
@@ -2041,6 +2042,7 @@ close_idle_wait() {
           state="herdr:$(list_field "${who}" agent_status <<< "${agents}")"
         else state="herdr:unknown"; fi
       fi
+      echo "read ${state}"
       case "${state}" in
         idle|herdr:idle|herdr:done|herdr:)
           CLOSE_PANE_KEPT=""
