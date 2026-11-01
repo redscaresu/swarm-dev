@@ -557,8 +557,8 @@ back_to_ready() {
 }
 
 # conductor_busy <conductor> — why closing <conductor> now could cut its work short, or nothing (and
-# it fails): it is working (read_state, under herdr's name for it, which agent_name cuts at 32
-# characters: busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or
+# it fails): it is working (session_state over close_lists' Claude Code list, under herdr's name for
+# it, which agent_name cuts at 32 characters: busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or
 # herdr's status working where herdr answers for it, or for a session Claude Code no longer lists), its
 # state could not be read (unknown: Claude Code's list failed; fail closed), or its epic's
 # Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
@@ -567,9 +567,12 @@ back_to_ready() {
 # epic, and a board outside the project's repo, or a project with no origin, opens no Finish PR.
 conductor_busy() {
   local state pane epic origin prs open head n
-  n="$(agent_name "$1")"; state="$(read_state "${n}")"
-  # A session Claude Code no longer lists reads herdr's status, as close_idle_wait reads it.
-  [[ "${state}" != gone ]] || state="herdr:$(agent_status "${n}")"
+  # Over the close's own lists (close_lists, which close_panes then keeps: CLOSE_KEEP_READ), so the
+  # close reads Claude Code's list once. A session that list does not have (none recorded, or gone)
+  # reads herdr's status from CLOSE_AGENTS, empty when herdr gave no list, as agent_status was.
+  close_lists; CLOSE_KEEP_READ=1
+  n="$(agent_name "$1")"; state="$(session_state "${n}" "${CLOSE_CLAUDE}" </dev/null)"
+  [[ "${state}" != herdr && "${state}" != gone ]] || state="herdr:$(awk -v n="${n}" '$3 == n { print $2; exit }' <<< "${CLOSE_AGENTS}")"
   if [[ "${state}" == busy ]]; then pane="$(agent_field "${n}" pane_id)"; ! api_stopped "${n}" "${pane}" || state=stopped; fi
   if [[ "${state}" == busy || "${state}" == herdr:working ]]; then echo "is working"; return 0; fi
   if [[ "${state}" == unknown ]]; then echo "could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0; fi
@@ -1698,10 +1701,12 @@ clear_build() {
 # another's: nothing closes, CLOSE_REFUSED says why and CLOSE_PANE_KEPT is set, so nothing is counted,
 # cleared or kept. With nothing recorded and nothing live under the cut, nothing closes, as for a
 # pane closed by hand.
-CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""
+CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""; CLOSE_KEEP_READ=""
 close_panes() {
   local state pane own e="" live
-  CLOSE_READ=""; CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""
+  # Read afresh for each close, unless conductor_busy just read them for this one.
+  [[ -n "${CLOSE_KEEP_READ}" ]] || CLOSE_READ=""
+  CLOSE_KEEP_READ=""; CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"

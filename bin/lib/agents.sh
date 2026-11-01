@@ -860,8 +860,7 @@ print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS
   echo "${out:-unknown}"
 }
 
-# read_state <name> — <name>'s state for a reader that does not wait (tell, free_agent_name, close's
-# conductor guard, conductor_busy):
+# read_state <name> — <name>'s state for a reader that does not wait (tell, free_agent_name):
 # session_state's word for a Claude agent, or `herdr:<herdr's status>` for one herdr answers for
 # (codex, or no session recorded). The one place such a reader takes herdr's status.
 read_state() {
