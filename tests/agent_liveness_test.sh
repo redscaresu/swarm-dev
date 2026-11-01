@@ -334,6 +334,9 @@ old=("  300   200   1:35:03 ${snap} 'make test GH_TOKEN=SEKRIT'" '  310   300   
   '  320   310   1:35:01 bash scripts/test.sh' '  400   320   1:35:00 sleep 5700')
 printf '%s\n' "${tree[@]:0:7}" "${old[@]}" "${cond[@]}" > "${PS_TREE}"; log "${idle[@]}"
 check "a builder whose make test started past 3 x stall_minutes ago is not stalled" works hung_wait
+# Its age is never read: a run whose ps etime is in the days form (dd-hh:mm:ss) is work too.
+printf '%s\n' "${tree[@]:0:7}" "${old[@]//1:35:0/3-01:35:0}" "${cond[@]}" > "${PS_TREE}"
+check "a builder whose make test started 3 days ago is not stalled" works hung_wait
 # The same tree with make lint in place of the test run is no test run: the builder stalls, and with no
 # own work on record the hung sleep under it is named, by program name and never by argument.
 printf '%s\n' "${tree[@]:0:7}" "${old[@]//test/lint}" "${cond[@]}" > "${PS_TREE}"
@@ -380,6 +383,8 @@ ran '  830   820     10:00 make test'
 check "a conductor with make test under its pane shell is not stuck" works swait conduct-e1 3000
 ran "${bg}" '  341   340   1:31:00 make test'
 check "a builder whose make test started past 3 x stall_minutes ago is not stuck" works swait s-hung 3000
+ran "${bg}" '  341   340  2-01:31:00 make test'
+check "a builder whose make test started 2 days ago is not stuck" works swait s-hung 3000
 printf '%s\n' "${tree[@]}" > "${PS_TREE}"
 # Its pane changed a minute ago (the record's checksum is not the pane's now), so it is not stuck either.
 log "$(tool 40)" "${idle[@]}" "$(tool 5)"
