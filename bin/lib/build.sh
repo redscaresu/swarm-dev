@@ -372,9 +372,10 @@ stacked_start_rule() {
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
-# findings names each new test whose FAIL line the PR body lacks.
+# findings names each new test whose FAIL line the PR body lacks. Once the PR is open, a proof in
+# place leaves the worktree dirty and review-agent refuses it (#695), so it runs on a copy.
 mutation_rule() {
-  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
+  printf '%s' "For a code change, prove each new or changed test can fail. Before the PR opens, do it in place: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work). After the PR opens, prove it on a copy of the worktree without .git, never in place. Make the copy in a new directory outside the worktree (\`rsync -a --exclude .git <worktree>/ <copy>/\`), as a copy inside it leaves the worktree dirty too; break the fix in the copy, run the test there and delete the copy, so the worktree stays clean for its review. Either way, paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body. Push what is ready, and put further points in the PR body rather than in more pushes."
 }
 
 # load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
