@@ -50,7 +50,7 @@
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when, and with SWARM_PR=<its PR URL> also shown the findings declined on that PR before
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, an agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once; it never edits the code, and on a pass it runs review --head on the head it reviewed, then merges the PR (merge = agent, or an HLD that grants merge) or leaves it for the user
-#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
+#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session, or the same round again when the PR's head moved with no findings sent since that round started: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
@@ -557,7 +557,7 @@ done
 INTERVENE_KINDS="lead-hand user-caught"
 
 # INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
-INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost other"
+INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost review-stopped other"
 
 # intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
 # -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field

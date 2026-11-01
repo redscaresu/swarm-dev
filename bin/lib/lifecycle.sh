@@ -1116,8 +1116,9 @@ sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
 
 # restart_resume <slug> <tab> <wt> "<session> <resume>" <names> — reopen <slug>'s builder's Claude session
 # <resume> (restart_session of its agents.tsv <session>) in a new pane in <tab>, at <wt>, with the flags
-# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
-# start_agent), report that command to herdr as start_agent does, and tell the builder why.
+# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry of herdr's
+# agent start, as start_agent, but none in a fresh pane: a shell that does not take the environment
+# dies), report that command to herdr as start_agent does, and tell the builder why.
 restart_resume() {
   local name argv a resume=() flags=() pane out seq msg try session id
   read -r session id <<< "$4"
@@ -2365,6 +2366,8 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
 LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
 LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
+LEAD_EVENTS_AT="${LEAD_DIR}/events-at"   # "<byte offset> <inode>" of events.tsv that lead_events has read
+LEAD_MERGES="${LEAD_DIR}/merges"      # build starts and merges, folded from events.tsv and the heads pass (lead_events, pr_head)
 # shellcheck disable=SC2034 # board.sh reads it
 LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protected hold names, read by the last heads pass (held_heads)
 LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
@@ -2500,10 +2503,90 @@ heads_green() {
 }
 
 # pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot, or when the read runs
-# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll.
+# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll. The same read gives the PR's
+# state: one that reads MERGED gets a `G <time> <PR URL>` line in LEAD_MERGES (lead_merged), which covers
+# a merge made on GitHub, with no merge event.
 pr_head() {
+  local out head state
   [[ "$1" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 0
-  within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null || true
+  out="$(within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid,state \
+    --jq '.headRefOid + " " + .state' </dev/null 2>/dev/null)" || true
+  read -r head state <<< "${out}"
+  [[ "${state}" != MERGED ]] || printf 'G\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${LEAD_MERGES}" 2>/dev/null || true
+  printf '%s\n' "${head}"
+}
+
+# lead_events — fold the lines events.tsv gained since the last call into LEAD_MERGES, and true when one of
+# them is a merge line, of any outcome. It reads from the byte offset LEAD_EVENTS_AT keeps, never the whole
+# file, up to the last whole line, so a line still being written is read next time. A file that shrank or
+# was replaced (another inode) is folded again from its start. LEAD_MERGES gets, in the log's order, `S
+# <time> <slug>` for an ok story or escalate line and `A <time> <agent>` for an ok agent line (a build start,
+# as build_started reads one), and `M <time> <target>` for a merge line that ends ok or merged elsewhere
+# (<target> is what the merge was given: a PR URL or a slug). False with no log, or when it could not write.
+lead_events() {
+  perl -e '
+    my ($log, $at_file, $fold, $sep) = @ARGV;
+    my ($at, $ino) = (0, "");
+    if (open my $a, "<", $at_file) { my $l = <$a> // ""; ($at, $ino) = ($1, $2) if $l =~ /^(\d+) (\d+)$/; }
+    open my $h, "<", $log or exit 1;
+    my @st = stat $h;
+    my $mode = ">>";
+    if ($st[7] < $at || $st[1] ne $ino) { ($at, $mode) = (0, ">"); }
+    seek $h, $at, 0 or exit 1;
+    my $new = do { local $/; <$h> } // "";
+    $new = substr($new, 0, rindex($new, "\n") + 1);
+    my ($out, $merge) = ("", 0);
+    for my $line (split /\n/, $new) {
+      my @f = split /\t/, $line, -1;
+      next if @f < 5;
+      my $o = $f[4]; my $i = index($o, $sep); $o = substr($o, 0, $i) if $i >= 0;
+      if ($f[1] eq "merge") { $merge = 1; $out .= "M\t$f[0]\t$f[2]\n" if $o eq "ok" || $o eq "merged elsewhere"; }
+      elsif ($o =~ /^ok/ && ($f[1] eq "story" || $f[1] eq "escalate")) { $out .= "S\t$f[0]\t$f[2]\n"; }
+      elsif ($o =~ /^ok/ && $f[1] eq "agent") { $out .= "A\t$f[0]\t$f[2]\n"; }
+    }
+    open my $o, $mode, $fold or exit 2; print $o $out; close $o or exit 2;
+    open my $t, ">", "$at_file.tmp" or exit 2; print $t $at + length($new), " $st[1]\n"; close $t or exit 2;
+    rename "$at_file.tmp", $at_file or exit 2;
+    exit($merge ? 0 : 1);
+  ' "${EVENTS_LOG}" "${LEAD_EVENTS_AT}" "${LEAD_MERGES}" "${EVENT_SEP}" 2>/dev/null
+}
+
+# lead_merged — of the slugs on stdin, one a line, each whose story on the board counts as merged, one a
+# line: since its last build start (an S or A line in LEAD_MERGES), every URL on its prs: has an M or a G
+# line (a heads pass read it MERGED, pr_head), or, for a story with at most one PR, the slug itself has an M
+# line. swarm.sh merge logs a story PR's merge under the story's slug, which does not say which PR merged,
+# so one merged PR of two never hides the other's lines. Exact matches only. Reads LEAD_MERGES and board
+# files, never gh.
+lead_merged() {
+  local s f rows="" had=" "
+  [[ -s "${LEAD_MERGES}" ]] || { cat > /dev/null; return 0; }
+  while IFS= read -r s; do
+    [[ -n "${s}" && "${s}" != */* && "${had}" != *" ${s} "* ]] || continue
+    had+="${s} "; f="${BOARD}/stories/${s}.md"
+    [[ -f "${f}" ]] || continue
+    rows+="${s}"$'\t'"$(agent_name "${s}")"$'\t'"$(story_prs "${f}")"$'\n'
+  done
+  [[ -n "${rows}" ]] || return 0
+  awk -F'\t' '
+    function reset(s,  i) { whole[s] = 0; for (i = 1; i <= n[s]; i++) delete got[s, pr[s, i]] }
+    FILENAME == ARGV[1] {
+      want[$1] = 1; by_agent[$2] = $1; n[$1] = split($3, u, " ")
+      for (i = 1; i <= n[$1]; i++) { pr[$1, i] = u[i]; owners[u[i]] = owners[u[i]] " " $1 }
+      next
+    }
+    $1 == "S" && ($3 in want) { reset($3); next }
+    $1 == "A" && ($3 in by_agent) { reset(by_agent[$3]); next }
+    $1 == "M" || $1 == "G" {
+      if (($3 in want) && n[$3] <= 1) whole[$3] = 1
+      if ($3 in owners) { k = split(owners[$3], o, " "); for (j = 1; j <= k; j++) got[o[j], $3] = 1 }
+    }
+    END {
+      for (s in want) {
+        m = whole[s]
+        if (!m && n[s] > 0) { m = 1; for (i = 1; i <= n[s]; i++) if (!((s, pr[s, i]) in got)) m = 0 }
+        if (m) print s
+      }
+    }' <(printf '%s' "${rows}") "${LEAD_MERGES}"
 }
 
 # held_heads — the heads pass's first read: the head of each PR a protected hold names (protected_holds
@@ -3147,17 +3230,16 @@ stuck_seen() {
   done < <(awk -v s="$1" -v u="${2:-}" '$1 == "stuck:" && $2 == s && (u == "" || $3 == u)' "${LEAD_SEEN}" 2>/dev/null || true)
 }
 
-# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell (panes.py's test_running, as
-# agents.sh's test_running reads it), with herdr's process info read within STUCK_READ_WAIT seconds: a read that
-# fails or hangs sees no run.
+# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell, however long ago it started
+# (panes.py's test_running, as agents.sh's test_running reads it), with herdr's process info read within
+# STUCK_READ_WAIT seconds: a read that fails or hangs sees no run.
 stuck_test_run() {
   local info
   info="$(within "${STUCK_READ_WAIT}" herdr pane process-info --pane "$1" </dev/null 2>/dev/null)" || info=""
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "${info}"
 }
 
 # main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base:
@@ -4462,21 +4544,29 @@ LEAD_QUIET="held: escalated: kept: merge: idle:"
 # lead_quiet <line> — true when <line>'s kind is in LEAD_QUIET.
 lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 
+# lead_line_slug <line> — set LEAD_LINE_SLUG to the word a queue line names: after its first ": ", up to a
+# comma or a space. lead_wake logs it and drops a merged story's lines by it.
+lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%,*}"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%% *}"; }
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
-# and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
-# since its last (lead_heads, open_story_prs, lead_bases), start a fix-main story's writer for each red base
+# and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
+# since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
+# open_story_prs, lead_bases), start a fix-main story's writer for each red base
 # head none covers (main_red_fix), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
-# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
-# queue as LEAD_SEEN. Print
+# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
+# whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
+# and save the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet saves the lines
 # of a kind in LEAD_QUIET without printing them, and prints every other line: each is an alert.
 lead_wake() {
-  local now line new="" slug u
+  local now line new="" u merged="" gone kept=""
   lead_agents
-  if [[ -z "${LEAD_HEADS_AT}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
+  # A merge changes the PR state the heads pass reads: read it on this poll, not up to LEAD_HEADS_EVERY later.
+  if lead_events; then merged=1; fi
+  if [[ -z "${LEAD_HEADS_AT}" || -n "${merged}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
     LEAD_HEADS_AT=${SECONDS}; lead_heads
     # The open story PRs pr_lines reads each poll, on the heads pass's cadence: its gh reads come with the pass's.
     open_story_prs > "${LEAD_PRS}.new" && mv "${LEAD_PRS}.new" "${LEAD_PRS}"
@@ -4507,6 +4597,15 @@ lead_wake() {
   tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
   u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
   now="${now}${now:+${u:+$'\n'}}${u}"
+  # A merged story names no line, whatever the producer: its file stays on the board until reconcile.
+  gone="$(while IFS= read -r line; do lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
+  if [[ -n "${gone}" ]]; then
+    while IFS= read -r line; do
+      lead_line_slug "${line}"
+      grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || kept+="${line}"$'\n'
+    done <<< "${now}"
+    now="${kept%$'\n'}"
+  fi
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || { [[ -n "${1:-}" ]] && lead_quiet "${line}"; } || new+="${line}"$'\n'
@@ -4514,8 +4613,8 @@ lead_wake() {
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
   while IFS= read -r line; do
-    echo "${line}"; slug="${line#*: }"; slug="${slug%%,*}"
-    record_event lead-woken "${slug%% *}" "ok (${line%%: *})"
+    echo "${line}"; lead_line_slug "${line}"
+    record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
 
@@ -4570,8 +4669,8 @@ lead_lock() {
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The PR heads behind its merge: lines, the open story PRs behind its unmerged: and conflict:
 # lines, and the base heads behind its main-red: lines are read only in a heads pass (lead_heads,
-# open_story_prs, lead_bases), on its first read and then at most once
-# every LEAD_HEADS_EVERY seconds. The first read of a run reports what
+# open_story_prs, lead_bases), on its first read, then at most once every LEAD_HEADS_EVERY seconds, and
+# on the poll after events.tsv gains a merge line (lead_events). The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
 # every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
