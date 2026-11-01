@@ -423,9 +423,14 @@ Repeat until a step below says stop:
      commits, its worktree is clean or gone, or it stops running.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference-lead.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
-     `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
-     time: a new one stops the earlier one, which then ends with nothing printed; that needs
-     nothing from you. A new run first reports anything that landed while none was running.
+     `wait --lead` ends on a `timeout:` or `wait-failed:` line, start it again. Neither is a queue
+     item. `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` (exit 1) means its timeout
+     passed with nothing new. `wait-failed: exit <rc>, exit: swarm.sh wait --lead` means it stopped on
+     an error before anything new came in: a bad argument, a lock it could not take, a failed read
+     of the queue, or a TERM from outside it (exit 143). Read its stderr for the cause and fix it if it is yours before you start it again.
+     Only one runs at a time: a new one stops the earlier one, which then prints
+     `replaced: a newer wait --lead watches now` (exit 143). That needs nothing from you, since the
+     newer one watches. A new run first reports anything that landed while none was running.
 
      Once both waits are running, send each
      `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
