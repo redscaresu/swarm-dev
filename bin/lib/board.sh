@@ -2515,7 +2515,9 @@ get_fm_or_gone() {
 # (decline_only_round, read once) is a decline-only end instead: it writes decline-only <slug> ok (round N)
 # with round=N and verdict=decline-only, and its review line has the same. A --head that passes writes
 # review-finished <slug> ok with the review line's fields; a review held writes none. A failed read of
-# decline_only_round is a pass, never a failed review.
+# decline_only_round is a pass, never a failed review. A story put in review under merge = human with no
+# HLD merge grant, from review-<slug>'s own pane, has that pane closed once this command has exited
+# and the agent is idle (handed_review).
 mark_review() {
   local f url held want="" slug round="" verdict=pass n=""
   f="$(item_file "${1:?slug}")"; shift
@@ -2548,6 +2550,28 @@ mark_review() {
   if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
     review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
   fi
+  if [[ "${f}" == "${BOARD}/stories/"* && "${CFG_merge}" == human ]] && ! no_agent_granted "${slug}"; then
+    handed_review "${slug}"
+  fi
+}
+
+# handed_review <slug> — mark_review's handover under merge = human with no HLD merge grant over the
+# story (no_agent_granted): review-<slug> merges nothing after this, so when this command runs in its
+# own pane (review_pane, the record merge and tell go by), it is retired (retire_agent) and its session
+# archived, as merged_review does for a merge, and close_when_idle closes the pane once this command has
+# exited and the agent's turn has ended. A grant the board shows makes the agent run swarm.sh merge
+# next, whose reconcile closes it instead; swarm.sh grants, which the agent asks, grants merge only
+# when the board does too, so no pane closes under a merge. From any other pane (the lead's, a
+# conductor's), outside herdr, or with herdr unable to list its agents, it closes nothing. It never
+# fails the review: a retire or close that fails is said.
+handed_review() {
+  local agents name
+  [[ "${HERDR_ENV:-}" == 1 && -n "${HERDR_PANE_ID:-}" ]] || return 0
+  agents="$(herdr agent list 2>/dev/null)" || return 0
+  [[ "$(review_pane "${agents}")" == "$1" ]] || return 0
+  name="$(agent_name "review-$1")"
+  ( set -e; retire_agent "review-$1"; archive_session "review-$1"; close_when_idle "${name}" "${HERDR_PANE_ID}" ) </dev/null &
+  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh tidy --yes once it is done"
 }
 
 REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may take
@@ -2661,8 +2685,10 @@ merged_build() {
 # merge, whose reconcile retires it, or reviewing still. A session Claude Code no longer lists (gone)
 # reads herdr's status, as live_agents does. When its pane is the one running this command (a merge
 # from the review pane, whose reconcile runs there), it is retired instead (retire_agent), whatever
-# its state, so the pane stays open under a -done name until tidy closes it. Its session is archived
-# then, while it still runs, so the copy stops at this merge; tidy archives nothing. Its ZDOTDIR
+# its state, so the pane running this command stays open under a -done name; close_when_idle then
+# closes it once this command has exited and the agent's turn has ended, or leaves it open for tidy,
+# with a line saying so, when that takes too long. Its session is archived when it is retired, while
+# it still runs, so the copy stops at this merge; the later close archives nothing. Its ZDOTDIR
 # stays: the agent is still running there. It never fails the caller: it runs in the background, so
 # set -e holds inside it, and a pane that could not be closed, or herdr with no agent list, is said.
 merged_review() {
@@ -2684,7 +2710,7 @@ merged_review() {
     esac
   fi
   ( set -e
-    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"; close_when_idle "${name}" "${pane}"
     else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
   wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }

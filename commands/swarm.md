@@ -213,7 +213,7 @@ Repeat until a step below says stop:
      stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
      read. When the wait returns with no review file and printed `busy`, it ran its 60 minutes while
      the agent works: wait again. When it returns with no review file any other way (the agent waits
-     on a prompt, is gone, or a merge's reconcile retired it), check the board first: a story in
+     on a prompt, is gone, or a merge's reconcile, or the `swarm.sh review` that handed its PR to the user, retired it), check the board first: a story in
      review with no `kept:` line, or one that has left the board, was passed and handed over or
      merged. Otherwise start the review again with `swarm.sh review-agent <slug> <PR URL>`. Once the
      file is there, read it before the board. If it has a `head moved:` line, the PR has a head
