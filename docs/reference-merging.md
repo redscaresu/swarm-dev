@@ -289,9 +289,11 @@ in events.tsv, so later steps can tell this head from a builder's push, and prin
 <PR URL> is now <new> (<old> with <base> merged in); waiting up to <seconds>s for its CI`. Each of its
 reads stops after 60 seconds (`BASE_MOVED_WAIT`), as the compare's does. Before it has a new head it
 refuses, naming the cause. Only a conflict asks the builder to merge the base in, since only the
-builder can resolve one. Every other failure is GitHub's request, which `merge` makes again on its
-next run, so those refusals ask for no merge-in and end `merge brings <base> in itself, with no
-merge-in from the builder: run merge --head <head> <PR URL> again`:
+builder can resolve one. A request that fails another way, a request with no answer in time, a 422
+whose head gh cannot read again and a head that never moves are failures of GitHub's request, which
+`merge` makes again on its next run. Those refusals ask for no merge-in and end `merge brings <base>
+in itself, with no merge-in from the builder: run merge --head <head> <PR URL> again`. A new head that
+GitHub did not make, or that `merge` cannot check, is a new head to review:
 
 - GitHub answers 422 and the head has not moved, a conflict: `the base <base> moved past <sha>'s CI
   (<n> commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>),
