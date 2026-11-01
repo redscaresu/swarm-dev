@@ -1038,7 +1038,10 @@ because the epic's conductor is still running leaves them alone. The conductor c
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. Each builder
-also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
+also proves its tests can fail: it breaks its fix and watches a test fail. Before its PR opens it
+breaks the fix in place and restores it with cp; after the PR opens it breaks the fix in a copy of
+the worktree without `.git`, made outside the worktree, and deletes the copy, so the worktree stays
+clean for the review agent.
 
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
