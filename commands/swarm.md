@@ -482,7 +482,13 @@ Repeat until a step below says stop:
      `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
-     is left and what waits on the user, then `swarm.sh close <agent>`.
+     is left and what waits on the user, then `swarm.sh close <agent>`. The close refuses, closing
+     nothing, while the conductor is working, while its epic's Finish PR (`swarm.sh finish <epic>`)
+     is open, or when gh cannot read that PR: closing it then could kill the `swarm.sh merge --board`
+     running in its pane. On that refusal, wait for the conductor to go idle and the Finish PR to
+     merge, then run the same close again. You need not come back for a conductor whose Finish PR a
+     `swarm.sh merge --board` lands: once that merge has exited and the conductor is idle, the merge
+     closes it, because your close was tried.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When the
      why says the epic is built (all its stories have left the board, and its report is missing or
      older than its last story's merge), its conductor has no agent work left and reports at once:

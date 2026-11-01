@@ -559,6 +559,12 @@ default). The conductor's pane is read from the note's one list of agents, so a 
 fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
 agents in that time, or gives a list that does not parse, or a note that fails, is a warning and
 never fails the merge.
+When a `--board` PR on `board/finish-<epic>` (an epic's Finish PR, from `swarm.sh finish <epic>`)
+merges and this project's herdr lists `conduct-<epic>`, merge starts a detached waiter, as reconcile
+does for a review agent (§ Merging). It closes the conductor once the merge has exited, the conductor
+is idle and the lead has tried collect's `swarm.sh close conduct-<epic>` since the conductor's report,
+and logs `close-when-idle conduct-<epic> closed`. If that has not happened 20 minutes after the merge
+exits, it leaves the conductor open and logs `close-when-idle conduct-<epic> left open: ...`.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
@@ -836,7 +842,10 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It also keeps the tab that holds the pane the command runs in, unless that pane is the one
 being closed, so a step-up or reconcile run from an idle review agent's pane leaves that pane open.
-It prints each of those agents as `kept`, and still closes the conductor's own pane.
+It prints each of those agents as `kept`, and still closes the conductor's own pane. It refuses,
+closing nothing, while the conductor is working, while its epic's Finish PR (`board/finish-<epic>`)
+is open, or when gh cannot list that PR, since the PR's `swarm.sh merge --board` may run in the
+conductor's pane ([reference-building.md](reference-building.md)).
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or

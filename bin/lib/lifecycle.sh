@@ -556,7 +556,34 @@ back_to_ready() {
   [[ "$(fm "${f}" status)" != review ]] || state_set "${f}" status ready prs "" kept ""
 }
 
+# conductor_busy <conductor> — why closing <conductor> now could cut its work short, or nothing (and
+# it fails): it is working (session_state busy, unless its turn stopped on an API error (api_stopped),
+# whose exit is this close; or herdr's status working where herdr answers for it), or its epic's
+# Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
+# be running in its pane, where a close would kill it. A list of that branch's PRs gh could not give
+# says so: whether such a merge runs is not known (fail closed). The backlog conductor finishes no
+# epic, and a board outside the project's repo, or a project with no origin, opens no Finish PR.
+conductor_busy() {
+  local state pane epic origin prs open head
+  state="$(session_state "$1")"
+  if [[ "${state}" == herdr || "${state}" == gone ]]; then state="herdr:$(agent_status "$1")"
+  elif [[ "${state}" == busy ]]; then pane="$(agent_field "$1" pane_id)"; ! api_stopped "$1" "${pane}" || state=stopped; fi
+  if [[ "${state}" == busy || "${state}" == herdr:working ]]; then echo "is working"; return 0; fi
+  epic="$(conduct_epic "$1")"
+  [[ "${epic}" != backlog && ${BOARD_IN_REPO} == 1 ]] || return 1
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
+  head="board/finish-${epic}"
+  if ! prs="$(gh pr list -R "${origin}" --head "${head}" --state all --json url,state,headRefName 2>/dev/null)" \
+     || ! open="$(SWARM_HEAD="${head}" json "' '.join(p['url'] for p in d if p.get('headRefName') == e['SWARM_HEAD'] and p['state'] == 'OPEN')" <<< "${prs}")"; then
+    echo "could not have its Finish PR read (gh could not list the PRs on ${head}), so whether a swarm.sh merge --board of it still runs in its pane is not known"; return 0
+  fi
+  [[ -n "${open}" ]] || return 1
+  echo "has its Finish PR ${open} open, and the swarm.sh merge --board that lands it may be running in its pane"
+}
+
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
+# A conductor (conduct-<name>, no story of that name) that conductor_busy names a reason for is
+# refused before anything closes, the refusal naming it.
 # A close that would end a failed build whose PR is still open closes the builder alone and puts the
 # story in review with that PR (keep_build); impossible, paused and cleared-on-error, which would hand
 # the story on, are refused instead. Only with CLOSE_DROP set (close --drop) does it go on to clear
@@ -580,6 +607,9 @@ close_agent() {
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
+  if [[ "$1" == conduct-* && ! -f "${f}" ]] && why="$(conductor_busy "$1")"; then
+    die "close: $1 ${why}, so nothing was closed: close it again once it is idle and no Finish PR of its is open. A swarm.sh merge --board that lands its Finish PR closes $1 itself, once that merge has exited and $1 is idle, as this close was tried"
+  fi
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
     || die "close: with goal on, $1's story is still ready, so say why its builder stopped: swarm.sh close $1 <cause>, the cause one of ${CLOSE_CAUSES}"
@@ -1978,8 +2008,8 @@ tidy_panes() {
 }
 
 # CLOSE_IDLE_SECONDS: how long close_when_idle's waiter waits for a retired review agent's turn to end
-# once the command that retired it has exited, before it leaves the pane open (under 30 minutes, so a
-# stuck agent is not waited on for long). CLOSE_CMD_SECONDS: how long it waits for that command to exit
+# (a conductor's, and the lead's collect of it) once the command that started the wait has exited,
+# before it leaves the pane open (under 30 minutes, so a stuck agent is not waited on for long). CLOSE_CMD_SECONDS: how long it waits for that command to exit
 # first; a merge's own waits end well inside it. CLOSE_IDLE_POLL: how often it looks, in seconds.
 # CLOSING_DIR holds each waiter's <name>.pid while it runs, and its output, <name>.log.
 CLOSE_IDLE_SECONDS="${SWARM_CLOSE_IDLE_SECONDS:-1200}"
@@ -1987,70 +2017,102 @@ CLOSE_CMD_SECONDS=1200
 CLOSE_IDLE_POLL="${SWARM_CLOSE_IDLE_POLL:-5}"
 CLOSING_DIR="${PROJECT_DIR}/.swarm/closing"
 
-# close_when_idle <name> <pane> — close <pane>, where merged_review just retired <name> (herdr's name
-# for review-<slug>) because the command running now (a swarm.sh merge in that pane, or its reconcile)
-# runs there, once that command has exited and the agent's turn has ended. Closing the pane now would
-# kill the command. So it starts the waiter, swarm.sh _close-when-idle (close_idle_wait), detached as
-# review_restart starts its run: nohup, in a session of its own (setsid), so closing the pane does not
-# end it, pinned to this project, and given $$, the swarm.sh process running now. Its output goes to
-# CLOSING_DIR/<name>.log, never to this command's, so the agent's Bash call does not wait on it; its
-# pid goes to CLOSING_DIR/<name>.pid. What it will do is said; a CLOSING_DIR it cannot make is said,
-# and the pane stays open.
+# close_when_idle <name> <pane> — close <pane> once the command running now has exited, where closing
+# it now would kill that command, and once <name>'s turn has ended. <name> is either herdr's name for
+# review-<slug>, which merged_review just retired because that command (a swarm.sh merge in its pane,
+# or its reconcile) runs there, or a conductor, conduct-<epic>, whose Finish PR a swarm.sh merge
+# --board just landed (merge_pr), maybe from the conductor's own pane. So it starts the waiter,
+# swarm.sh _close-when-idle (close_idle_wait), detached as review_restart starts its run: nohup, in a
+# session of its own (setsid), so closing the pane does not end it, pinned to this project, and given
+# $$, the swarm.sh process running now. Its output goes to CLOSING_DIR/<name>.log, never to this
+# command's, so the agent's Bash call does not wait on it; its pid goes to CLOSING_DIR/<name>.pid.
+# What it will do is said; a CLOSING_DIR it cannot make is said, and the pane stays open.
 close_when_idle() {
+  local how="close it with swarm.sh tidy --yes once it is done" when=" and its turn has ended"
+  if [[ "$1" == conduct-* ]]; then
+    how="close it with swarm.sh close $1 once it is idle"
+    when=", its turn has ended and the lead has collected it (collect's swarm.sh close $1, refused or not)"
+  fi
   mkdir -p "${CLOSING_DIR}" 2>/dev/null \
-    || { echo "$1 stays open in pane $2: ${CLOSING_DIR} could not be made, so nothing waits to close it; close it with swarm.sh tidy --yes once it is done"; return 0; }
+    || { echo "$1 stays open in pane $2: ${CLOSING_DIR} could not be made, so nothing waits to close it; ${how}"; return 0; }
   SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
     "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _close-when-idle "$1" "$2" "$$" </dev/null > "${CLOSING_DIR}/$1.log" 2>&1 &
   echo "$!" > "${CLOSING_DIR}/$1.pid"
-  echo "$1 closes once this command has exited and its turn has ended; if its turn has not ended ${CLOSE_IDLE_SECONDS}s after this command exits, it is left open, with a close-when-idle line in .swarm/events.tsv"
+  echo "$1 closes once this command has exited${when}; if that has not happened ${CLOSE_IDLE_SECONDS}s after this command exits, it is left open, with a close-when-idle line in .swarm/events.tsv"
 }
 
 # close_idle_wait <name> <pane> <pid> — swarm.sh _close-when-idle, close_when_idle's waiter. Every
-# CLOSE_IDLE_POLL seconds, once <pid> has exited, it reads the tab record's name for <pane>: the -done
-# name retire_agent gave <name>, or it stops with nothing closed (a tidy, a close or a deleted project
-# took the pane first). Then it reads the agent's state: session_state's word for <name>'s session, or, where
-# herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for this
-# project's agent under the -done name (list_field over one herdr agent list; a list herdr fails
-# to give reads as unknown, never as no agent). Idle, done, or no agent under that name any more: it closes the pane
-# (close_pane, which closes its tab too when the pane was the record's last) and logs
+# CLOSE_IDLE_POLL seconds, once <pid> has exited, it reads the tab record's name for <pane>: for a
+# review agent the -done name retire_agent gave <name>, for a conductor (conduct-<epic>) the name
+# start_agent records its pane under, conductor; anything else, and it stops with nothing closed (a
+# tidy, a close or a deleted project took the pane first). Then it reads the agent's state:
+# session_state's word for <name>'s session, or, where herdr answers for it (no session, or one Claude
+# Code no longer lists), herdr's status for this project's agent under the recorded -done name, or
+# <name> for a conductor (list_field over one herdr agent list; a list herdr fails to give reads as
+# unknown, never as no agent). Idle, done, or no agent under that name any more: a review agent's pane
+# closes (close_pane, which closes its tab too when the pane was the record's last). A conductor closes
+# as collect's close closes it (shut_agent: its epic's tabs, its own pane, its session archived), but
+# only once its report is there and the lead has collected it (report_collected tried: a swarm.sh close
+# of it since the report, refused or not); until then it reads as uncollected, since closing it would
+# take collect off next, which finds a conductor to collect by its pane. Either logs
 # `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
-# `close-when-idle <name> left open: ...`. So is one whose agent is still not idle CLOSE_IDLE_SECONDS
-# after <pid> exited, naming its state, or whose <pid> still runs CLOSE_CMD_SECONDS after the waiter
-# started: that pane stays open for tidy --yes. On its way out it removes CLOSING_DIR/<name>.pid while
-# that holds its own pid.
+# `close-when-idle <name> left open: ...`. So is one whose agent is still not idle (or, for a
+# conductor, not collected) CLOSE_IDLE_SECONDS after <pid> exited, naming its state, or whose <pid>
+# still runs CLOSE_CMD_SECONDS after the waiter started: that pane stays open for tidy --yes, or a
+# conductor for collect's close. On its way out it removes CLOSING_DIR/<name>.pid while that holds its
+# own pid.
 close_idle_wait() {
-  local name="$1" pane="$2" pid="$3" who state agents end="" cap
+  local name="$1" pane="$2" pid="$3" who state agents end="" cap conductor="" agent how cmd="the command that retired it"
   [[ -n "${name}" && -n "${pane}" && "${pid}" =~ ^[0-9]+$ ]] || die "usage: swarm.sh _close-when-idle <name> <pane> <pid>"
+  how="close its pane ${pane} with swarm.sh tidy --yes"
+  [[ "${name}" != conduct-* ]] || { conductor=1; how="close it with swarm.sh close ${name}"; cmd="the merge that landed its Finish PR"; }
   cap=$((SECONDS + CLOSE_CMD_SECONDS))
   while :; do
     # Nothing is read while <pid> runs: close_when_idle writes the pid file before <pid> can exit.
     if kill -0 "${pid}" 2>/dev/null; then
       if (( SECONDS >= cap )); then
-        record_event close-when-idle "${name}" "left open: the command that retired it (pid ${pid}) was still running ${CLOSE_CMD_SECONDS}s later; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        record_event close-when-idle "${name}" "left open: ${cmd} (pid ${pid}) was still running ${CLOSE_CMD_SECONDS}s later; ${how} once it is done"
         break
       fi
     else
       [[ -n "${end}" ]] || end=$((SECONDS + CLOSE_IDLE_SECONDS))
       who="$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" || who=""
-      if [[ "${who}" != "${name:0:27}-done" && "${who}" != "${name:0:26}-done"[2-9] ]]; then
+      if [[ -n "${conductor}" && "${who}" != conductor ]]; then
+        echo "pane ${pane} is no longer recorded as ${name}'s (its record says '${who}'), so nothing was closed"; break
+      elif [[ -z "${conductor}" && "${who}" != "${name:0:27}-done" && "${who}" != "${name:0:26}-done"[2-9] ]]; then
         echo "pane ${pane} is no longer recorded as retired ${name} (its record says '${who}'), so nothing was closed"; break
       fi
+      agent="${who}"; [[ -z "${conductor}" ]] || agent="${name}"
       state="$(session_state "${name}")"
       if [[ "${state}" == herdr || "${state}" == gone ]]; then
         if agents="$(herdr agent list 2>/dev/null)"; then
-          state="herdr:$(list_field "${who}" agent_status <<< "${agents}")"
+          state="herdr:$(list_field "${agent}" agent_status <<< "${agents}")"
         else state="herdr:unknown"; fi
       fi
       case "${state}" in
         idle|herdr:idle|herdr:done|herdr:)
-          CLOSE_PANE_KEPT=""
-          close_pane "${pane}" "${who}" || { echo "pane ${pane} left its tab record while it was closed, so nothing was closed"; break; }
-          if [[ -z "${CLOSE_PANE_KEPT}" ]]; then record_event close-when-idle "${name}" "closed (pane ${pane})"
-          else record_event close-when-idle "${name}" "left open: herdr could not close its pane ${pane}; close it with swarm.sh tidy --yes"; fi
-          break ;;
+          if [[ -n "${conductor}" ]] && ! report_collected "${name}" "$(conductor_report "${name}")" tried; then
+            state=uncollected
+          elif [[ -n "${conductor}" ]]; then
+            # In a subshell, as merged_review closes one: close_panes dies on a pane it cannot find.
+            if ( set -e; CLOSE_PANE_KEPT=""; shut_agent "${name}"; [[ -z "${CLOSE_PANE_KEPT}" ]] ); then
+              record_event close-when-idle "${name}" "closed (pane ${pane})"
+            else record_event close-when-idle "${name}" "left open: its pane ${pane} could not be closed (see .swarm/closing/${name}.log); ${how}"; fi
+            break
+          else
+            CLOSE_PANE_KEPT=""
+            close_pane "${pane}" "${who}" || { echo "pane ${pane} left its tab record while it was closed, so nothing was closed"; break; }
+            if [[ -z "${CLOSE_PANE_KEPT}" ]]; then record_event close-when-idle "${name}" "closed (pane ${pane})"
+            else record_event close-when-idle "${name}" "left open: herdr could not close its pane ${pane}; close it with swarm.sh tidy --yes"; fi
+            break
+          fi ;;
       esac
       if (( SECONDS >= end )); then
-        record_event close-when-idle "${name}" "left open: it was still ${state#herdr:} ${CLOSE_IDLE_SECONDS}s after the command that retired it exited; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        if [[ "${state}" == uncollected ]]; then
+          record_event close-when-idle "${name}" "left open: its report was still not collected ${CLOSE_IDLE_SECONDS}s after ${cmd} exited; collect it, and its close closes it"
+        else
+          record_event close-when-idle "${name}" "left open: it was still ${state#herdr:} ${CLOSE_IDLE_SECONDS}s after ${cmd} exited; ${how} once it is done"
+        fi
         break
       fi
     fi

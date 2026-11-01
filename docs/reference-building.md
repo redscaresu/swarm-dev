@@ -67,8 +67,19 @@ such stories with no epic, `swarm.sh conduct --backlog`. A conductor still in it
 running. When it has written its report, it prints `no conductor started: <conductor> has reported;
 collect it first`: a new start would delete that report before the lead reads it. A conductor whose
 pane is gone (closed by hand, a herdr restart, a crash) and whose report nobody collected (no `close`
-of it in `events.tsv` since the report, as collect's `swarm.sh close` logs) gets `no conductor started:
-<conductor> is gone, and nobody collected <report>; read it, then delete it`. When another
+of it in `events.tsv` since the report, as collect's `swarm.sh close` logs, and no `close-when-idle`
+line saying a merge closed it) gets `no conductor started:
+<conductor> is gone, and nobody collected <report>; read it, then delete it`.
+Collect's `swarm.sh close conduct-<epic>` refuses, closing nothing and saying why, while the
+conductor is working, while its epic's Finish PR (`swarm.sh finish <epic>`, on
+`board/finish-<epic>`) is open, or when gh cannot list that PR. Closing the conductor then could
+kill the `swarm.sh merge --board` running in its pane. Wait for it to go idle and the PR to merge,
+then close it again. An idle conductor with no Finish PR open closes as before. A `swarm.sh merge
+--board` that lands an epic's Finish PR closes that epic's conductor itself once the merge has
+exited, the conductor is idle and a `close` of it has been tried since its report, refused or not.
+Until then the conductor still has a report to collect, and `next` finds it only by its pane. If that
+takes longer than 20 minutes, the merge leaves it open and logs `close-when-idle conduct-<epic> left
+open: ...`; collect's close then closes it. When another
 project's agent holds the conductor's name, it says so and starts none. While a conductor works, `next` prints `also: lead <slug> blocks <slugs>` after the wait's why. It names each story that a blocked story an agent builds depends on, when no agent builds the named story: a ready story of a kind no agent builds (a `lead` story), or such a story that is blocked with no `depends_on` (only the lead can ready it). A story of a kind an agent builds, blocked with no `depends_on`, gets no `also:` line, because `finish` would close it unbuilt. A story in a draft or `later` epic gets none, and neither does one with `after:`. `status` reads a blocked story's line, of any kind, as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step such as `operator:<x>`. With an open parent an agent builds, or an open epic, it reads `blocked: <slug> (by <parents>)`. A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
