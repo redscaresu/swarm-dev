@@ -3278,17 +3278,16 @@ stuck_seen() {
   done < <(awk -v s="$1" -v u="${2:-}" '$1 == "stuck:" && $2 == s && (u == "" || $3 == u)' "${LEAD_SEEN}" 2>/dev/null || true)
 }
 
-# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell (panes.py's test_running, as
-# agents.sh's test_running reads it), with herdr's process info read within STUCK_READ_WAIT seconds: a read that
-# fails or hangs sees no run.
+# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell, however long ago it started
+# (panes.py's test_running, as agents.sh's test_running reads it), with herdr's process info read within
+# STUCK_READ_WAIT seconds: a read that fails or hangs sees no run.
 stuck_test_run() {
   local info
   info="$(within "${STUCK_READ_WAIT}" herdr pane process-info --pane "$1" </dev/null 2>/dev/null)" || info=""
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "${info}"
 }
 
 # main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base:
