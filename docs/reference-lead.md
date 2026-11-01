@@ -136,6 +136,11 @@ The PR heads are read with gh only on a run's first read and then at most once e
 therefore wakes the lead up to 5 minutes after its head turns green. A story that enters review
 waits for the next read of the heads. So does one that leaves review and comes back: a poll that
 finds a story out of review drops its result from that file.
+After a merge the heads pass runs on the next poll: a `merge` line added to `.swarm/events.tsv` since the
+last poll brings it forward. A story whose PRs have all merged since its build last started gets no line,
+though its file stays on the board until reconcile. A `merge` event that ends `ok` or `merged elsewhere`
+and names the PR counts as its merge, and so does one that names a story with one PR. A heads pass that
+reads a PR as merged on GitHub counts too; it reads the PRs of the items awaiting a merge by you.
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It edits the board only to write the fix-main story of a red
@@ -680,6 +685,20 @@ prints its step. A `step-up failed:` line is never the step: `wait --lead`
 hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
 frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
 `ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
+
+**`next` names a PR of yours that no story lists.** `swarm.sh merge` refuses a PR that no story or
+epic lists on its `prs:` line, so a lead's own PR (a config change, a doc fix) used to wait unseen. After
+the step's lines, `next` prints one line per open PR in the project's origin that you opened
+(`gh pr list --author @me`), whose head is not a `story/*`, `board/*` or `release/v*` branch, and that
+no story or epic lists: `unlisted: <PR URL> (<head>): no story or epic lists it; list it under the kind:
+lead story that covers it with swarm.sh review <slug> <PR URL>, then swarm.sh merge <PR URL>; with none, it
+waits on the user`. It is one gh call, the last of `next`'s reads, under the same deadline. When that
+read fails, is cut at the deadline or gets no list of PRs back, `next` prints `unlisted: not checked
+(<why>): an open PR of yours that no story or epic lists would not show here` in its place. Only that
+line names a cut of this read; the `skipped` line keeps naming the reads the step was worked out
+without. A project with no origin has no PR to list, and `next` prints no unlisted line for it.
+`status`, `dash` and `hooks/lead-stop.sh` work out the step without this read, so they make no such
+call.
 
 `status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
 `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up, or the
