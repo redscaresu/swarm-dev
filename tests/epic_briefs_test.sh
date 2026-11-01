@@ -173,10 +173,10 @@ check "a review brief holds, as an exception to the scope rule, a PR that change
   "$(has "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding." "${rbrief}")|$(has "- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed." "${rbrief}")"
 rm -f "${ROOT}/head"
 # The builder brief (_brief) of f1, whose worktree lacks scripts/select-tests.sh (only svc's own
-# checkout has it), then has it: after review fixes only the change's tests (select-tests.sh only where
-# the builder works), and no self-matching pgrep poll.
-selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
-own="After review fixes, run only the project's own tests for the change and let CI run the full suite."
+# checkout has it), then has it: before the first push and after review fixes only the change's tests,
+# then a push once they pass (select-tests.sh only where the builder works), and no self-matching pgrep poll.
+selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`), push once they pass, and let CI run the full suite."
+own="Before your first push, and after review fixes, run only the project's own tests for the change, push once they pass, and let CI run the full suite."
 nopoll="Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Poll the PIDs you recorded with \`ps -p <pids>\` (a later step's shell cannot \`wait\` on them), and find load by its \`f1-load\` marker with the bracketed pattern above, keeping the bare marker out of the poll's own command."
 mkdir -p "${ROOT}/svc/scripts"; : > "${ROOT}/svc/scripts/select-tests.sh"
 plain="$(run _brief f1 | tr -s '[:space:]' ' ')"
@@ -185,8 +185,16 @@ withsel="$(run _brief f1 | tr -s '[:space:]' ' ')"
 rm -r "${ROOT}/svc-wt/f1/scripts"
 check "a worktree without scripts/select-tests.sh (its repo's checkout has one): after review fixes the brief names the project's own tests and CI, and no select-tests" "yes|no" \
   "$(has "${own}" "${plain}")|$(grep -qF 'select-tests' <<< "${plain}" && echo yes || echo no)"
-check "a worktree with scripts/select-tests.sh: after review fixes the brief names select-tests.sh --run and CI" "yes|no" \
-  "$(has "After review fixes, ${selected}" "${withsel}")|$(grep -qF "${own}" <<< "${withsel}" && echo yes || echo no)"
+check "a worktree with scripts/select-tests.sh: before the first push and after review fixes the brief names select-tests.sh --run, a push once they pass, and CI" "yes|no" \
+  "$(has "Before your first push, and after review fixes, ${selected}" "${withsel}")|$(grep -qF "${own}" <<< "${withsel}" && echo yes || echo no)"
+# The builder acts when its own background test run ends, stops any run still going before a push by
+# a route the guard allows, and after the PR opens pushes what is ready with further points in the body.
+bgrun="Run a long test run in the background (Bash run_in_background), so its end wakes you, and act on its result when it ends."
+stoprun="Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
+oncepr="After the PR opens, push what is ready and put further points in the PR body, rather than a push for each: every push restarts CI."
+check "the builder brief runs a long test run in the background and acts when it ends" "yes" "$(has "${bgrun}" "${plain}")"
+check "the builder brief stops its own test run before a push, by PID or its background task, never pkill or killall" "yes" "$(has "${stoprun}" "${plain}")"
+check "the builder brief, after the PR opens, pushes what is ready and puts further points in the PR body" "yes" "$(has "${oncepr}" "${plain}")"
 check "with and without select-tests.sh, the brief forbids a pgrep -f poll that matches itself and points to the bracketed marker" "yes|yes" \
   "$(has "${nopoll}" "${plain}")|$(has "${nopoll}" "${withsel}")"
 # A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
