@@ -80,6 +80,13 @@ green_at="$(grep -n "commits/${H3}/check-runs" "${ROOT}/gh.log" | tail -1 | cut 
 is "a moved base: compares the new head with main after its green read, before the merge" "yes" \
   "$(c="$(line_of "compare/${H3}...main")"; (( green_at < c && c < $(line_of "pr merge") )) && echo yes || echo no)"
 
+# merge's wait on the new head is its own: polling every 3 s, which would turn wait-pr's poll cache on, it
+# still keeps nothing there, so no other wait's read stands in for one of merge's.
+fresh; rm -rf "${P}/.swarm/poll-cache"; moves "${H1}" "${H3}" "${B}" bin/x.sh; checks "${FX}/${H3}.checks.1" "$(run test in_progress)"
+merge SWARM_MERGE_POLL=3 SWARM_WAIT_PR_RETRY=3 "${URL}"
+is "a moved base, polling every 3 s: exits 0" 0 "${rc}"
+check "a moved base, polling every 3 s: merge's wait keeps nothing in the poll cache" test ! -e "${P}/.swarm/poll-cache"
+
 # --- main moves again while the new head's CI runs: main is at B when GitHub makes H3, H3's CI is still
 # running on its first read, and main is at B2, with bin/y.sh, once H3 is green. merge merges main in
 # again after that green, waits again, and merges the second new head.
