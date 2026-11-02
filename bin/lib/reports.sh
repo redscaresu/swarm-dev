@@ -382,15 +382,18 @@ dataset_report() {
 #     p90_min max_min over the per-day table's items in the window (never a no-agent item), p90 by
 #     nearest rank, - in each column with none.
 #     --epic does not narrow it.
-#   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
-#     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
-#     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from
-#     its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head once when it is
-#     not there, as conflict (a conflict, or a tree that is not git's clean merge), behind (clean, and
-#     the base had commits the branch lacked) or neither; unread for a PR gh cannot read, a merge-in gh
-#     does not list, a commit git cannot find, a merge-in whose git log, merge-tree, diff or merge-base
-#     fails, or a one-parent "merge", each named on a `merge ins: left out` line. Then, after a blank
-#     line, TSV file conflicts: the top three files, or `none conflicted`.
+#   merge_ins: TSV cause merge_ins prs reference_docs, why the PRs epic_totals counts under main_merged
+#     merged their base in (without --since, the 30 days up to --until or today): each merge-in (a PR
+#     commit gh's REST API lists whose headline merges the base in, by outcomes' main_merges rule)
+#     re-merged from its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head
+#     once when it is not there, as conflict (a conflict, or a tree that is not git's clean merge),
+#     behind (clean, and the base had commits the branch lacked) or neither; unread for a PR gh cannot
+#     read, a merge-in gh does not list, a commit git cannot find, a merge-in whose git log, merge-tree,
+#     diff or merge-base fails, or a one-parent "merge", each named on a `merge ins: left out` line.
+#     reference_docs, on the conflict row, counts the conflict merge-ins whose files include
+#     docs/reference.md or a docs/reference-*.md, once each (0: no conflict touched them); the other
+#     rows print -. Then, after a blank line, TSV file conflicts: the top three files, or
+#     `none conflicted`.
 #   merges: TSV day finished, the stories finished per local day (a finish ok line, or reconcile's ok
 #     (finished, each slug once on its newest such day), which dash's speedometer shows. Then, after a
 #     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
