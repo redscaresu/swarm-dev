@@ -25,6 +25,16 @@ is "a done story and an epic in review list the URL: the epic merges" "merge e o
 rm -rf "${P}/docs/stories/a.md" "${P}/docs/epics"
 fresh; rm "${S}"; merge "${URL}"; refused "a PR no story or epic lists" "no story or epic lists"
 is "a PR no story lists: the line's target is the URL" "merge ${URL}" "$(events | cut -d' ' -f1-2)"
+# A lead's own PR (#692): once swarm.sh review lists it under the kind: lead story that covers it, merge
+# takes it as any listed PR; merge_pr's item loop has no kind check.
+fresh; rm "${S}"; item l "status: ready" "kind: lead"
+rc=0; (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review l "${URL}" > "${ROOT}/out" 2>&1) || rc=$?
+is "a lead story's PR: review exits 0" 0 "${rc}"
+check "a lead story's PR: review lists it" said "review: l ${URL}"
+merge "${URL}"
+is "a lead story's PR, listed by review: merge exits 0" 0 "${rc}"
+check "a lead story's PR, listed by review: merge reaches pr merge" merged
+rm -f "${P}/docs/stories/l.md" "${P}/.swarm/board-state/stories/l"
 fresh; rm "${S}"; merge --board "${URL}"
 is "--board: exits 0" 0 "${rc}"
 check "--board: merged" merged

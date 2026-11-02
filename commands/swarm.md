@@ -67,7 +67,13 @@ Repeat until a step below says stop:
    Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
    30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
    worked out without them, so it may have missed a working conductor, or one stopped on an expired
-   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. A line
+   `unlisted: <PR URL> (<head>): no story or epic lists it; ...` names an open PR you opened that no
+   story or epic lists, so `swarm.sh merge` would refuse it. Find the `kind: lead` story that covers
+   it, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge <PR URL>` once its checks are green
+   and the merge is yours to make. With no such story, tell the user the PR waits on them. An
+   `unlisted: not checked (<why>)` line means the check could not run, so such a PR may be missed;
+   run `swarm.sh next` again later. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
@@ -279,7 +285,7 @@ Repeat until a step below says stop:
      uncommitted, as review-agent checks. codex-review reviews the directory it runs in, so run it
      from the story's worktree (`<repo>-wt/<slug>`, beside its repo), in the background:
      `cd <repo>-wt/<slug> || exit 1 && SWARM_STORY=<slug> SWARM_PROJECT=<this project> swarm.sh codex-review <base>`
-     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage limit the model
+     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage or rate limit the model
      `fallback_reviewer` names. Write its findings to a file and send them with
      `swarm.sh tell <slug> findings <file>`: that tell is a round under way, and the line goes quiet.
      If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
