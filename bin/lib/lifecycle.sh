@@ -4748,6 +4748,11 @@ lead_signal() {
 # bash runs a trap only once the foreground command it cut into ends.
 lead_sleep() { sleep "$1" & LEAD_SLEEP=$!; wait "${LEAD_SLEEP}"; LEAD_SLEEP=""; }
 
+# lead_traps — wait --lead's EXIT, USR1 and TERM traps (lead_exit, lead_signal). wait_command sets them as
+# soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with --lead)
+# ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
+lead_traps() { trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM; }
+
 # lead_gone — true once LEAD_PID names no live wait --lead, within 5 s.
 lead_gone() {
   local i
@@ -4798,14 +4803,15 @@ lead_poll() {
 #   wait-failed: exit <rc>, exit: swarm.sh wait --lead   any other non-zero exit with nothing printed (an
 #     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM), from its EXIT trap
 #     (lead_exit); exit <rc>.
-# The EXIT, USR1 and TERM traps are set before the argument checks.
+# The EXIT, USR1 and TERM traps (lead_traps) are set before the argument checks: by wait_command as soon as
+# its arguments name --lead, ahead of its own check of --past with --lead, and here again.
 # It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
 # clear_red_main) and, through a detached run, to write a red base head's fix-main story (main_red_fix), and
 # nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
-  trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM
+  lead_traps
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
@@ -5659,10 +5665,12 @@ past_target() {
 # wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
 # `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over. --past <sha>,
 # on a builder only (past_target refuses the rest, with --until-report and --lead), also ends the wait
-# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed).
+# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed). A wait --lead's traps go on
+# first (lead_traps), so its refusal of --past with --lead ends with the wait-failed: line as well.
 wait_command() {
   local stall until idle n out rc a past="" sha="" other=""
   for a in "$@"; do case "${a}" in --past) past=1 ;; --lead|--until-report) other="${a}" ;; esac; done
+  [[ "${other}" != --lead ]] || lead_traps   # every exit of a wait --lead says why, the check below included (lead_exit)
   [[ -z "${past}" || -z "${other}" ]] || die "wait [--stall] --past <sha> <slug> waits on a builder; it takes no ${other}"
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""; idle=""
