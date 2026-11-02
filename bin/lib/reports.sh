@@ -5,7 +5,7 @@
 FINDINGS_LOG_NAME="findings.tsv"
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). fallback is the agent codex-review starts in codex's place
-# on a usage limit (fallback_reviewer). skeptic and critic are the plan reviewers, and split-critic
+# on a usage or rate limit (fallback_reviewer). skeptic and critic are the plan reviewers, and split-critic
 # the check on a large epic's split into child epics, all logging on a board PR; escaped is a defect
 # a later fix found in merged work, logged against the original PR. A row logged without --reviewer
 # says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
@@ -431,7 +431,9 @@ dataset_report() {
 #     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
 #     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
-#     --epic does not narrow it.
+#     Then, after a blank line, TSV day retried saved: per local day in the window, start_agent's
+#     start-retry lines (a start retried once in a fresh pane) and how many of them are ok (the fresh
+#     pane saved the start), or a line when there is none. --epic does not narrow it.
 #   tell_refusals: TSV pane state tells refused, over the tell and tell:<kind> lines in events.tsv whose
 #     local day is in the window. A refusal's outcome is neither ok nor queued: or replaced:, nor, on a
 #     tell or tell:findings line, holds `herdr sent it the brief` (delivered, as findings_told counts

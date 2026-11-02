@@ -1096,6 +1096,17 @@ restart_session() {
   echo "${a[5]}"
 }
 
+# recorded_current <name> — the session <name> is in now by agents.tsv's record: its recorded session
+# followed through its resume command (restart_session) to where a /clear moved it, or the recorded one
+# itself when that file is missing or not resume_file's shape; nothing when none is recorded.
+recorded_current() {
+  local rec cur
+  rec="$(recorded_session "$1")"
+  [[ -n "${rec}" ]] || return 0
+  cur="$(restart_session "${rec}" 2>/dev/null)" || cur="${rec}"
+  echo "${cur}"
+}
+
 # restart_took <session> — succeed when Claude session <session>'s main log (report.py's session_log)
 # holds a user prompt (panes.py's is_prompt, not a Task subagent's entry): its brief, or a later one,
 # landed. Fails with no log.
@@ -1116,8 +1127,9 @@ sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
 
 # restart_resume <slug> <tab> <wt> "<session> <resume>" <names> — reopen <slug>'s builder's Claude session
 # <resume> (restart_session of its agents.tsv <session>) in a new pane in <tab>, at <wt>, with the flags
-# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
-# start_agent), report that command to herdr as start_agent does, and tell the builder why.
+# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry of herdr's
+# agent start, as start_agent, but none in a fresh pane: a shell that does not take the environment
+# dies), report that command to herdr as start_agent does, and tell the builder why.
 restart_resume() {
   local name argv a resume=() flags=() pane out seq msg try session id
   read -r session id <<< "$4"
@@ -2365,6 +2377,8 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
 LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
 LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
+LEAD_EVENTS_AT="${LEAD_DIR}/events-at"   # "<byte offset> <inode>" of events.tsv that lead_events has read
+LEAD_MERGES="${LEAD_DIR}/merges"      # build starts and merges, folded from events.tsv and the heads pass (lead_events, pr_head)
 # shellcheck disable=SC2034 # board.sh reads it
 LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protected hold names, read by the last heads pass (held_heads)
 LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
@@ -2500,10 +2514,90 @@ heads_green() {
 }
 
 # pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot, or when the read runs
-# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll.
+# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll. The same read gives the PR's
+# state: one that reads MERGED gets a `G <time> <PR URL>` line in LEAD_MERGES (lead_merged), which covers
+# a merge made on GitHub, with no merge event.
 pr_head() {
+  local out head state
   [[ "$1" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 0
-  within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null || true
+  out="$(within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid,state \
+    --jq '.headRefOid + " " + .state' </dev/null 2>/dev/null)" || true
+  read -r head state <<< "${out}"
+  [[ "${state}" != MERGED ]] || printf 'G\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${LEAD_MERGES}" 2>/dev/null || true
+  printf '%s\n' "${head}"
+}
+
+# lead_events — fold the lines events.tsv gained since the last call into LEAD_MERGES, and true when one of
+# them is a merge line, of any outcome. It reads from the byte offset LEAD_EVENTS_AT keeps, never the whole
+# file, up to the last whole line, so a line still being written is read next time. A file that shrank or
+# was replaced (another inode) is folded again from its start. LEAD_MERGES gets, in the log's order, `S
+# <time> <slug>` for an ok story or escalate line and `A <time> <agent>` for an ok agent line (a build start,
+# as build_started reads one), and `M <time> <target>` for a merge line that ends ok or merged elsewhere
+# (<target> is what the merge was given: a PR URL or a slug). False with no log, or when it could not write.
+lead_events() {
+  perl -e '
+    my ($log, $at_file, $fold, $sep) = @ARGV;
+    my ($at, $ino) = (0, "");
+    if (open my $a, "<", $at_file) { my $l = <$a> // ""; ($at, $ino) = ($1, $2) if $l =~ /^(\d+) (\d+)$/; }
+    open my $h, "<", $log or exit 1;
+    my @st = stat $h;
+    my $mode = ">>";
+    if ($st[7] < $at || $st[1] ne $ino) { ($at, $mode) = (0, ">"); }
+    seek $h, $at, 0 or exit 1;
+    my $new = do { local $/; <$h> } // "";
+    $new = substr($new, 0, rindex($new, "\n") + 1);
+    my ($out, $merge) = ("", 0);
+    for my $line (split /\n/, $new) {
+      my @f = split /\t/, $line, -1;
+      next if @f < 5;
+      my $o = $f[4]; my $i = index($o, $sep); $o = substr($o, 0, $i) if $i >= 0;
+      if ($f[1] eq "merge") { $merge = 1; $out .= "M\t$f[0]\t$f[2]\n" if $o eq "ok" || $o eq "merged elsewhere"; }
+      elsif ($o =~ /^ok/ && ($f[1] eq "story" || $f[1] eq "escalate")) { $out .= "S\t$f[0]\t$f[2]\n"; }
+      elsif ($o =~ /^ok/ && $f[1] eq "agent") { $out .= "A\t$f[0]\t$f[2]\n"; }
+    }
+    open my $o, $mode, $fold or exit 2; print $o $out; close $o or exit 2;
+    open my $t, ">", "$at_file.tmp" or exit 2; print $t $at + length($new), " $st[1]\n"; close $t or exit 2;
+    rename "$at_file.tmp", $at_file or exit 2;
+    exit($merge ? 0 : 1);
+  ' "${EVENTS_LOG}" "${LEAD_EVENTS_AT}" "${LEAD_MERGES}" "${EVENT_SEP}" 2>/dev/null
+}
+
+# lead_merged — of the slugs on stdin, one a line, each whose story on the board counts as merged, one a
+# line: since its last build start (an S or A line in LEAD_MERGES), every URL on its prs: has an M or a G
+# line (a heads pass read it MERGED, pr_head), or, for a story with at most one PR, the slug itself has an M
+# line. swarm.sh merge logs a story PR's merge under the story's slug, which does not say which PR merged,
+# so one merged PR of two never hides the other's lines. Exact matches only. Reads LEAD_MERGES and board
+# files, never gh.
+lead_merged() {
+  local s f rows="" had=" "
+  [[ -s "${LEAD_MERGES}" ]] || { cat > /dev/null; return 0; }
+  while IFS= read -r s; do
+    [[ -n "${s}" && "${s}" != */* && "${had}" != *" ${s} "* ]] || continue
+    had+="${s} "; f="${BOARD}/stories/${s}.md"
+    [[ -f "${f}" ]] || continue
+    rows+="${s}"$'\t'"$(agent_name "${s}")"$'\t'"$(story_prs "${f}")"$'\n'
+  done
+  [[ -n "${rows}" ]] || return 0
+  awk -F'\t' '
+    function reset(s,  i) { whole[s] = 0; for (i = 1; i <= n[s]; i++) delete got[s, pr[s, i]] }
+    FILENAME == ARGV[1] {
+      want[$1] = 1; by_agent[$2] = $1; n[$1] = split($3, u, " ")
+      for (i = 1; i <= n[$1]; i++) { pr[$1, i] = u[i]; owners[u[i]] = owners[u[i]] " " $1 }
+      next
+    }
+    $1 == "S" && ($3 in want) { reset($3); next }
+    $1 == "A" && ($3 in by_agent) { reset(by_agent[$3]); next }
+    $1 == "M" || $1 == "G" {
+      if (($3 in want) && n[$3] <= 1) whole[$3] = 1
+      if ($3 in owners) { k = split(owners[$3], o, " "); for (j = 1; j <= k; j++) got[o[j], $3] = 1 }
+    }
+    END {
+      for (s in want) {
+        m = whole[s]
+        if (!m && n[s] > 0) { m = 1; for (i = 1; i <= n[s]; i++) if (!((s, pr[s, i]) in got)) m = 0 }
+        if (m) print s
+      }
+    }' <(printf '%s' "${rows}") "${LEAD_MERGES}"
 }
 
 # held_heads — the heads pass's first read: the head of each PR a protected hold names (protected_holds
@@ -3147,17 +3241,16 @@ stuck_seen() {
   done < <(awk -v s="$1" -v u="${2:-}" '$1 == "stuck:" && $2 == s && (u == "" || $3 == u)' "${LEAD_SEEN}" 2>/dev/null || true)
 }
 
-# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell (panes.py's test_running, as
-# agents.sh's test_running reads it), with herdr's process info read within STUCK_READ_WAIT seconds: a read that
-# fails or hangs sees no run.
+# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell, however long ago it started
+# (panes.py's test_running, as agents.sh's test_running reads it), with herdr's process info read within
+# STUCK_READ_WAIT seconds: a read that fails or hangs sees no run.
 stuck_test_run() {
   local info
   info="$(within "${STUCK_READ_WAIT}" herdr pane process-info --pane "$1" </dev/null 2>/dev/null)" || info=""
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "${info}"
 }
 
 # main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base:
@@ -3629,7 +3722,8 @@ for f in sys.argv[1:]:
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
-# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# which agents are live (no_agent_lines). line_holds reads it once more, on a poll that is about to
+# print a line that says an agent is missing. LEAD_AGENTS_OK is set when herdr answered within
 # SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
 # poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
 LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
@@ -3982,7 +4076,7 @@ no_agent_theirs() {
 # restart would refuse it as no_agent_lines lets it through: held_by:, no worktree (a branch left), or no
 # builder in agents.tsv (a first start that failed before it was recorded). A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
-# since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
+# since, unless the move added only git's own clean merges of the base, base_merges_only). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
 # <slug> <pr>` for each. A story in review with no PR URL: find it by hand in the story's repo (gh pr
 # list -R <its origin> --head story/<slug>, as open_pr asks), then the review-agent exit; hold takes
 # only a ready story, so it is never that.
@@ -4462,21 +4556,70 @@ LEAD_QUIET="held: escalated: kept: merge: idle:"
 # lead_quiet <line> — true when <line>'s kind is in LEAD_QUIET.
 lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 
-# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
-# and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
-# since its last (lead_heads, open_story_prs, lead_bases), start a fix-main story's writer for each red base
+# lead_line_slug <line> — set LEAD_LINE_SLUG to the word a queue line names: after its first ": ", up to a
+# comma or a space. lead_wake logs it and drops a merged story's lines by it.
+lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%,*}"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%% *}"; }
+
+# line_holds <line> — false when <line> says an agent is missing and a second read of herdr's agent list
+# shows that agent in a pane this project opened (own_panes), with each name mapped by no_agent_name as
+# its producer maps it: <slug>'s builder or review-<slug> for `no-agent: <slug>` (no_agent_lines'
+# test), review-<slug> for `no-review: <slug>` (no_review_line's), and the builder for `idle: <slug> is
+# ready with no build` (touches_rows.py --idle reads no herdr list, so this read is that line's only
+# one). Each producer reads the poll's first list (lead_agents), and an agent can start after it.
+# lead_wake asks only about a line it is about to print, so herdr is read again only on a poll with such
+# a line, and once per poll: the read lands in LEAD_RECHECK_READ, LEAD_RECHECK_OK and LEAD_RECHECK_LIVE,
+# which lead_wake makes local. True for any other line; for a `no-review:` line whose note says
+# `(started `, since this poll started that review agent (no_review_line's restart) and its line is the
+# lead's word of it; and when no second read is made, because the poll's first read failed or timed out
+# (LEAD_AGENTS_OK empty: a hung herdr would cost the poll a second wait) or the poll runs outside herdr,
+# or when the read fails, takes longer than lead_agents allows, or gives JSON that does not parse: the
+# line stands.
+LEAD_RECHECK_READ=""; LEAD_RECHECK_OK=""; LEAD_RECHECK_LIVE=""
+line_holds() {
+  local list name rname
+  case "$1" in
+    "no-review: "*" (started "*", exit: "*) return 0 ;;
+    "no-agent: "* | "no-review: "* | "idle: "*" is ready with no build, "*) ;;
+    *) return 0 ;;
+  esac
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  if [[ -z "${LEAD_RECHECK_READ}" ]]; then
+    LEAD_RECHECK_READ=1
+    if [[ "${HERDR_ENV:-}" == 1 ]] && list="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)" \
+       && LEAD_RECHECK_LIVE="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${list}" 2>/dev/null)"; then
+      LEAD_RECHECK_OK=1
+    fi
+  fi
+  [[ -n "${LEAD_RECHECK_OK}" ]] || return 0
+  lead_line_slug "$1"
+  no_agent_name name "${LEAD_LINE_SLUG}"; no_agent_name rname "review-${LEAD_LINE_SLUG}"
+  case "$1" in
+    "no-agent: "*) ! grep -qxF -e "${name}" -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    "no-review: "*) ! grep -qxF -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    *) ! grep -qxF -e "${name}" <<< "${LEAD_RECHECK_LIVE}" ;;
+  esac
+}
+
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
+# and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
+# since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
+# open_story_prs, lead_bases), start a fix-main story's writer for each red base
 # head none covers (main_red_fix), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
-# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
-# queue as LEAD_SEEN. Print
+# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
+# whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
+# drop a no-agent:, no-review: or `idle: ... is ready with no build` line it would print whose agent a
+# second read of herdr's list shows (line_holds), and save the rest of the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet saves the lines
 # of a kind in LEAD_QUIET without printing them, and prints every other line: each is an alert.
 lead_wake() {
-  local now line new="" slug u
+  local now line new="" u merged="" gone kept="" LEAD_RECHECK_READ="" LEAD_RECHECK_OK="" LEAD_RECHECK_LIVE=""
   lead_agents
-  if [[ -z "${LEAD_HEADS_AT}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
+  # A merge changes the PR state the heads pass reads: read it on this poll, not up to LEAD_HEADS_EVERY later.
+  if lead_events; then merged=1; fi
+  if [[ -z "${LEAD_HEADS_AT}" || -n "${merged}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
     LEAD_HEADS_AT=${SECONDS}; lead_heads
     # The open story PRs pr_lines reads each poll, on the heads pass's cadence: its gh reads come with the pass's.
     open_story_prs > "${LEAD_PRS}.new" && mv "${LEAD_PRS}.new" "${LEAD_PRS}"
@@ -4509,16 +4652,33 @@ lead_wake() {
   tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
   u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
   now="${now}${now:+${u:+$'\n'}}${u}"
+  # A merged story names no line, whatever the producer: its file stays on the board until reconcile.
+  gone="$(while IFS= read -r line; do lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
+  if [[ -n "${gone}" ]]; then
+    while IFS= read -r line; do
+      lead_line_slug "${line}"
+      grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || kept+="${line}"$'\n'
+    done <<< "${now}"
+    now="${kept%$'\n'}"
+  fi
+  # A line about to print that says an agent is missing goes when herdr, read once more, lists it
+  # (line_holds). It is left out of LEAD_SEEN too, so a later poll prints it if it still holds then.
+  kept=""
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || { [[ -n "${1:-}" ]] && lead_quiet "${line}"; } || new+="${line}"$'\n'
+    [[ -n "${line}" ]] || continue
+    if ! grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null && ! { [[ -n "${1:-}" ]] && lead_quiet "${line}"; }; then
+      line_holds "${line}" || continue
+      new+="${line}"$'\n'
+    fi
+    kept+="${line}"$'\n'
   done <<< "${now}"
+  now="${kept%$'\n'}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
   LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
-    echo "${line}"; slug="${line#*: }"; slug="${slug%%,*}"
-    record_event lead-woken "${slug%% *}" "ok (${line%%: *})"
+    echo "${line}"; lead_line_slug "${line}"
+    record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
 
@@ -4626,8 +4786,8 @@ lead_poll() {
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The PR heads behind its merge: lines, the open story PRs behind its unmerged: and conflict:
 # lines, and the base heads behind its main-red: lines are read only in a heads pass (lead_heads,
-# open_story_prs, lead_bases), on its first read and then at most once
-# every LEAD_HEADS_EVERY seconds. The first read of a run reports what
+# open_story_prs, lead_bases), on its first read, then at most once every LEAD_HEADS_EVERY seconds, and
+# on the poll after events.tsv gains a merge line (lead_events). The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
 # every line whose kind is not in LEAD_QUIET. Every exit says why on stdout, in one line that is no queue
 # item (never in LEAD_SEEN, never logged as lead-woken), and keeps its exit code:
@@ -5306,12 +5466,15 @@ UPGRADE_HINT=""
 # <end-ms>), write this version's resume command (resume_file), send ctrl+c twice at once (claude
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
 # through clean_env with this version's bin first on PATH and <env-names> and agent_env's names
-# (agent_env_names): --resume of herdr's session for the pane,
-# with the flags its claude ran with (herdr pane process-info). Any failure once claude has exited
-# keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
+# (agent_env_names): --resume of herdr's session for the pane, or when herdr lists the pane with none
+# the one agents.tsv recorded, followed through its resume command to where a /clear moved it
+# (recorded_current; it says so; a list herdr cannot answer resumes nothing), with the flags its
+# claude ran with (herdr pane process-info). The resume files stay named for agents.tsv's id, which
+# a later /clear and swarm.sh restart read. Any failure once claude
+# has exited keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
 # stops only this agent.
 upgrade_one() {
-  local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try names
+  local name="$1" pane="$2" old session key a out cwd why rc flags=() resume=() try names
   old="$(agent_version "${name}")"
   names="$(agent_env_names)"; names="${names}${names:+ }$3"   # as start_agent gives every agent
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
@@ -5320,17 +5483,29 @@ upgrade_one() {
     [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/busy-${name}"
     die "${name}: still busy at the end of the wait, left on ${old}"
   fi
-  session="$(session_for_pane "${pane}")"
-  [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+  session="$(session_for_pane "${pane}")"; key="${session}"   # key: the name of the session's resume files
+  if [[ -z "${session}" ]]; then
+    # Only when herdr answers and lists the pane with no session: a list that cannot be read says nothing.
+    out="$(herdr agent list 2>/dev/null </dev/null | json "sum(1 for a in d['result']['agents'] if a.get('pane_id')=='${pane}')" 2>/dev/null)" || out=""
+    [[ "${out}" == 1 ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+    key="$(recorded_session "${name}")"
+    [[ -n "${key}" ]] || die "${name}: neither herdr nor agents.tsv gives a session for it, so it cannot be resumed; left on ${old}"
+    # agents.tsv holds the agent's first session. A /clear moves it in <key>.argv (hooks/agent-state.sh), so
+    # resume the session the agent is in now, as swarm.sh restart does (the raw id when that file is not
+    # resume_file's); the files stay keyed by agents.tsv's id, which the next /clear and restart read.
+    session="$(recorded_current "${name}")"
+    if [[ "${session}" == "${key}" ]]; then echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, the one agents.tsv recorded" >&2
+    else echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, which a /clear moved agents.tsv's ${key} to" >&2; fi
+  fi
   out="$(upgrade_flags "${pane}")" && rc=0 || rc=$?
   [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"
   [[ ${rc} -ne 4 ]] || die "${name}: herdr pane process-info could not be read, so it is left as it is, on ${old}"
   [[ ${rc} -eq 0 ]] || die "${name}: no claude in pane ${pane} (herdr pane process-info), left on ${old}"
   cwd="${out%%$'\n'*}"; out="${out#"${cwd}"}"; out="${out#$'\n'}"
   if [[ -n "${out}" ]]; then while IFS= read -r a; do flags+=("${a}"); done <<< "${out}"; fi
-  resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
+  resume=(python3 -I "${RESUME_DIR}/${key}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
   why="$(resume_refusal "${resume[@]}")" && die "${name}: herdr would refuse its resume command (${why}), left on ${old}"
-  resume_file "${name}" "${session}" "${names}" "${resume[@]}"
+  resume_file "${name}" "${key}" "${names}" "${resume[@]}"
   a="$(upgrade_path)"
   # Before the first ctrl+c, so a claude that exits late, or a read that fails, still says how to resume it.
   UPGRADE_HINT="${name}: not started again; if pane ${pane} shows a shell, claude --resume ${session}, run in ${cwd}, brings the session back"
@@ -5345,7 +5520,7 @@ upgrade_one() {
     [[ ${rc} -ne 4 ]] || die "${name}: herdr pane process-info could not be read after the ctrl+c, so whether claude exited is not known"
     [[ ${try} -lt 3 ]] || die "${name}: claude did not exit on ctrl+c, left on ${old}"
   done
-  local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv"
+  local -x SWARM_RESUME="${RESUME_DIR}/${key}.argv"
   PATH="${a}" clean_env "${pane}" "${name}" "${names}" keep   # the agent's PATH; herdr below still runs from the lead's
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out})"
@@ -5369,14 +5544,19 @@ upgrade_flags() {
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
-# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's, over
-# agents.tsv's session (herdr 0.9.5 lists none); a turn stopped on
+# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else, with herdr listing
+# none (herdr 0.9.5) and a /clear having moved agents.tsv's session, the one it moved to
+# (recorded_current), as upgrade_one resumes it, else read_state's, over agents.tsv's session; a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
 upgrade_state() {
-  local s sid
+  local s sid cur
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
+  if [[ -z "${sid}" ]]; then   # herdr lists none (0.9.5): agents.tsv's, followed to where a /clear moved it, as upgrade_one resumes
+    cur="$(recorded_current "$1")"
+    [[ "${cur}" == "$(recorded_session "$1")" ]] || sid="${cur}"
+  fi
   if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
   else
     s="$(claude_agents </dev/null | python3 -I -c '
@@ -5452,18 +5632,49 @@ upgrade_path() {
   echo "${out}"
 }
 
-# wait_command [--stall] [--idle] | --until-report <name> [timeout-ms] | --lead [timeout-ms] — the wait
-# command: a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's
-# (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
+# past_target <slug> <sha> <name> — wait --past's refusals, each naming the form, then PAST_SHA,
+# PAST_WT, PAST_BRANCH and PAST_ORIGIN for past_pushed. Dies, waiting on nothing, on a <sha> that is not
+# 40 hex characters, on a conductor or a review agent (<name>, as wait_command reads them), and on a
+# <slug> with no story file on the board or no worktree (worktree_for).
+past_target() {
+  local f src form="wait [--stall] --past <sha> <slug>"
+  [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die "${form}: <sha> is a full 40-character commit sha, not '$2'"
+  [[ "$3" != conduct-* || "$3" =~ -done[0-9]*$ ]] || die "${form} waits on a builder, not the conductor $3"
+  [[ ! "$1" =~ ^review-[a-z0-9-]+$ || "$(awk -F'\t' -v n="$3" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" != review ]] \
+    || die "${form} waits on a builder, not the review agent $3"
+  f="${BOARD}/stories/$1.md"
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f "${f}" ]] || die "${form} waits on a story's builder: no story file ${f}"
+  src="$(repo_dir "$(fm "${f}" repo)")" || die "${form}: $1: ${src}"
+  PAST_WT="$(worktree_for "${src}" "$1")"
+  [[ -d "${PAST_WT}" ]] || die "${form} waits on a story's builder: $1 has no worktree at ${PAST_WT}"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_ORIGIN="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "${form}: $1: ${src} has no origin to read the PR's head from"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_BRANCH="story/$1" PAST_SHA="$2"
+}
+
+# wait_command [--stall] [--idle] [--past <sha>] | --until-report <name> [timeout-ms] | --lead [timeout-ms]
+# — the wait command: a conductor's wait, with no timeout under --until-report, any other agent's, or the
+# lead's (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
 # wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
-# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over.
+# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over. --past <sha>,
+# on a builder only (past_target refuses the rest, with --until-report and --lead), also ends the wait
+# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed).
 wait_command() {
-  local stall until idle n out rc
+  local stall until idle n out rc a past="" sha="" other=""
+  for a in "$@"; do case "${a}" in --past) past=1 ;; --lead|--until-report) other="${a}" ;; esac; done
+  [[ -z "${past}" || -z "${other}" ]] || die "wait [--stall] --past <sha> <slug> waits on a builder; it takes no ${other}"
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""; idle=""
   case "${1:-}" in --until-report) until=1; shift ;; esac
-  while :; do case "${1:-}" in --stall) stall=--stall; shift ;; --idle) idle=1; shift ;; *) break ;; esac; done
+  while :; do case "${1:-}" in
+    --stall) stall=--stall; shift ;;
+    --idle) idle=1; shift ;;
+    --past) sha="${2:-}"; shift; [[ $# -eq 0 ]] || shift ;;
+    *) break ;;
+  esac; done
   n="$(agent_name "${1:?name}")"
+  [[ -z "${past}" ]] || past_target "$1" "${sha}" "${n}"
   if [[ -n "${until}" ]]; then
     [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
     wait_conductor "${n}" 0

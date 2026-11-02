@@ -205,11 +205,12 @@ fresh; out="$(cd "${P}" || exit 1; AR_LOG="${ROOT}/agent-read.log" PI_MAP="${ROO
 check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working 120m' <<< "${out}"
 check "a builder running make test is not under needs you" lacks "look at s-three" "${out}"
 check "a frame with a test run reads each agent's pane once: one render" test "$(grep -cx 'w1:p9' "${ROOT}/agent-read.log")" = 1
-# The same run started 100 minutes ago, past 3 x stall_minutes (90), may be hung: stalled, and it needs you.
+# The same run started 100 minutes ago, past 3 x stall_minutes (90), is still work: a test run has no age
+# limit, so the builder is working and not under needs you.
 { cat "${ROOT}/ps.base"; printf '%s\n' '  300   200  01:40:00 /bin/zsh -c make test' '  310   300  01:40:00 make test'; } > "${PS_LIST}"
 fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
-check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working 120 min' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago is working" grep -qE '● s-three .*working 120m' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago is not under needs you" lacks "look at s-three" "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A background task s-three's session waits on (a shell launched 60 minutes ago, with no end in its
 # transcript) is work, as for wait --stall: working, not stalled, and not under needs you. Launched

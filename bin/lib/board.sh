@@ -694,20 +694,64 @@ next_queued() (
   conductors_queued
 )
 
+# unlisted_prs — next's unlisted: lines: one per open PR in the project's origin that the gh user opened
+# (gh pr list --author @me), whose head is no story/*, board/* or release/v* branch, and whose URL no
+# story or epic lists on its prs: line (the match merge_pr makes). swarm.sh merge refuses such a PR (no
+# story or epic lists), so without this line it waits unseen. One gh call, within the report's deadline
+# (REPORT_END, so after report_start), but not through report_read: a cut read is named on its own
+# not-checked line, and the skipped: line keeps naming only the reads the step was worked out without.
+# next_step, which dash and status run every frame, never calls it. A check that cannot run prints one
+# `unlisted: not checked (<why>)` line, never nothing: a gh read that fails or is cut at the deadline, or
+# an answer that is not a list of PRs (a gh stub that does not know the call). A project with no origin
+# has no PR on GitHub for merge to take, so it prints nothing and calls no gh. Returns 0.
+UNLISTED_LIMIT=1000   # the most open PRs of the gh user's one list reads
+unlisted_prs() {
+  local origin json rows rc=0 why="" listed=" " f url head
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 0
+  json="$(within "@${REPORT_END:?unlisted_prs: no report_start}" gh pr list -R "${origin}" --author @me --state open \
+    --limit "${UNLISTED_LIMIT}" --json url,headRefName </dev/null 2>/dev/null)" || rc=$?
+  if (( rc == 142 )); then why="gh pr list was cut at the report's ${REPORT_SECONDS} s deadline"
+  elif (( rc != 0 )); then why="gh pr list failed, exit ${rc}"
+  elif ! rows="$(python3 -I -c '
+import json, re, sys
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    url, head = p["url"], p["headRefName"]
+    if not re.fullmatch(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+", url) or not re.fullmatch(r"[^\s\x00-\x1f]+", head):
+        sys.exit(1)
+    if not head.startswith(("story/", "board/", "release/v")):
+        print(url, head)
+' <<< "${json}" 2>/dev/null)"; then why="gh pr list gave no list of PRs"
+  fi
+  if [[ -n "${why}" ]]; then
+    echo "unlisted: not checked (${why}): an open PR of yours that no story or epic lists would not show here"
+    return 0
+  fi
+  [[ -n "${rows}" ]] || return 0
+  while IFS= read -r f; do listed+="$(fm "${f}" prs) "; done < <(board stories; board epics)
+  while read -r url head; do
+    [[ "${listed}" != *" ${url} "* ]] || continue
+    echo "unlisted: ${url} (${head}): no story or epic lists it; list it under the kind: lead story that covers it with swarm.sh review <slug> ${url}, then swarm.sh merge ${url}; with none, it waits on the user"
+  done <<< "${rows}"
+  return 0
+}
+
 # next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why), its release-held: line, report_skipped's skipped: line, then
-# idle_lines' for it. All are worked out first
+# conductors_queued's, after its why), its release-held: line, unlisted_prs' unlisted: lines (the last
+# read), report_skipped's skipped: line, then idle_lines' for it. All are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 # Every read that can block, next_step's, conductors_queued's and conduct_ready's, runs with next_reads
-# on, within REPORT_SECONDS of the start. conduct_ready fails closed: after a cut read it starts no
-# conductor and names each one it would have started (a cut read could hide a stopped conductor). Each
-# start it makes runs without next_reads' forms, to its end however long it takes: a start cut partway
-# would leave a pane with no conductor. The writes (next_seen's, conduct_ready's events) read nothing
-# next_reads changes.
+# on, within REPORT_SECONDS of the start, and unlisted_prs' read, last, within it too. conduct_ready
+# fails closed: after a cut read it starts no conductor and names each one it would have started (a
+# cut read could hide a stopped conductor). Each start it makes runs without next_reads' forms, to its
+# end however long it takes: a start cut partway would leave a pane with no conductor. The writes
+# (next_seen's, conduct_ready's events) read nothing next_reads changes.
 next_report() {
-  local tmp step idle queued rest started skipped
+  local tmp step idle queued rest started skipped unlisted
   # Local, so the list read below never reaches a later lead_agents.
   # shellcheck disable=SC2034 # no_agent_lines reads them
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
@@ -737,12 +781,15 @@ next_report() {
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
   next_reads off
+  # Last of the reads, so a deadline the step's reads used up costs this line, not the step.
+  unlisted="$(unlisted_prs)"
   skipped="$(report_skipped)"
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
   [[ -z "${RELEASE_HELD}" ]] || step+=$'\n'"${RELEASE_HELD}"
+  [[ -z "${unlisted}" ]] || step+=$'\n'"${unlisted}"
   [[ -z "${skipped}" ]] || step+=$'\n'"${skipped}"
   idle="$(idle_lines "${step%%$'\n'*}")"
   trap '' PIPE
@@ -2586,7 +2633,7 @@ review_heads() {
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     [[ "${head}" == "${want}" ]] \
-      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url} once this round sent the builder findings; after a pass, a new swarm.sh review-agent ${slug} ${url})"
+      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
   done
 }
 
