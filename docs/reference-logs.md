@@ -350,13 +350,15 @@ parsed is read from `gh` again and rewritten, and one that would not change is n
 answers over it, so it also shows a rerun the cache missed. Setting `SWARM_GH_CACHE` empty turns the
 cache off (the tests whose `gh` stub changes between runs do).
 
-`swarm.sh wait-pr` keeps its CI reads in `.swarm/poll-cache/` (`bin/lib/poll_cache.py`) for under one
-poll, so waits on one head share them. Each file is one read's output, named by a hash of the gh
-command and holding that command, so a different command never reads it. A read is kept only once
-it parsed whole, written to a temp file and renamed. While one wait makes a read, a `.lock` file
-holding its pid makes another wait for the result instead of reading too; a lock whose pid has
-exited, or one held past the max age, no longer holds the others. Any file in the directory older
-than 10 minutes is deleted whenever a read is kept.
+`swarm.sh wait-pr` and `swarm.sh watch` keep their CI reads in `.swarm/poll-cache/`
+(`bin/lib/poll_cache.py`) for under one poll. Waits on one head share them, and so do watches on one
+repo (the open-PR list and the check-run and status reads). Each file is one read's output, named by a
+hash of the gh command and its output filter and holding both. A different command never reads it,
+and neither does the same path read with another filter. A read is kept only once it parsed whole
+(for watch's own reads, once gh exited 0), written to a temp file and renamed. While one wait or watch
+makes a read, a `.lock` file holding its pid makes the others wait for the result instead of reading
+too. A lock whose pid has exited, or one held past the max age, no longer holds the others. Any file in
+the directory older than 10 minutes is deleted whenever a read is kept.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR

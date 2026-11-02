@@ -1,15 +1,24 @@
-# Short-lived copies of gh reads, so wait-pr runs on one head (a builder's, its review agent's, the
-# lead's) share each poll's reads. A read is cached only when the call sets SWARM_POLL_CACHE (the
-# directory, <project>/.swarm/poll-cache) and SWARM_POLL_CACHE_SECONDS (the oldest entry it takes, in
-# whole seconds; 0 or unset is off). wait-pr sets both on its ci_gate call alone, to under one poll, so
-# a lone waiter never reads its own entry; every other gh read goes to GitHub.
+# Short-lived copies of gh reads, so concurrent polls share each poll's reads: wait-pr runs on one head (a
+# builder's, its review agent's, the lead's), and watch runs on one repo (each conductor's, the lead's). A
+# read is cached only when the call asks for it, in one of two forms:
+# - ci_gate's pages() (through below), when the call sets SWARM_POLL_CACHE (the directory,
+#   <project>/.swarm/poll-cache) and SWARM_POLL_CACHE_SECONDS (the oldest entry it takes, in whole
+#   seconds; 0 or unset is off). wait-pr sets both on its ci_gate head call, and watch on queued_line's
+#   ci_gate age call.
+# - The command form, for bash: `poll_cache.py <dir> <max-age> -- <command...>` prints the command's
+#   stdout, from an entry or from a run, and exits as the command did. Only a run that exits 0 is kept; a
+#   failed one's stdout and then its stderr pass through, and the next reader runs it again. A max age of
+#   0 runs the command uncached. watch reads its open-PR list and each head's check runs this way.
+# Each caller's max age is under its own poll, so a lone poller never reads its own entry; every other gh
+# read goes to GitHub.
 #
-# One JSON file per command form (gh's argv and the output filter, if any), named by its sha256, holding
-# that form, the time it was written and gh's output. A reader takes it only when the form matches its
-# own exactly and it is younger than the reader's max age. An entry is written only after the caller
-# accepted the output (through's accept returned), by a temp file renamed over the old one (macOS has
-# no flock), so no reader sees half of one. Writing one deletes any file in the directory older than
-# PRUNE_SECONDS.
+# One JSON file per command form (gh's argv and the output filter, if any; the command form's whole
+# argv, its -q filter included), named by its sha256, holding that form, the time it was written and the
+# output. A reader takes it only when the form matches its own exactly and it is younger than the
+# reader's max age, so two forms of one path (ci_gate's raw pages, watch's filtered line) never read
+# each other's. An entry is written only after the caller accepted the output (through's accept
+# returned), by a temp file renamed over the old one (macOS has no flock), so no reader sees half of one.
+# Writing one deletes any file in the directory older than PRUNE_SECONDS.
 #
 # Two readers that miss together make one read: the first to create <key>.lock (holding its pid) reads,
 # and the others wait for its entry. A waiter reads for itself when the lock goes with no entry written
@@ -19,7 +28,7 @@
 # A reader that took an entry writes its age, the oldest it took, in whole seconds, to the file
 # SWARM_POLL_CACHE_AGE names, if any: wait-pr pauses that much less before its next poll, so a wait that
 # reads another's entries polls in step with it and sees a change within one poll of it.
-import hashlib, json, os, tempfile, time
+import hashlib, json, os, subprocess, sys, tempfile, time
 
 PRUNE_SECONDS = 600   # a file older than this is deleted when an entry is written
 LOCK_PAUSE = 0.05     # seconds between looks at another reader's lock
@@ -140,11 +149,12 @@ def holder(path):
         pass
     return "alive", pid
 
-def through(argv, filt, fetch, accept):
+def through(argv, filt, fetch, accept, on=None):
     """accept(gh's output for argv and its output filter filt): fetch() reads it from gh. With the cache
-    on, a fresh entry for the same form stands in for fetch(), and fetch()'s output is kept once accept
-    returned. Whatever fetch or accept raises reaches the caller, and nothing is kept then."""
-    on = settings()
+    on (on, (directory, max age) or False for off; settings() when None), a fresh entry for the same form
+    stands in for fetch(), and fetch()'s output is kept once accept returned. Whatever fetch or accept
+    raises reaches the caller, and nothing is kept then."""
+    on = settings() if on is None else on
     if not on:
         return accept(fetch())
     d, age = on
@@ -182,3 +192,46 @@ def through(argv, filt, fetch, accept):
     finally:
         if held:
             release(lk, os.getpid())
+
+class Failed(Exception):
+    """The command form's command failed: its exit code, stdout and stderr (bytes), passed on, never kept."""
+    def __init__(self, rc, out, err):
+        Exception.__init__(self, rc)
+        self.rc, self.out, self.err = rc, out, err
+
+def run(cmd):
+    """The command's stdout, as text that round-trips any bytes; its stderr goes on to ours. Raises Failed
+    when it exits non-zero, is killed (128 + the signal) or cannot start (127)."""
+    try:
+        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True)
+    except OSError as e:
+        raise Failed(127, b"", ("poll_cache: %s: %s\n" % (cmd[0], e.strerror or e)).encode())
+    if p.returncode:
+        raise Failed(p.returncode if p.returncode > 0 else 128 - p.returncode, p.stdout, p.stderr)
+    sys.stderr.buffer.write(p.stderr)
+    sys.stderr.flush()
+    return p.stdout.decode("utf-8", "surrogateescape")
+
+USAGE = "usage: poll_cache.py <dir> <max-age seconds> -- <command...>"
+
+def command(args):
+    """The command form: prints <command>'s stdout, from an entry under <dir> younger than <max-age> or
+    from a run of it, and returns its exit code. A run that exits 0 is kept; a failed one prints its
+    stdout, then its stderr (so the last line is the error, as when both went to one pipe), and keeps
+    nothing. A max age of 0 is off."""
+    if len(args) < 4 or args[2] != "--" or not args[0] or not args[1].isdigit():
+        sys.stderr.write(USAGE + "\n")
+        return 2
+    d, age, cmd = args[0], int(args[1]), args[3:]
+    try:
+        out = through(cmd, "", lambda: run(cmd), lambda s: s, (d, age) if age > 0 else False)
+    except Failed as e:
+        sys.stdout.buffer.write(e.out)
+        sys.stdout.flush()
+        sys.stderr.buffer.write(e.err)
+        return e.rc
+    sys.stdout.buffer.write(out.encode("utf-8", "surrogateescape"))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(command(sys.argv[1:]))
