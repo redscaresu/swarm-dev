@@ -79,7 +79,9 @@ An agent name gets an `s` in front when its slug starts with a digit, so a build
 `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
 `-done<N>` name reads as the name before it when it is under 32 characters. A longer one may hold a cut
 name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
-the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
+the agent running `codex-review`. When `codex-review` retries codex after a rate limit, it writes a
+`codex-retry` line, not a second incident: target `codex-<story>` (`codex-<base>` with no `SWARM_STORY`),
+outcome `rate limit: retrying in <N> s`, and the same tail as its `codex-limit` incident ([§ Building](reference-building.md#building)). `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
