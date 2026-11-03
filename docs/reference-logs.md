@@ -703,12 +703,15 @@ Goal 5's first bar, which the lead reads by hand:
 | 5. Nothing waits for the lead unseen | lead queue p90 under 30 minutes | `flow lead_queue: p90_min` |
 
 The `reviewers` section shows what review yields, so the
-reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework`,
+reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework deferred`,
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
 declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on in the window and that
-`outcomes` shows as reworked. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
+`outcomes` shows as reworked. `deferred` counts the declined findings whose reason is `deferred`: findings
+held back, not sent to the builder. It is part of `declined`, so it shows how much of a kind's declines were held back.
+A row with no reason field, such as one logged before the reason existed, counts 0 here. That 0 means the
+reason is unknown, not that nothing was held back. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no
