@@ -750,8 +750,8 @@ It refuses, and starts nothing, while herdr still lists the builder, and when th
 
 - has a PR that merged or is set to auto-merge
 - has a step-up waiting (run `swarm.sh step-up --resume <slug>` for that)
-- has no worktree
 - has a worktree with a git step left unfinished (a merge, rebase, cherry-pick or revert, or an `index.lock`) or one off `story/<slug>`
+- has no worktree
 - is `kind: lead`, held or escalated
 - is not ready
 
@@ -768,14 +768,14 @@ In `outcomes`, a resumed session is the same build row, and a fresh builder is a
 Wait until the lead's queue gains one of these, and print each new one:
 
 - a story PR that conflicts with its base (`conflict: <slug> <PR URL>, exit: tell its builder to merge the base in`)
+- a held, escalated or kept story
 - a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`)
 - an epic that can start or has no plan running (`idle: epic <epic> can start, ...`, `idle: epic <epic> has no plan running, ...`), as `next` prints them (`wait --lead` takes no step of its own, so its epic lines include the one `next`'s `plan-epic` step names)
 - a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`)
+- a green PR in review that waits on you
 - a started story with no live agent (`no-agent: <slug>, exit: <exit>`)
 - a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`; for a review-agent start cut short with tries left, it starts the next try itself and the line says `(started N of 3)` after the PR, [§ The lead](reference-lead.md#the-lead))
 - an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`)
-- a green PR in review that waits on you
-- a held, escalated or kept story
 - a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`)
 - a review agent's stop note no running conductor has (`stopped: <slug> (<the note>), exit: <exit>`)
 - a story PR whose idle builder has sat 60 minutes on findings or a conflict (`stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`)
