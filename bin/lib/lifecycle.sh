@@ -5123,11 +5123,11 @@ upgrade_skip_closed() {
 # was closed outside swarm.sh, which drops a pane's record when it closes one. The lead's own pane is
 # never one; in record order, each name once, with its role, tab-separated.
 upgrade_missing() {
-  local f pane name extra rec seen=" " re='^[A-Za-z0-9]+:[A-Za-z0-9]+$'
+  local f pane name extra rec seen=" "
   for f in "${STATE_DIR}"/*; do
     [[ -f "${f}" ]] || continue
     while read -r pane name extra; do
-      [[ -n "${name}" && -z "${extra}" && "${pane}" =~ ${re} ]] || continue   # a tab record: "<pane> <name>"
+      [[ -n "${name}" && -z "${extra}" && "${pane}" =~ ^[A-Za-z0-9]+:[A-Za-z0-9]+$ ]] || continue   # a tab record: "<pane> <name>"
       name="$(upgrade_record_name "${f##*/}" "${name}")"
       [[ "${seen}" != *" ${name} "* ]] || continue
       seen+="${name} "
