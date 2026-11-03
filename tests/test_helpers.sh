@@ -101,9 +101,11 @@ group_record() {
 # stop_group <pgid> [record] — stop every process in group <pgid>, and return once pgrep -g finds none.
 # It STOPs the group until two reads of it agree (XNU's killpg can miss a member forked while it walks
 # the group, as tests/codex_test.sh's group KILL case says), KILLs it, reaps the leader when it is this
-# shell's child, then polls pgrep -g, KILLing again, for up to 5 s. Once the group is gone it drops the
-# group's line from [record]. Returns 1, naming what is left on stderr, if the group outlives the poll,
-# and 2 for a <pgid> that is not a whole number above 1 (pgrep -g 0 is pgrep's own group).
+# shell's child, then polls pgrep -g, KILLing again, for up to 5 s. A <pgid> that leads no group (the
+# process never ran in_new_group, which group_record said) is KILLed alone, so the wait on it cannot
+# hang. Once the group is gone it drops the group's line from [record]. Returns 1, naming what is left
+# on stderr, if the group outlives the poll, and 2 for a <pgid> that is not a whole number above 1
+# (pgrep -g 0 is pgrep's own group).
 stop_group() {
   local g="$1" record="${2-}" tries=50 pause=0.1 settle=10 i now was="" left
   [[ "${g}" =~ ^[0-9]+$ && "${g}" -gt 1 ]] || { echo "stop_group: no group id: '${g}'" >&2; return 2; }
@@ -111,7 +113,7 @@ stop_group() {
     kill -STOP -- "-${g}" 2>/dev/null || true
     now="$(pgrep -g "${g}" || true)"; [[ "${now}" != "${was}" ]] || break; was="${now}"
   done
-  kill -KILL -- "-${g}" 2>/dev/null || true
+  kill -KILL -- "-${g}" 2>/dev/null || kill -KILL "${g}" 2>/dev/null || true
   { wait "${g}"; } 2>/dev/null || true
   for ((i = 0; i < tries; i++)); do
     left="$(pgrep -g "${g}" || true)"
