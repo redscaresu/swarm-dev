@@ -163,7 +163,11 @@ board_pr() {
       # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
-      [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
+      if [[ -n "${f}" ]]; then
+        # The first epic; after a tab, the clause naming the deleted epic whose agreed: it carries.
+        f="${f%%$'\n'*}"; why=""; [[ "${f}" != *$'\t'* ]] || { why="${f#*$'\t'}"; f="${f%%$'\t'*}"; }
+        die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on)${why}; commit it as status: draft first, then run /swarm-dev:epic ${f}"
+      fi
       # So is one that goes active above the stage the base allows, whatever lead_epics says.
       f="$(stage_gate board_read "${files}")" || die "board-pr: ${f}"
       [[ -z "${f}" ]] || die "board-pr: ${f}"
