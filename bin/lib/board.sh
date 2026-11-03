@@ -946,15 +946,18 @@ lead_held() {
   done
 }
 
-# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:) with one PR (story_prs), which waits for its review agent (one
-# with several is the lead's, as review_rule says), or one its review agent merges next, under merge =
-# agent or an HLD merge grant (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge
-# has handed it to the user or the lead since its last review (merge_refused).
+# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on.
+# A story with several PRs (story_prs) is the lead's, kept or not, as review_rule says: no review agent
+# acts on it. Otherwise: one a close kept unreviewed (kept:) with one PR, which waits for its review
+# agent, or one its review agent merges next, under merge = agent or an HLD merge grant
+# (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge has handed it to the user or
+# the lead since its last review (merge_refused).
 review_agent_owns() {
-  local slug
+  local slug n
   slug="$(basename "$1" .md)"
-  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(story_prs "$1" | wc -w)" -eq 1 ]]; return; fi
+  n="$(story_prs "$1" | wc -w)"
+  [[ ${n} -le 1 ]] || return 1
+  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ ${n} -eq 1 ]]; return; fi
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   [[ "${CFG_merge}" == agent ]] || no_agent_granted "${slug}" || return 1
   [[ -z "$(costs_tag "$1")" ]] || return 1
