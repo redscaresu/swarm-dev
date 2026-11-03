@@ -69,7 +69,7 @@ value() { times "$1" | awk -v s="$2" '$2 == s { print $3 }'; }
 # Each run takes status's own time on this board (some seconds), so the timed run is the slow one too:
 # every run's pr list sleeps 1 s, which changes no output.
 status timed SWARM_REPORT_TIMES=1 PR_LIST_SLEEP=1
-is "the timed run reads pr list once, stacked_child's, so a slow pr list slows Stacked alone" "pr list" "$(sort -u "${ROOT}/gh-calls")"
+is "the timed run reads pr list once, stacked_child's, so a slow pr list slows Stacked alone" "pr list" "$(cat "${ROOT}/gh-calls")"
 is "SWARM_REPORT_TIMES=1: one time: line per section, in order" "${SECTIONS}" "$(times timed | awk '{ print $2 }' | paste -sd' ' -)"
 is "SWARM_REPORT_TIMES=1: every time: line is time: <section> <s.mmm>" 7 \
   "$(times timed | grep -cE '^time: [a-z-]+ [0-9]+\.[0-9]{3}$' || true)"
