@@ -473,6 +473,37 @@ check "11 review-agent --next's round 2 carries no cap line" "yes|no" "$(has 'Re
 o="$(nextr 3)"
 check "11 review-agent --next's round 3 carries the cap line, exactly as review_round_line sets it" "yes|yes|yes" \
   "$(has 'Review round 3 of story s1' "${o}")|$(has "${CAP}" "${o}")|$(has "$(flat "$(lib 'review_round_line 3 '"${URL}")")" "${o}")"
+
+# --- 12. demote_kinds: unset, rounds 1 to 3 print exactly today's round line; set, rounds 1 and 2 add one
+# line that defers the listed kinds unless a regression or a now-false line, and the brief's fix rule and
+# deferred reason follow it; round 3 has the cap line alone.
+TESTS_CI='Tests (review_verify = ci): read the diff and trust CI for the tests; run no local test suite and no mutation run.'
+R1="This is review round 1 of the story. When the PR changes code (not only docs, board files or a dependency bump), state the touches and Done when above, then run \`/code-review ${URL}\`. ${TESTS_CI} "
+R2="This is review round 2 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only. ${TESTS_CI} "
+check "12 unset, round 1's line is exactly today's" "${R1}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 1 '"${URL}")")"
+check "12 unset, round 2's line is exactly today's" "${R2}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 2 '"${URL}")")"
+check "12 unset, round 3's line is exactly today's: round 2's form and the cap line" \
+  "${R2/round 2/round 3}${CAP} " "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 3 '"${URL}")")"
+DEMOTE='Demoted kinds (demote_kinds = duplicate-code,efficiency): of the findings that are real and inside the story, send the builder one of kinds duplicate-code, efficiency only when it is a regression this PR introduces or a line now false about the code; this replaces the rule that each of them is to fix. Decline the rest of those kinds as deferred: rebut them in the PR with the other declined ones, and log each with `--declined deferred` and no `--because`, since holding it back is your call, not the builder'"'"'s.'
+DK='CFG_demote_kinds=duplicate-code,efficiency; CFG_review_verify=ci;'
+check "12 set, round 1's line is today's and the demote line" "${R1}${DEMOTE} " "$(flat "$(lib "${DK}"' review_round_line 1 '"${URL}")")"
+check "12 set, round 2's line is today's and the demote line" "${R2}${DEMOTE} " "$(flat "$(lib "${DK}"' review_round_line 2 '"${URL}")")"
+o="$(flat "$(lib "${DK}"' review_round_line 3 '"${URL}")")"
+check "12 set, round 3 has the cap line and no demote line" "yes|no" "$(has "${CAP}" "${o}")|$(has 'Demoted kinds' "${o}")"
+FIX_DEMOTE='One that is real and inside the story is to fix, except one of the demoted kinds above, which is to fix only as a regression this PR introduces or a line now false about the code: the builder fixes it, never you.'
+DEFER_BOTH='deferred for a real one inside the story that the round cap holds back (from round 3) or, before that round, demote_kinds holds back (kinds duplicate-code, efficiency),'
+for r in 1 2; do
+  b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' '"${r}")")"
+  check "12 set, round ${r}'s brief has the demote line and the demoted fix rule, not the fix-every-finding line, and names both deferral causes" \
+    "yes|yes|no|yes" "$(has "${DEMOTE}" "${b}")|$(has "${FIX_DEMOTE}" "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER_BOTH}" "${b}")"
+done
+b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 3')")"
+check "12 set, round 3's brief keeps the capped fix rule and no demote line" "yes|no|no" \
+  "$(has "${FIX_CAP}" "${b}")|$(has "${FIX_DEMOTE}" "${b}")|$(has 'Demoted kinds' "${b}")"
+check "12 finding_rule names deferred for both the round cap and demote_kinds" yes \
+  "$(has 'deferred when the round cap held it back (from review round 3) or demote_kinds did (a kind it lists, before that round).' "$(flat "$(lib finding_rule)")")"
+check "12 the conductor names both deferral causes" yes \
+  "$(has 'declined as `deferred` (held back by the round cap, from review round 3, or by demote_kinds before it) that a later fix proves real' "$(flat "$(lib 'conduct_brief e 2>/dev/null || true')")")"
 rm -f "${F}" "${F}.prev" "${F%.md}.head"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
