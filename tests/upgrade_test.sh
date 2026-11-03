@@ -8,7 +8,8 @@
 # swarm.sh path, and the conductor to carry on. A dirty worktree is left as it was. A busy builder is never sent a key: idle ones after it go first, it is
 # restarted once idle, and one still busy at the end of the wait is named as left on its old
 # version. One whose session is gone, or whose pane herdr no longer lists, is skipped as closed:
-# named once on a skipped (closed) line, never touched, and counted neither moved nor left. An agent whose newest record is codex is
+# named once on a skipped (closed) line, never touched, and counted neither moved nor left; a closed
+# pane is found through its tab record, a conductor's reading `conductor`. An agent whose newest record is codex is
 # left alone. One that cannot be told the new path stays on its old version; a restart that fails once
 # claude has exited says how to resume it; a second run skips the agents already on this version. A
 # busy conductor gets the request in its inbox. A conductor already on this version is paused while
@@ -81,7 +82,7 @@ BEFORE="$(tree_state)"
 
 # A project whose path holds a space. A conductor and two builders of epic e (b1 recorded under s0,
 # its session before a /clear; herdr has s1 in its pane now), and x1's builder of another epic.
-printf 'w:c conduct-e\nw:b1 b1\nw:b2 b2\nw:x1 x1\nw:r review-b1\n' > "${P}/.swarm/state/e"
+printf 'w:c conductor\nw:b1 b1\nw:b2 b2\nw:x1 x1\nw:r review-b1\n' > "${P}/.swarm/state/e"   # a conductor's record reads conductor, as start_conductor writes it
 printf '%s\n' $'2026-10-20\tconduct\tconduct-e\tclaude\topus\thigh\tsc' $'2026-10-20\tcode\tb1\tclaude\tsonnet\thigh\ts0' \
   $'2026-10-20\tcode\tb2\tclaude\tsonnet\thigh\ts2' $'2026-10-20\tcode\tx1\tclaude\tsonnet\thigh\tsx' \
   $'2026-10-20\treview\treview-b1\tclaude\tsonnet\thigh\tsr' $'2026-10-21\treview\treview-b1\tcodex\tdefault\thigh\t-' > "${P}/.swarm/agents.tsv"   # review-b1 is codex now
@@ -321,6 +322,14 @@ upgrade e
 check "a closed pane is named, never touched, and the run succeeds" "0|1|||upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): b2' "${H}/out")|$(calls 'pane send-keys w:b2'; calls 'agent wait w:b2'; calls 'agent start b2')|$(grep '^b2: ' "${H}/out" || true)|$(tail -1 "${H}/out")"
 check "its conductor is told b2 was skipped as closed" "1" "$(calls 'agent prompt w:c' | grep -c 'Skipped as closed: b2\. Carry on')"
+# The conductor's pane is closed: its tab record reads `conductor`, which maps to conduct-e; it is
+# named, never asked, and its builders, with no conductor to pause, are restarted.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; cp "${H}/agents.keep" "${H}/agents"; sed -i.bak '/^conduct-e /d' "${H}/agents"
+upgrade e
+cp "${H}/agents.keep" "${H}/agents"
+check "a conductor whose pane is closed is named from its conductor record, never asked, and its builders move" "0|1||start b1|start b2|upgrade done: 2 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(calls 'agent prompt w:c')|$(order | tr '|' '\n' | grep '^start' | paste -sd'|' -)|$(tail -1 "${H}/out")"
 # A herdr list that cannot be read before the first round names nobody as closed, and says so.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 touch "${H}/listfail1"
@@ -406,6 +415,21 @@ SECONDS=0; upgrade e; took="${SECONDS}"
 check "it is named as gone well inside the wait, and nothing is restarted" "1|yes||yes" \
   "${rc}|$(has 'conduct-e: left on 0.21.0: its Claude session is gone, so it wrote no handover' "$(cat "${H}/out")")|$(calls 'pane send-keys')|$( ((took < 30)) && echo yes || echo "no, ${took}s")"
 rm -f "${H}/nohandover"
+
+# --- A conductor idle with its handover in whose session goes in a later round (b2's start takes it,
+# while b1 is still busy) is skipped as closed, not left for a handover it wrote; b1, idle by then,
+# is no longer held by it from the round after and restarts.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"busy"},{"sessionId":"s2","status":"idle"},{"sessionId":"s4","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak -e 's/{"sessionId":"sc","status":"idle"},//' -e 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2"
+upgrade e
+rm -f "${H}/onstart-b2"
+check "a conductor gone after its handover is skipped as closed, not left, and no longer holds its builder" "0|1|0|1|upgrade done: 2 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(grep -c '^conduct-e: ' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(tail -1 "${H}/out")"
 
 # --- An idle conductor that writes no handover by the end of the wait is told to carry on by prompt.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle idle idle; touch "${H}/nohandover"
@@ -696,7 +720,7 @@ check "b5 is restarted before its conductor, which is told of it" "0|start b5|st
 # --- upgrade backlog moves the backlog conductor and the stories with no epic, and no epic's agents.
 CB="$(cd "${P}" && SWARM_PROJECT="${P}" bash "${SWARM}" _conductor backlog)"
 printf -- '---\nkind: code\nstatus: ready\n---\n\n# y1\n' > "${P}/docs/stories/y1.md"
-printf 'w:k %s\nw:y1 y1\n' "${CB}" > "${P}/.swarm/state/backlog"
+printf 'w:k conductor\n' > "${P}/.swarm/state/${CB}"; printf 'w:y1 y1\n' > "${P}/.swarm/state/backlog"   # the backlog conductor's tab takes its name
 printf '%s w:k sk\ny1 w:y1 sy\n' "${CB}" >> "${H}/agents"
 printf '2026-10-22\tconduct\t%s\tclaude\topus\thigh\tsk\n2026-10-22\tcode\ty1\tclaude\tsonnet\thigh\tsy\n' "${CB}" >> "${P}/.swarm/agents.tsv"
 for n in "${CB}" y1 conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
@@ -705,6 +729,13 @@ echo '[{"sessionId":"sk","status":"idle"},{"sessionId":"sy","status":"idle"},{"s
 upgrade backlog
 check "it restarts y1 then the backlog conductor, after its handover, and leaves epic e alone" "0|prompt w:k|keys w:y1|start y1|prompt w:y1|keys w:k|start ${CB}|prompt w:k|yes" \
   "${rc}|$(order)|$(ls "${P}"/.swarm/handover-backlog-*.md >/dev/null 2>&1 && echo yes || echo no)"
+# The backlog conductor's pane is closed: its record, `conductor` in the tab named after it, maps to its name.
+for n in "${CB}" y1; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+cp "${H}/agents" "${H}/agents.keep"; sed -i.bak "/^${CB} /d" "${H}/agents"
+upgrade backlog
+cp "${H}/agents.keep" "${H}/agents"
+check "a backlog conductor whose pane is closed is named from its record, and y1 moves" "0|1|upgrade done: 1 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx "skipped (closed): ${CB}" "${H}/out")|$(tail -1 "${H}/out")"
 
 # --- review-b1 is a Claude agent now (it owns b1's PR): idle b1 waits while review-b1 is busy, and
 # both are restarted once it reads idle, from Claude Code's 8th read on (its 1st is the closed check's).

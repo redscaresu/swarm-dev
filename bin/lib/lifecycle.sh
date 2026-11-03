@@ -5118,22 +5118,45 @@ upgrade_skip_closed() {
 }
 
 # upgrade_missing <want> — the Claude agents (newest agents.tsv line) in <want> (empty: any) that a
-# tab record in .swarm/state puts in a pane, but the run's list (upgrade_list, over a herdr list read
-# successfully) does not hold: their pane was closed outside swarm.sh, which drops a pane's record
-# when it closes one. The lead's own pane is never one; in record order, each name once, with its
-# role, tab-separated.
+# tab record in .swarm/state puts in a pane (its name mapped to agents.tsv's, upgrade_record_name),
+# but the run's list (upgrade_list, over a herdr list read successfully) does not hold: their pane
+# was closed outside swarm.sh, which drops a pane's record when it closes one. The lead's own pane is
+# never one; in record order, each name once, with its role, tab-separated.
 upgrade_missing() {
-  local f pane name rec
+  local f pane name extra rec seen=" " re='^[A-Za-z0-9]+:[A-Za-z0-9]+$'
   for f in "${STATE_DIR}"/*; do
-    if [[ -f "${f}" ]]; then cat "${f}" 2>/dev/null || true; fi
-  done | awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && !seen[$2]++ { print $1, $2 }' |
-  while read -r pane name; do
-    [[ ( -z "$1" || "$1" == *" ${name} "* ) && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
-    rec="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 "\t" $2 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" || rec=""
-    [[ "${rec%%$'\t'*}" == claude ]] || continue
-    awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || printf '%s\t%s\n' "${name}" "${rec#*$'\t'}"
+    [[ -f "${f}" ]] || continue
+    while read -r pane name extra; do
+      [[ -n "${name}" && -z "${extra}" && "${pane}" =~ ${re} ]] || continue   # a tab record: "<pane> <name>"
+      name="$(upgrade_record_name "${f##*/}" "${name}")"
+      [[ "${seen}" != *" ${name} "* ]] || continue
+      seen+="${name} "
+      [[ ( -z "$1" || "$1" == *" ${name} "* ) && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
+      rec="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 "\t" $2 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" || rec=""
+      [[ "${rec%%$'\t'*}" == claude ]] || continue
+      awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || printf '%s\t%s\n' "${name}" "${rec#*$'\t'}"
+    done < <(cat "${f}" 2>/dev/null || true)
   done
 }
+
+# upgrade_record_name <label> <name> — the agents.tsv name of a tab record's <name>, in the tab file
+# <label>. A conductor's record reads `conductor` (start_conductor's pane name): it is the conductor
+# of the epic the label names, the backlog conductor when the label is its own name (its tab is), and
+# when a full tab's next, <label>-<n>, holds it, the label without that -<n>, whichever agents.tsv
+# records. Any other record holds the full name, which agents.tsv cuts (agent_name).
+upgrade_record_name() {
+  local n
+  if [[ "$2" != conductor ]]; then agent_name "$2"; return; fi
+  n="$(upgrade_label_conductor "$1")"
+  if [[ "$1" =~ -[0-9]+$ ]] && ! awk -F'\t' -v n="${n}" 'NF == 7 && $3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    n="$(upgrade_label_conductor "${1%-*}")"
+  fi
+  printf '%s' "${n}"
+}
+
+# upgrade_label_conductor <label> — the conductor whose tab <label> is: the backlog conductor's tab
+# takes its name (start_conductor), any other the epic's.
+upgrade_label_conductor() { if [[ "$1" == "$(conductor_name backlog)" ]]; then printf '%s' "$1"; else conductor_name "$1"; fi; }
 
 # upgrade_closed <name> — this run skips <name> as closed: its pane or its Claude session is gone, so
 # it is never waited on, sent a key or restarted, and counts as neither moved nor left; upgrade_tally
@@ -5225,8 +5248,9 @@ upgrade_review_busy() {
 # first time, its env: names are checked (refused: it is left, asked for nothing), then it is asked
 # (upgrade_request). One asked by note, in its inbox, that is idle with no handover is asked again by
 # prompt. Ready while the file is written and it is idle, read again each round, since an ended turn
-# reads idle while a background watch can still wake it; left at once when its session is gone.
-# Fails while it waits.
+# reads idle while a background watch can still wake it. One whose session is gone is skipped as
+# closed (upgrade_closed) once its handover is written, and left at once before that. Fails while it
+# waits.
 upgrade_ask() {
   local d="${UPGRADE_DIR}" names day file n=1 st
   if [[ ! -e "${d}/hand-$1" ]]; then
@@ -5239,7 +5263,9 @@ upgrade_ask() {
   : > "$(upgrade_paused "$1")" || true
   st="$(upgrade_state "$1" "$2")"
   case "${st}" in
-    gone) rm -f "$(upgrade_paused "$1")"; upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; return 0 ;;
+    gone) rm -f "$(upgrade_paused "$1")" "${d}/ready-$1"
+          if [[ -s "$(cat "${d}/hand-$1")" ]]; then upgrade_closed "$1"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
+          return 0 ;;
     idle) if [[ -s "$(cat "${d}/hand-$1")" ]]; then : > "${d}/ready-$1"; return 0; fi
           [[ "$(cat "${d}/asked-$1")" != note ]] || upgrade_request "$1" "$2" "$4" || true ;;
   esac

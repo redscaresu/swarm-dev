@@ -809,8 +809,9 @@ of sessions once and uses it with the round's first read of herdr's list. An age
 session is gone is skipped as closed. So is a Claude agent of the run whose pane a tab record in
 `.swarm/state` names while herdr lists it in none of the project's panes (a pane closed by hand;
 `swarm.sh` drops the record of a pane it closes). A session that goes later, up to the restart's own
-idle check, is skipped the same way, a conductor's too once its handover is in. A conductor whose
-session goes while upgrade waits for its handover is named as left, as below. A skipped agent is
+idle check, is skipped the same way, a conductor's too once its handover is in, whichever round
+finds it gone. A conductor whose session goes while upgrade waits for its handover is named as
+left, as below. A skipped conductor holds none of its builders from the next round on. A skipped agent is
 never waited on, sent a key or restarted, and counts as neither moved nor left, so it does not fail
 the run; its conductor hears it was skipped. All of them are named once, on one `skipped (closed):
 <names>` line. When that first read of herdr's list fails, upgrade says the closed check did not
