@@ -665,25 +665,23 @@ idle_lines() {
   printf '%s\n' "${found}" | awk '{ sub(/\t/, " finding: "); print "  " $0 }'
 }
 
-# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
-# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
-# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
-# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
-# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
-# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
-# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
-# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, are
+# report_wrappers' (merge.sh), so each read runs within the report's deadline and a cut one is named as
+# status and dash name it. Inside herdr, `herdr agent list` is answered from the one list next_report
+# read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a later list cut
+# at the deadline cannot hide a conductor an earlier one showed; herdr's other reads go on to
+# report_herdr. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # herdr is called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  report_wrappers
   herdr() {
     if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
       [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
       printf '%s\n' "${LEAD_AGENTS}"; return 0
     fi
-    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+    report_herdr "$@"
   }
-  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
