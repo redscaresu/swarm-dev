@@ -215,7 +215,7 @@ prune_dead_panes() {
 LEAD_AGENTS_LABEL=lead-agents
 # LEAD_AGENTS_RECORD: the file under .swarm/lead (LEAD_DIR) that holds that workspace's "<id>\t<label>" (lead_agents_workspace).
 LEAD_AGENTS_RECORD="agents-workspace"
-# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes or trims that workspace may take (within), as lead_label's.
+# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes, reads or trims that workspace may take (within), as lead_label's.
 LEAD_AGENTS_HERDR_WAIT=5
 # LEAD_AGENTS_LOCK_WAIT: seconds a start waits for the record's lock (lead_agents_lock): the three bounded herdr calls of the start holding it, and some.
 LEAD_AGENTS_LOCK_WAIT=20
@@ -296,8 +296,11 @@ workspace_dir() {
 # it another project's and hash this project's labels, so then the workspace's first pane must be at the
 # project: the placeholder (relabelled lead-agents), one already first, or, in a workspace with no pane
 # herdr_workspaces reads, one made at PROJECT_DIR. A pane made now goes after the others, so in a
-# workspace whose first pane is outside the project (the kept pane closed, or a project pane made after
-# an outside one) none can be put first, and the agent opens in HERDR_WORKSPACE_ID. Each herdr call that
+# workspace whose first pane is outside the project none can be put first, and the agent opens in
+# HERDR_WORKSPACE_ID. That happens once the panes at the project ahead of an outside one have all closed:
+# the kept pane, or a project agent's own pane that an earlier outside start found first (an HLD
+# co-author, a builder) and that closed when the agent retired. A project pane opened after the outside
+# one does not help, since it goes after it. Each herdr call that
 # finds, makes, reads or trims the lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the
 # lookup, the read of its first pane or the pane that must be made at PROJECT_DIR fails, the pane opens in
 # HERDR_WORKSPACE_ID as before, with the reason on stderr: a hung or failing herdr stops no start, and

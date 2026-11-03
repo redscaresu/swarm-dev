@@ -104,15 +104,18 @@ gives one carries the project's label, joined to the rest by ` · `:
   whose they are; one relabelled is left alone, and a new one made. An agent started outside the
   project, as from a board kept outside the repo, opens there only behind a first pane at the
   project directory, so the workspace stays the project's. In a new workspace that is the
-  placeholder's pane, kept open. In a workspace with no pane swarm.sh reads for its directory (see
-  below), swarm.sh makes one. A new pane goes after the others, so once the first pane is outside
-  the project none can be put first. That happens when the kept pane is closed while the outside
-  agent's stays open, or when a project pane opens after an outside one. Then the next agent started outside the
-  project opens in the lead's own workspace, and swarm.sh says so. It does the same when herdr
-  gives no list, no workspace or no such pane within a few seconds. Two first agents started at once share one workspace: the record is made under a
-  lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
-  `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
-  `backlog`.
+  placeholder's pane, kept open; in a found one it may be a project agent's own pane, such as the
+  HLD co-author's. In a workspace with no pane swarm.sh reads for its directory (see below),
+  swarm.sh makes one. A new pane goes after the others, so once the first pane is outside the
+  project none can be put first. That happens when every pane at the project ahead of the outside
+  agent's has closed: the kept pane, or a project agent's own pane once that agent retires. A
+  project pane opened later goes after the outside one and does not help. Then the next agent
+  started outside the project opens in the lead's own workspace, and swarm.sh says so. It does the
+  same when, within a few seconds, herdr gives no list or no workspace, or will not open the pane
+  at the project directory. Two first agents started at once share one workspace: the record is
+  made under a lock, and the second waits for the first's. A conductor still opens in its epic's
+  workspace, and `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it
+  refuses one named `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
