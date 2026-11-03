@@ -115,6 +115,13 @@ m=$(awk 'FNR==1{on=0} /^## Scoping an epic/{on=1;next} /^## /{on=0} on' "${M[@]}
 if [ -z "$m" ]; then echo "FAIL method-section"; fails=$((fails + 1)); fi
 hasnt method-three-surveys 'three surveys' "$m"
 hasnt method-then-critic 'then a critic' "$m"
+mflat=$(tr '\n' ' ' <<< "$m" | tr -s ' ')
+# Each planning agent's pane closes once its answer is read, never on a lone .partial (that agent may
+# be started again from it), and a pane still working stays open and is named in the report.
+has close-once-read 'Once you have read an agent.s `\.swarm/\$1/<name>\.json`, run `swarm\.sh close <name>` for it' "$flat"
+has close-never-partial 'Never close an agent while only its `\.partial` exists: that run is unfinished, and the agent may be started again from it' "$flat"
+has close-working-named 'A pane still working is left open, and your report names it' "$flat"
+has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its answer has been read, never while only its `\.partial` exists; a pane still working is left open, and the report names it' "$mflat"
 
 # /epic writes a draft epic on the board with its four sections, and only the user's agreement makes it active.
 e=$(cat "$EPIC")
