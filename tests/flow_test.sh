@@ -173,7 +173,10 @@ done
 # git reads from s.git. m12 (#12, epic e11) is a story of s2, whose origin is not: its missing merge-in is
 # not fetched. m13 (#13, epic e10) is m2's clean merge-in again. m14's (#14, epic e12) merge-in names a
 # tree git does not have, so its diff against git's clean merge fails: unread, not a clean merge. m15's
-# (#15, epic e12) is a hand fix whose diff against the base alone fails, by a git stub.
+# (#15, epic e12) is a hand fix whose diff against the base alone fails, by a git stub. m16 (#16, epic e13)
+# conflicts on docs/reference-logs.md and m17 (#17, epic e13) on a code file, g. m18 (#18, epic e14) merged
+# main in twice, in conflict on reference docs both times: on docs/reference.md and docs/reference-logs.md
+# the first time, on docs/reference-logs.md alone the second.
 S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
 g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g2() { git -C "${dir}/s2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
@@ -201,18 +204,32 @@ g branch -f story/m14 "$(printf 'tree %s\nparent %s\nparent %s\nauthor t <t@t> 0
   1111111111111111111111111111111111111111 "$(g rev-parse story/m2^1)" "$(g rev-parse main)" "Merge branch 'main' into story/m14" |
   g hash-object -t commit -w --literally --stdin)"
 g checkout -qb story/m15 story/m2^1; g merge -q --no-ff --no-commit main > /dev/null 2>&1; echo 15 > "${S}/fifteen"; g add fifteen
-g commit -qm "Merge branch 'main' into story/m15"; g checkout -q story/m9
+g commit -qm "Merge branch 'main' into story/m15"
+side() { # <branch> <from> <text> <path>...: a new branch from <from> whose one commit writes text to each path
+  g checkout -qb "$1" "$2"; mkdir -p "${S}/docs"; local p; for p in "${@:4}"; do echo "$3" > "${S}/${p}"; done; g add -- "${@:4}"; g commit -qm "$1"
+}
+mergein() { # <story branch> <ours> <base>: point the branch at a commit that merges base into ours, with ours' tree
+  g branch -f "$1" "$(g commit-tree "$2^{tree}" -p "$2" -p "$3" -m "Merge branch 'main' into $1")"
+}
+side s16 main ours docs/reference-logs.md; side b16 main base docs/reference-logs.md; side s17 main ours g; side b17 main base g
+side s18 main ours docs/reference.md docs/reference-logs.md; side b18 main base docs/reference.md docs/reference-logs.md
+side b18b b18 again docs/reference-logs.md; g checkout -q story/m9
+mergein story/m16 s16 b16; mergein story/m17 s17 b17; mergein story/m18 s18 b18; mergein story/m18 story/m18 b18b
 for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: s2\n---\n' > "${S}/docs/stories/m7.md"
 printf -- '---\nkind: code\nstatus: ready\nepic: e11\nrepo: s2\n---\n' > "${S}/docs/stories/m12.md"
 printf -- '---\nkind: code\nstatus: ready\nepic: e10\n---\n' > "${S}/docs/stories/m13.md"
 for n in 14 15; do printf -- '---\nkind: code\nstatus: ready\nepic: e12\n---\n' > "${S}/docs/stories/m${n}.md"; done
-printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 > "${S}/.swarm/agents.tsv"
+for n in 16 17; do printf -- '---\nkind: code\nstatus: ready\nepic: e13\n---\n' > "${S}/docs/stories/m${n}.md"; done
+printf -- '---\nkind: code\nstatus: ready\nepic: e14\n---\n' > "${S}/docs/stories/m18.md"
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 > "${S}/.swarm/agents.tsv"
 commits() { # <PR> <git function> <merge-in>: gh api's commits of the PR, its merge-in's parent and then its merge-in, whose message has a body
   printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
     "$("$2" rev-parse "$3^1")" "$("$2" rev-parse "$3")" "$("$2" log -1 --format=%s "$3")" > "${dir}/sbin/$1"
 }
-for n in 1 2 3 5 9 10 14 15; do commits "${n}" g "story/m${n}"; done
+for n in 1 2 3 5 9 10 14 15 16 17; do commits "${n}" g "story/m${n}"; done
+printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s"}},{"sha":"%s","commit":{"message":"%s"}}]]' "$(g rev-parse s18)" \
+  "$(g rev-parse story/m18^1)" "$(g log -1 --format=%s story/m18^1)" "$(g rev-parse story/m18)" "$(g log -1 --format=%s story/m18)" > "${dir}/sbin/18"
 commits 6 g2 story/m6; commits 7 g2 story/m7; cp "${dir}/sbin/2" "${dir}/sbin/13"
 printf '[[{"sha":"fedcba9876543210fedcba9876543210fedcba98","commit":{"message":"Merge origin/main into story/m12"}}]]' > "${dir}/sbin/12"
 printf '[[{"sha":"0123456789abcdef0123456789abcdef01234567","commit":{"message":"Merge origin/main into story/m8"}},{"sha":"--output=x","commit":{"message":"Merge origin/main into story/m8"}}]]' > "${dir}/sbin/8"
@@ -220,7 +237,7 @@ cat > "${dir}/sbin/gh" <<EOF
 #!/bin/sh
 n="\${4#story/m}"; n="\${n#repos/o/r/pulls/}"; n="\${n%%/*}"; p="\${2#repos/o/r/pulls/}"
 case "\$1 \$2 \$3 \$4" in
-  "pr list --head story/m"[34]) printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t2\n' "\$n" ;;
+  "pr list --head story/m"[34]|"pr list --head story/m18") printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t2\n' "\$n" ;;
   "pr list --head story/m"*) printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t1\n' "\$n" ;;
   "api repos/o/r/pulls/4 "*) echo "HTTP 404: Not Found" >&2; exit 1 ;;
   "api repos/o/r/pulls/11 "*) echo '{"base":{}}' ;;
@@ -240,11 +257,11 @@ chmod +x "${dir}/sbin/git"
 mi() { (cd "${S}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=merge_ins CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/sbin:${PATH}" \
   bash "${SWARM}" flow --epic e9 "$@" 2>&1 | awk '/^## / { f = $0 == "## merge_ins"; next } f && NF'); }
 check "merge_ins: a conflict or a hand fix names its files (control characters dropped), a clean one behind (one fetched, one another strategy's), one that brought nothing, in its story's repo; why each is unread, a one-parent merge, an option for a sha and no base branch among them" \
-  "$(mi --since 2026-10-01)" $'cause\tmerge_ins\tprs
-conflict\t3\t3
-behind\t3\t3
-neither\t1\t1
-unread\t7\t5
+  "$(mi --since 2026-10-01)" $'cause\tmerge_ins\tprs\treference_docs
+conflict\t3\t3\t0
+behind\t3\t3\t-
+neither\t1\t1\t-
+unread\t7\t5\t-
 file\tconflicts
 f\t2
 evil\t1
@@ -256,25 +273,41 @@ merge ins: fetched refs/pull/6/head into '"$(cd "${S}" && pwd -P)"$'
 merge ins: left out '"${U}"$'/8: 0123456789ab: not in '"$(cd "${S}" && pwd -P)"$': git fetch origin refs/pull/8/head: fatal: couldn\'t find remote ref refs/pull/8/head
 merge ins: left out '"${U}"$'/8: gh gives \'--output=x\' as a merge-in\'s sha
 merge ins: left out '"${U}"$'/9: '"$(g rev-parse --short=12 story/m9)"$': 1 parent(s), not a merge of two'
-check "merge_ins: under --epic with no --since, every PR of the epic, as epic_totals counts them" "$(mi --until 2026-12-31 | sed -n 1,2p)" $'cause\tmerge_ins\tprs\nconflict\t3\t3'
+check "merge_ins: under --epic with no --since, every PR of the epic, as epic_totals counts them" "$(mi --until 2026-12-31 | sed -n 1,2p)" $'cause\tmerge_ins\tprs\treference_docs\nconflict\t3\t3\t0'
 check "merge_ins: with no PRs in the window, none read" "$(mi --since 2026-10-02 | tail -1)" "none read"
 check "merge_ins: a clean merge-in alone, none conflicted" "$(mi --since 2026-10-01 --epic e10 | tail -1)" "none conflicted"
-check "merge_ins: every merge-in unread, none read; an origin that is not the PR's repo is never fetched from" "$(mi --since 2026-10-01 --epic e11)" $'cause\tmerge_ins\tprs
-conflict\t0\t0
-behind\t0\t0
-neither\t0\t0
-unread\t1\t1
+check "merge_ins: every merge-in unread, none read; an origin that is not the PR's repo is never fetched from" "$(mi --since 2026-10-01 --epic e11)" $'cause\tmerge_ins\tprs\treference_docs
+conflict\t0\t0\t0
+behind\t0\t0\t-
+neither\t0\t0\t-
+unread\t1\t1\t-
 none read
 merge ins: left out '"${U}"$'/12: fedcba987654: not in '"$(cd "${dir}/s2" && pwd -P)"$': its origin is not github.com/o/r'
 check "merge_ins: a git diff that fails, against git's clean merge or the base alone, leaves its merge-in unread, naming the error" \
-  "$(mi --since 2026-10-01 --epic e12 | sed 's|\(/14: [0-9a-f]*: git diff: \).*|\1...|')" $'cause\tmerge_ins\tprs
-conflict\t0\t0
-behind\t0\t0
-neither\t0\t0
-unread\t2\t2
+  "$(mi --since 2026-10-01 --epic e12 | sed 's|\(/14: [0-9a-f]*: git diff: \).*|\1...|')" $'cause\tmerge_ins\tprs\treference_docs
+conflict\t0\t0\t0
+behind\t0\t0\t-
+neither\t0\t0\t-
+unread\t2\t2\t-
 none read
 merge ins: left out '"${U}"$'/14: '"$(g rev-parse --short=12 story/m14)"$': git diff: ...
 merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git diff: fatal: stub: no diff'
+check "merge_ins: of two conflict merge-ins, the one on docs/reference-logs.md counts under reference_docs and the one on a code file does not; the rows that read no files print -" \
+  "$(mi --since 2026-10-01 --epic e13)" $'cause\tmerge_ins\tprs\treference_docs
+conflict\t2\t2\t1
+behind\t0\t0\t-
+neither\t0\t0\t-
+unread\t0\t0\t-
+file\tconflicts
+docs/reference-logs.md\t1
+g\t1'
+check "merge_ins: reference_docs counts each merge-in once, not once per reference doc it conflicts on, nor once per PR" \
+  "$(mi --since 2026-10-01 --epic e14 | sed -n 2,7p)" $'conflict\t2\t1\t2
+behind\t0\t0\t-
+neither\t0\t0\t-
+unread\t0\t0\t-
+file\tconflicts
+docs/reference-logs.md\t2'
 
 # ci_health's flaky tests: a fifth project, its origin o/r, its PRs #1 (t1, epic e1) and #2 (t2). gh
 # lists 11 of the 12 runs of o/r created 10-01 to 10-03. Run 11 was red on both attempts (e_test.sh)
