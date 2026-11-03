@@ -4361,7 +4361,7 @@ resend_busy() {
 # outside herdr, or with no list, it does nothing.
 resend_pass() {
   local rows pane name at cmd k stem role mode marked text since rc backlog line size deadline="${LEAD_READ_DEADLINE:-$((SECONDS + RESEND_PASS_WAIT))}"
-  # The poll's first ps reader: the last poll's process list is not this one's.
+  # The poll's first poll_ps reader: the last poll's list is not this one's.
   POLL_PS_OK=""
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   # No idle agent in the list and no .unsent marker, no work: return before any process starts, as most polls do.
