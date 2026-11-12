@@ -100,6 +100,13 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
 `swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
+Before it prints a new line that says an agent is missing (`no-agent:`, `no-review:`, or `idle: <story>
+is ready with no build`), it reads herdr's agent list once more, at most once a poll. When that read
+shows the agent in one of the project's panes (the builder or `review-<slug>` for `no-agent:`,
+`review-<slug>` for `no-review:`, the builder for `idle:`), it drops the line and does not save it as
+seen, so a later poll prints it if it still holds. A read that fails keeps the line, and so does a poll
+whose first read failed, which makes no second one. A `no-review: ... (started N of 3)` line is never
+dropped: that poll started the review agent itself, and the line is how the lead hears of it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
 their paths and the exit: `merge: <slug> <PR URL>... (held: changes <path>[, <path>]...; exit: the user
@@ -121,7 +128,7 @@ It also prints `next`'s `idle:` lines: for blocked stories (`idle: <story> waits
 no touches part with it and needs nothing from it`) and for ready stories with no build (`idle: <story>
 is ready with no build, exit: <exit>`), and the epic lines (`idle: epic <epic> can start, ...` and
 `idle: epic <epic> has no plan running, ...`). Each poll works them out again from the board, its
-state and events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
+state and events.tsv. It calls no gh, and reads herdr only for the check above. A line wakes the lead once and goes once its dependency is in
 review or done, once the story's build starts, or once the epic is active with stories or its plan runs. It wakes the lead again only if it comes back. A
 ready story's line names its exit, so when the story's conductor starts or stops, the line changes,
 and `wait --lead` takes the changed line as new and wakes the lead again. On a run that starts with no
