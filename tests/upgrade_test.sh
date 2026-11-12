@@ -730,12 +730,13 @@ upgrade backlog
 check "it restarts y1 then the backlog conductor, after its handover, and leaves epic e alone" "0|prompt w:k|keys w:y1|start y1|prompt w:y1|keys w:k|start ${CB}|prompt w:k|yes" \
   "${rc}|$(order)|$(ls "${P}"/.swarm/handover-backlog-*.md >/dev/null 2>&1 && echo yes || echo no)"
 # The backlog conductor's pane is closed: its record, `conductor` in the tab named after it, maps to its name.
+# z1 and z2 have no epic either, so they are in this scope with their sessions gone, and are named beside it.
 for n in "${CB}" y1; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 cp "${H}/agents" "${H}/agents.keep"; sed -i.bak "/^${CB} /d" "${H}/agents"
 upgrade backlog
 cp "${H}/agents.keep" "${H}/agents"
 check "a backlog conductor whose pane is closed is named from its record, and y1 moves" "0|1|upgrade done: 1 moved, 0 left (exit 0)" \
-  "${rc}|$(grep -cx "skipped (closed): ${CB}" "${H}/out")|$(tail -1 "${H}/out")"
+  "${rc}|$(awk -v n="${CB}" '/^skipped \(closed\):/ { for (i = 3; i <= NF; i++) c += ($i == n) } END { print c + 0 }' "${H}/out")|$(tail -1 "${H}/out")"
 
 # --- review-b1 is a Claude agent now (it owns b1's PR): idle b1 waits while review-b1 is busy, and
 # both are restarted once it reads idle, from Claude Code's 8th read on (its 1st is the closed check's).
