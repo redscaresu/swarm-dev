@@ -162,9 +162,10 @@ left "the deep chain case"
 
 # --- The grace is real: with a grace of twice TRAP_GRACE, a codex that exits on its own TRAP_WORK
 # seconds after its TERM trap starts is not KILLed. codex-review ends as soon as the stub exits, so
-# the long grace and cap cost a passing run nothing. A grace cut under TRAP_WORK fails it. TRAP_WORK
-# is twice the 3 s a cut must stay under, because codex-review counts its grace in polls, and on a
-# loaded machine a 2 s grace's polls ran 3 s. The trap stops its child first, so one the TERM missed
+# the long grace and cap cost a passing run nothing. A grace cut to 2 s fails it where polls run at
+# their nominal pace; codex-review counts its grace in polls, so on a loaded machine even a cut grace
+# can run past TRAP_WORK and pass. TRAP_WORK is twice the 3 s a cut must stay under, for the slack
+# poll counting adds under light load. The trap stops its child first, so one the TERM missed
 # is not left behind when the stub exits.
 TRAP_WORK=6
 stub "trap 'kill \$! 2>/dev/null; sleep ${TRAP_WORK}; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60 & wait \$!; done"
