@@ -1005,10 +1005,15 @@ merge_main() {
   [[ $# -lt 2 ]] || echo "$3" > "${W}/$2"
   "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -q --no-edit; "${GIT[@]}" -C "${W}" rev-parse HEAD
 }
-# h3_at <head> — PR 15's head is <head> (gh and refs/pull/15/head), h3 is ready with no prs:, and its
-# review file is a pass on REV, the head the review read.
+# h3_at <head> [<status> <conclusion>] — PR 15's head is <head> (gh and refs/pull/15/head), its one check
+# run test is <status> <conclusion> (completed success, green, by default), h3 is ready with no prs:, and
+# its review file is a pass on REV, the head the review read.
 h3_at() {
   "${GIT[@]}" -C "${W}" push -q -f "${ROOT}/o/svc.git" "$1:refs/pull/15/head"; echo "$1" > "${FXH}/head"
+  local c=null; [[ "${3-success}" == null ]] || c="\"${3-success}\""
+  printf '{"total_count":1,"check_runs":[{"name":"test","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/runs/1","path":".github/workflows/test.yml","head_sha":"%s"}]}\n' \
+    "${2:-completed}" "${c}" "$1" > "${FXH}/$1.checks"
+  echo '{"total_count":0,"statuses":[]}' > "${FXH}/$1.status"
   printf '%s\n' --- "status: ready" "kind: code" "epic: e" "repo: svc" "touches: [bin/h3.sh:fn_h3]" --- "" "# h3" > "${b}/stories/h3.md"
   rm -f "${p}/.swarm/state/h3"*; mkdir -p "${p}/.swarm/reviews"
   printf '%s\n' "head: ${REV}" "## Findings" "none" > "${p}/.swarm/reviews/h3.md"
@@ -1033,6 +1038,10 @@ for c in "a commit of the PR's own:${OWN}:${OWN:0:7}, after ${REV:0:7}, is a com
   check "review --head on ${name} refuses as a moved head, saying why, and leaves h3 ready with no pass on it" "rc:1|yes|yes|ready||none" \
     "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${sha:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged: the new head needs a review of its own" "${o}")|$(has "review: ${PRC}'s head ${sha:0:7} is not ${REV:0:7} plus clean merges of main: ${why}" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${sha}")"
 done
+# A clean merge whose CI has not finished: the review waited for green on REV only, so the head is not taken.
+h3_at "${CLEAN}" in_progress null; o="$(review_h3)"
+check "review --head on a clean merge of the base whose CI has not finished refuses as a moved head, naming wait-pr, and leaves h3 ready with no pass on it" "rc:1|yes|yes|yes|ready||none" \
+  "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: " "${o}")|$(has "; once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0, review --head ${REV} takes it" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
 h3_at "${CLEAN}"
 check "before review --head, the clean merge ${CLEAN:0:7} has no pass of its own" "none" "$(h3_pass "${CLEAN}")"
 o="$(review_h3)"

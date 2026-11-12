@@ -2551,7 +2551,7 @@ get_fm_or_gone() {
 
 # review <slug> [--head <sha>] <pr-url>... — the item's PRs are green and reviewed and wait on a human
 # merge. With --head, each PR's head must still be <sha>, the head its review passed, or a head that
-# adds to <sha> only git's own clean merges of the base, and the item's prs: line may list no PR it does
+# adds to <sha> only git's own clean merges of the base and is green, and the item's prs: line may list no PR it does
 # not name (review_heads), else it changes nothing. Each head taken that way, once the review is not
 # held, writes base-accepted <slug> <head> from <sha>, which review_pass follows, and prints an
 # accepted: line. A story whose
@@ -2616,13 +2616,15 @@ REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may ta
 # PR's head as <sha>: a head pushed since the review passed has had no review. One exception: a head
 # that adds to <sha> only git's own clean merges of the PR's base (base_merges_only, as merge --head
 # reads it) brings no code the review did not read, so it is taken, with a line `<pr-url> <head> <base>
-# <merges, short>` added to REVIEW_ACCEPTED for mark_review. Any other head, or one whose merges cannot
-# be read, dies as a moved head does, after a line on stderr saying why it was not taken. Only a moved
+# <merges, short>` added to REVIEW_ACCEPTED for mark_review, once ci_gate head finds it green (the review
+# waited for green on <sha> only). Any other head, one whose merges cannot be read, and one whose CI is red,
+# not finished or unread (within REVIEW_HEAD_SECONDS), dies as a moved head does, after a line on stderr
+# saying why it was not taken. Only a moved
 # head's PR has its base branch read, a second gh read. Each gh read stops after REVIEW_HEAD_SECONDS;
 # one that fails or runs out says to run review again.
 REVIEW_ACCEPTED=""
 review_heads() {
-  local f="$1" want="$2" slug url head base why n others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head base why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
   pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
   if [[ "${f}" == "${BOARD}/stories/"* ]]; then
@@ -2656,10 +2658,17 @@ review_heads() {
     [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] \
       || die "review: gh could not read the base branch of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     if why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)"; then
-      REVIEW_ACCEPTED+="${url} ${head} ${base} $(short_shas "${why##*$'\n'}")"$'\n'; continue
+      merges="$(short_shas "${why##*$'\n'}")"
+      # The review waited for green on <sha> only: a merge of the base can still break a check.
+      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" < /dev/null 2>&1)" || rc=$?
+      if [[ ${rc} -eq 0 ]]; then REVIEW_ACCEPTED+="${url} ${head} ${base} ${merges}"$'\n'; continue; fi
+      case ${rc} in 1) ci="red" ;; 2) ci="not finished" ;; *) ci="unread" ;; esac
+      why="$(tr -d '\000-\037\177' <<< "${why%%$'\n'*}")"
+      echo "review: ${url}'s head ${head:0:7} adds only clean merges of ${base} (${merges}) to ${want:0:7}, but CI on it is ${ci}: ${why:-no answer within ${secs}s}; once swarm.sh wait-pr --head ${head} ${url} exits 0, review --head ${want} takes it" >&2
+    else
+      why="$(tr -d '\000-\037\177' <<< "${why##*$'\n'}")"; why="${why#swarm: }"
+      echo "review: ${url}'s head ${head:0:7} is not ${want:0:7} plus clean merges of ${base}: ${why:-the read of its merges said nothing}" >&2
     fi
-    why="$(tr -d '\000-\037\177' <<< "${why##*$'\n'}")"; why="${why#swarm: }"
-    echo "review: ${url}'s head ${head:0:7} is not ${want:0:7} plus clean merges of ${base}: ${why:-the read of its merges said nothing}" >&2
     die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
   done
 }

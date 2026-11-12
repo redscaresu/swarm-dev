@@ -846,7 +846,8 @@ puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
 hands the PR over too. `review --head` and `merge --head` refuse a head pushed since the review,
-unless the push added only git's own clean merges of the base. `review --head` then puts the story in
+unless the push added only git's own clean merges of the base. `review --head` also needs that head's
+own CI green, since the agent waited for green on the head it reviewed. It then puts the story in
 review on that head, logs `base-accepted <slug> <new head> from <reviewed head>` and prints an
 `accepted:` line. `merge --head` merges it. Neither needs a new review
 ([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On

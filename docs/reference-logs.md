@@ -36,7 +36,8 @@ nothing. It has `round=N verdict=decline-only`, and so does the `review` line af
 `review --head` that succeeds also writes `review-finished <slug>`, outcome `ok`, just before its own
 line and with the same fields; a review refused `held:` writes none. A hold on the ladder's top rung
 writes `review-finished` with `verdict=held` and the round whose findings it held. A `review --head`
-that takes a head adding only git's own clean merges of the base to the reviewed one writes
+that takes a green head adding only git's own clean merges of the base to the reviewed one, and is
+not held, writes
 `base-accepted <slug>`, outcome `<new head> from <reviewed head>`, once per such PR, before its own
 line. Neither `decline-only`, `review-finished` nor `base-accepted` is a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
