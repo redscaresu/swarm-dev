@@ -329,10 +329,9 @@ The check runs after the resend and shares its budget: 10 seconds a read, and no
 into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
 waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time of
 the newest entry of its own work in its Claude session log or its Task subagents' logs (an assistant
-message or a tool result),
-what its pane showed and when it was last read. A write to the log that is not the agent's work, such
-as a resume prompt, a compaction or Claude Code's own API error entry, leaves that time as it was. A
-pane last found clear is read again when the status or the work time has changed, or after 5 minutes
+message or a tool result), what its pane showed and when it was last read. A write to the log that is
+not the agent's work, such as a resume prompt, a compaction or Claude Code's own API error entry,
+leaves that time as it was. A pane last found clear is read again when the status or the work time has changed, or after 5 minutes
 (`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
 last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
 first, so slow reads that use up one poll's budget leave the rest first in line for the next. Each
@@ -348,7 +347,8 @@ The kinds and their exits:
 - `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
   up. While the wait runs, `.swarm/lead/stuck` keeps the work time from before it, so when the wait
-  ends the same API error wakes the lead again only if the agent did new work in between. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  ends the same API error wakes the lead again only if the agent did new work in between. Exit:
+  `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
