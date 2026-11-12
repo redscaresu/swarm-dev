@@ -21,13 +21,6 @@ conductors of finished epics.
 Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that merge.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
 
-## A PR outside any story
-
-**Symptom.** `swarm.sh merge` refuses with `no story or epic lists <PR URL>`.
-**Step.** If a lead story covers it, list it with `swarm.sh review <slug> <PR URL>` first. Otherwise
-leave the PR for the user to merge.
-**Issue.** [#692](https://github.com/redscaresu/swarm-dev/issues/692).
-
 ## A builder that keeps changing its PR
 
 **Symptom.** A builder pushes again and again after opening its PR, so CI restarts and no review
@@ -36,13 +29,6 @@ checks in place.
 **Step.** Nudge it: push what is ready, put further points in the PR body, run mutation checks on a
 copy of HEAD.
 **Issue.** [#695](https://github.com/redscaresu/swarm-dev/issues/695).
-
-## A new epic with no conductor
-
-**Symptom.** A plan PR merged with `swarm.sh merge --board` set an epic active, and no conductor
-started for it.
-**Step.** `swarm.sh conduct <epic>`.
-**Issue.** [#697](https://github.com/redscaresu/swarm-dev/issues/697).
 
 ## A flaky test
 
