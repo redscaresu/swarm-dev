@@ -371,12 +371,17 @@ mkdir -p "${ROOT}/proj-wt/b1"; git -C "${p}" remote add origin https://github.co
 printf '#!/bin/sh\ncase "$*" in "pr list"*"--state all"*) echo "[]" ;; *) exit 1 ;; esac\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
 tell "fix round held" >/dev/null
 state idle; settle
-check "queued findings a top-rung hold takes: not sent, nothing left queued, no line for the lead" "0|" \
-  "$(prompts)|$(cd "${Q}" 2>/dev/null && compgen -G 'b1.findings*' || true)"
-check "queued findings a top-rung hold takes: in its block and its kept file, the story the lead's" "yes|fix round held|lead top-rung" \
-  "$(grep -qx 'fix round held' "${p}/.swarm/escalated/b1" 2>/dev/null && echo yes || echo no)|$(cat "${p}/.swarm/briefs/b1.held-findings.md" 2>/dev/null)|$(awk '/^kind:/ { k = $2 } /^held_for:/ { h = $2 } END { print k, h }' "${p}/docs/stories/b1.md")"
+# Its claim leaves b1.findings.sent (when it went), and nothing else of the tell: not queued, on its way,
+# claimed or undelivered.
+check "queued findings a top-rung hold takes: not sent, nothing left queued, no line for the lead" "0|b1.findings.sent" \
+  "$(prompts)|$(cd "${Q}" 2>/dev/null && compgen -G 'b1.findings*' | tr '\n' ' ' | sed 's/ $//' || true)"
+# The hold's own record: its held line, and the story's board state (kind: lead, held_for: top-rung).
+S="${p}/.swarm/board-state/stories/b1"
+check "queued findings a top-rung hold takes: in its block and its kept file, the story held for the lead" \
+  "yes|fix round held|held ok (top-rung: findings round 2 on opus)|lead top-rung" \
+  "$(grep -qx 'fix round held' "${p}/.swarm/escalated/b1" 2>/dev/null && echo yes || echo no)|$(cat "${p}/.swarm/briefs/b1.held-findings.md" 2>/dev/null)|$(awk -F'\t' "${EVENT_AWK}"' $2 == "held" && $3 == "b1" { print $2, outcome($5) }' "${p}/.swarm/events.tsv")|$(awk '/^kind:/ { k = $2 } /^held_for:/ { h = $2 } END { print k, h }' "${S}" 2>/dev/null)"
 : > "${p}/.claude/swarm/config"; git -C "${p}" remote remove origin
-rm -rf "${ROOT}/bin/gh" "${ROOT}/proj-wt" "${p}/docs/stories/b1.md" "${p}/.swarm/escalated" "${p}/.swarm/briefs"
+rm -rf "${ROOT}/bin/gh" "${ROOT}/proj-wt" "${p}/docs/stories/b1.md" "${p}/.swarm/escalated" "${p}/.swarm/briefs" "${p}/.swarm/board-state"
 
 # tell_requeue, called as the check calls it (agents.sh sourced): it puts a tell on its way
 # (.sending.<token>) back in the queue under the queue's lock. With the lock free it takes it for the
