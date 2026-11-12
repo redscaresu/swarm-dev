@@ -67,7 +67,13 @@ Repeat until a step below says stop:
    Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
    30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
    worked out without them, so it may have missed a working conductor, or one stopped on an expired
-   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. A line
+   `unlisted: <PR URL> (<head>): no story or epic lists it; ...` names an open PR you opened that no
+   story or epic lists, so `swarm.sh merge` would refuse it. Find the `kind: lead` story that covers
+   it, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge <PR URL>` once its checks are green
+   and the merge is yours to make. With no such story, tell the user the PR waits on them. An
+   `unlisted: not checked (<why>)` line means the check could not run, so such a PR may be missed;
+   run `swarm.sh next` again later. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
@@ -279,7 +285,7 @@ Repeat until a step below says stop:
      uncommitted, as review-agent checks. codex-review reviews the directory it runs in, so run it
      from the story's worktree (`<repo>-wt/<slug>`, beside its repo), in the background:
      `cd <repo>-wt/<slug> || exit 1 && SWARM_STORY=<slug> SWARM_PROJECT=<this project> swarm.sh codex-review <base>`
-     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage limit the model
+     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage or rate limit the model
      `fallback_reviewer` names. Write its findings to a file and send them with
      `swarm.sh tell <slug> findings <file>`: that tell is a round under way, and the line goes quiet.
      If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
@@ -651,15 +657,18 @@ Repeat until a step below says stop:
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
      green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
      one you named: tell the user
-     what it printed and stop. Run
-     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
+     what it printed and stop. For swarm-dev's own repo, first ask the user whether to move the running agents onto
+     v<new> once it merges; merge runs in the background with no terminal, so it cannot ask
+     itself, and without `--upgrade` it moves none. Then run
+     `swarm.sh merge --release [--upgrade] --head <its head SHA> <PR URL>`, with `--upgrade` only
+     on the user's yes, in the background and wait for it,
      under `merge = human` too: there it merges only when HLDs granting `release` cover the release.
      Then go by whether merge printed `merged:`, not by its exit code:
      - It printed `merged:`, even if it then exited non-zero (red CI on the base also printed `fix-main:`
        and wrote a story; a CI timeout wrote none): tell the user what it printed. For swarm-dev's own
        repo, merge has confirmed the tag and the GitHub release, updated the
-       plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
-       `claude --continue`) and any warning it printed. If CI on the base was not green, merge
+       plugin and, with `--upgrade`, started the agents' upgrade: tell the user its restart line
+       (`/exit`, then `claude --continue`), its `upgrade not run:` line and any warning it printed. If CI on the base was not green, merge
        updated nothing and printed a warning naming what to run once the release is published:
        tell the user that warning. If it printed `warning: ... ships <commits> unchecked` (or that gh
        cannot read the merge commit's parent), a PR landed between the release check and the merge,
