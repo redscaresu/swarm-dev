@@ -1,4 +1,4 @@
-import calendar, json, re, signal, subprocess, sys, time, urllib.parse
+import calendar, json, os, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
@@ -25,9 +25,10 @@ def gh(*args):
         raise Err("gh %s: %s" % (" ".join(args), (p.stderr.strip().splitlines() or ["exit %d" % p.returncode])[-1]))
     return p.stdout
 
-def docs(path):
-    """Each JSON document gh prints for path, one per page; none is an error."""
-    s, dec, i, out = gh("api", "--paginate", path), json.JSONDecoder(), 0, []
+def docs(path, s=None):
+    """Each JSON document gh prints for path, one per page (s, when given, is what it printed); none is
+    an error."""
+    s, dec, i, out = gh("api", "--paginate", path) if s is None else s, json.JSONDecoder(), 0, []
     while True:
         while i < len(s) and s[i].isspace():
             i += 1
@@ -43,15 +44,26 @@ def docs(path):
     return out
 
 def pages(path, key):
-    items, total = [], None
-    for d in docs(path):
-        if not (isinstance(d, dict) and isinstance(d.get(key), list) and isinstance(d.get("total_count"), int)):
-            raise Err("unreadable answer for " + path)
-        items += d[key]
-        total = d["total_count"] if total is None else total
-    if len(items) < total:
-        raise Err("%s: read %d of %d" % (path, len(items), total))
-    return items
+    """Every page's items under key, and an error when gh lists fewer than its total_count or an item is
+    not an object. With the call's SWARM_POLL_CACHE set, a read another ci_gate made under
+    SWARM_POLL_CACHE_SECONDS ago stands in for gh's, and a read this accepts is kept for the others
+    (bin/lib/poll_cache.py)."""
+    def accept(s):
+        items, total = [], None
+        for d in docs(path, s):
+            if not (isinstance(d, dict) and isinstance(d.get(key), list) and isinstance(d.get("total_count"), int)
+                    and all(isinstance(r, dict) for r in d[key])):
+                raise Err("unreadable answer for " + path)
+            items += d[key]
+            total = d["total_count"] if total is None else total
+        if len(items) < total:
+            raise Err("%s: read %d of %d" % (path, len(items), total))
+        return items
+    argv = ("api", "--paginate", path)
+    if not os.environ.get("SWARM_POLL_CACHE"):
+        return accept(gh(*argv))
+    import poll_cache   # only here: a ci_gate.py copied or run without bin/lib beside it caches nothing
+    return poll_cache.through(argv, "", lambda: gh(*argv), accept)
 
 def judge(runs, red, wait, ok):
     for r in runs:
