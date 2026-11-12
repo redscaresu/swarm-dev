@@ -7,10 +7,11 @@
 # error while a `swarm.sh wait` naming the agent runs, which resumes it. A pane read, a herdr list or a
 # list parse that fails keeps the line from the last poll, so it neither goes nor wakes the lead again. A
 # run with no .swarm/lead/seen yet still prints it, as an alert. A pane found clear is read again only when
-# its agent's status or session log changed, or STUCK_RECHECK passed; a stuck one every poll; none while a
+# its agent's status or newest own work in its session log changed, or STUCK_RECHECK passed; a stuck one every poll; none while a
 # swarm.sh command delivers the agent a prompt; and agents not read in a poll whose budget ran out go first
 # in the next. A turn that ends on the same stop, or the same stop in a new pane, wakes the lead again; a
-# prompt over the manual-mode footer is manual, which never does. Manual mode on a ready story's builder
+# write to the session log that is no work of the agent's does not, nor does an API error a wait hid once
+# the wait ends with no new work; a prompt over the manual-mode footer is manual, which never does. Manual mode on a ready story's builder
 # closes its pane, then restarts or holds the story, found by its full slug (cut_record).
 # herdr is a stub listing ${ROOT}/agents (failing while ${ROOT}/list-fails exists, cut short while
 # ${ROOT}/list-garbled does), whose agent read logs itself to ${ROOT}/reads, hangs while ${ROOT}/hang-<pane>
@@ -72,6 +73,17 @@ fake() {
 reads() { local n; n="$(grep -c '^agent read' "${ROOT}/reads" 2>/dev/null)" || true; : > "${ROOT}/reads"; echo "${n:-0}"; }
 # count <text> <out> — how many lines of <out> start with <text>.
 count() { awk -v t="$1" 'index($0, t) == 1 { n++ } END { print n + 0 }' <<< "$2"; }
+# work <log> <time> — the agent's own work in its session log: an assistant entry dated <time>.
+work() { printf '{"type":"assistant","timestamp":"%s","message":{"model":"claude-opus","content":[]}}\n' "$2" >> "$1"; }
+# noise <log> — a write to the session log that is no work of the agent's: a resume prompt and Claude
+# Code's synthetic API error, the log's mtime moved on.
+noise() {
+  printf '%s\n' '{"type":"user","timestamp":"2036-01-01T00:00:00Z","message":{"content":"resume"}}' \
+    '{"type":"assistant","timestamp":"2036-01-01T00:00:01Z","message":{"model":"<synthetic>","content":[]}}' >> "$1"
+  touch -t 203601010000 "$1"
+}
+# stuck_key — the key .swarm/lead/stuck keeps for the agent in w:p1.
+stuck_key() { awk -F'\t' -v n="${A}" '$1 == n && $2 == "w:p1" { print $3 }' "${P}/.swarm/lead/stuck"; }
 
 # <fixture> <kind> <exit>, for each stuck screen.
 while read -r fx kind exit; do
@@ -102,8 +114,8 @@ echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
 fresh; agent blocked prompt.txt; rm -f "${P}/.swarm/lead/seen"
 check "a first read with no lead/seen yet prints the prompt: line" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 
-# A pane found clear is read again only when the agent's herdr status or its session log changed since the
-# last poll (or STUCK_RECHECK passed, below). A stuck one is read every poll, so a stop cleared with no
+# A pane found clear is read again only when the agent's herdr status or its newest own work changed since
+# the last poll (or STUCK_RECHECK passed, below). A stuck one is read every poll, so a stop cleared with no
 # turn goes.
 fresh; agent blocked mid-command.txt; : > "${ROOT}/reads"
 mkdir -p "${ROOT}/projects/proj"; log="${ROOT}/projects/proj/session-0.jsonl"; : > "${log}"
@@ -111,18 +123,26 @@ printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.s
 check "the first poll on a clear pane reads it and gives no line" test "$(count "prompt: " "$(run)")|$(reads)" = "0|1"
 cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
 check "the next poll, nothing changed, reads no pane" test "$(count "prompt: " "$(run)")|$(reads)" = "0|0"
-touch -t 203001010000 "${log}"
-check "a poll after the session log changed reads the pane again and finds the prompt" \
+work "${log}" 2030-01-01T00:00:00Z
+check "a poll after new own work in the session log reads the pane again and finds the prompt" \
   test "$(count "prompt: ${A} (prompt)" "$(run)")|$(reads)" = "1|1"
-touch -t 203006010000 "${log}"
+work "${log}" 2030-06-01T00:00:00Z
 check "a turn that ends on the same prompt again wakes the lead again" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 check "the poll after it, with no turn, is quiet" test "$(count "prompt: " "$(run)")" = 0
+# The stop is keyed on the newest own-work entry, not the log's mtime.
+noise "${log}"
+check "a write to the session log with no new own work does not wake the lead again" \
+  test "$(count "prompt: " "$(run)")" = 0
+work "${log}" 2030-09-01T00:00:00Z
+check "a new own-work entry after it does" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+mkdir -p "${log%.jsonl}/subagents"; work "${log%.jsonl}/subagents/agent-1.jsonl" 2030-10-01T00:00:00Z
+check "so does new own work in a Task subagent's log" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 cp "${FX}/manual.txt" "${ROOT}/pane.txt"; run > /dev/null; reads > /dev/null
 cp "${FX}/empty-box.txt" "${ROOT}/pane.txt"; run > /dev/null
 check "a stuck pane is read every poll, so manual mode turned off with no turn clears its line" \
   test "$(reads)|$(grep -c "prompt: ${A}" "${P}/.swarm/lead/seen" || true)" = "1|0"
 # An agent a swarm.sh command is delivering a prompt to is not read, and keeps its line.
-cp "${FX}/prompt.txt" "${ROOT}/pane.txt"; touch -t 203101010000 "${log}"; run > /dev/null
+cp "${FX}/prompt.txt" "${ROOT}/pane.txt"; work "${log}" 2031-01-01T00:00:00Z; run > /dev/null
 check "a new turn that ends on a prompt brings the line back" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
 agent idle prompt.txt; reads > /dev/null
 fake tell "${A}" nudge /tmp/f.md
@@ -151,12 +171,12 @@ fresh; agent blocked ruled-dialog.txt
 printf '2026-10-27\tcode\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
 check "a ready builder's permission prompt over the manual-mode footer gives a manual line" \
   grep -qxF "prompt: ${A} (manual), exit: herdr pane close w:p1 then swarm.sh hold ${A} <reason>" <<< "$(run)"
-touch -t 203201010000 "${log}"
+work "${log}" 2032-01-01T00:00:00Z
 check "the next answered prompt, in manual mode still, wakes no one" test "$(count "prompt: " "$(run)")" = 0
 agent working ruled-dialog.txt
 check "a poll that sees it working is quiet" test "$(count "prompt: " "$(run)")" = 0
 check "and keeps its manual line in the lead's queue" grep -qF "prompt: ${A} (manual)" "${P}/.swarm/lead/seen"
-agent blocked ruled-dialog.txt; touch -t 203301010000 "${log}"
+agent blocked ruled-dialog.txt; work "${log}" 2033-01-01T00:00:00Z
 check "its next prompt in manual mode, after working, wakes no one" test "$(count "prompt: " "$(run)")" = 0
 rm -f "${B}/${A}.md"
 # For any other agent it is a prompt whose exit turns manual mode off too, and each new one reminds.
@@ -164,7 +184,7 @@ fresh; agent blocked ruled-dialog.txt
 printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
 check "a conductor's prompt over the manual-mode footer is a prompt whose exit turns manual mode off" \
   grep -qxF "prompt: ${A} (prompt), exit: the user answers it in pane w:p1, and turns manual mode off there" <<< "$(run)"
-touch -t 203401010000 "${log}"
+work "${log}" 2034-01-01T00:00:00Z
 check "its next prompt after a turn wakes the lead again" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 # A pane the resend submits a brief in this poll is left for the next poll: the text it read is gone.
 fresh; agent idle manual.txt; : > "${ROOT}/keys"
@@ -244,6 +264,25 @@ check "a wait started on an API error already seen is quiet" test "$(count "prom
 check "and the line stays in the lead's queue" grep -qF "prompt: ${A} (api-error)" "${P}/.swarm/lead/seen"
 kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
 check "once that wait ends, the same API error does not wake the lead again" test "$(count "prompt: " "$(run)")" = 0
+# The same with a session log the wait's resume writes to: the stop it hid keeps the key it had before.
+fresh; agent idle api-error.txt
+printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-5\n' "${A}" > "${P}/.swarm/agents.tsv"
+log="${ROOT}/projects/proj/session-5.jsonl"; : > "${log}"; work "${log}" 2035-01-01T00:00:00Z
+check "an API error with a session log gives its line" test "$(count "prompt: ${A} (api-error)" "$(run)")" = 1
+fake wait --stall "${A}"; noise "${log}"
+check "a wait resuming it, its resume written to the log, is quiet" test "$(count "prompt: " "$(run)")" = 0
+kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
+check "once the wait ends with no new work, the API error it hid gives no second line" \
+  test "$(count "prompt: " "$(run)")" = 0
+# New work while a wait hides the API error changes the candidate key; the record keeps the old one, so
+# the stop after that work wakes the lead once the wait ends.
+key="$(stuck_key)"; fake wait --stall "${A}"; work "${log}" 2037-01-01T00:00:00Z
+check "a poll the wait hides, after new own work, is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "and keeps the key it had before the wait in .swarm/lead/stuck" test "$(stuck_key)" = "${key}"
+kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
+check "once that wait ends, the API error after the new work wakes the lead" \
+  test "$(count "prompt: ${A} (api-error)" "$(run)")" = 1
+rm -f "${P}/.swarm/agents.tsv"
 # A wait's flag is no agent name: agent_name makes --lead s--lead.
 A=s--lead; fresh; agent idle api-error.txt; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
 fake wait --lead 600000
