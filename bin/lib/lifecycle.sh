@@ -3722,7 +3722,8 @@ for f in sys.argv[1:]:
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
-# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# which agents are live (no_agent_lines). line_holds reads it once more, on a poll that is about to
+# print a line that says an agent is missing. LEAD_AGENTS_OK is set when herdr answered within
 # SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
 # poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
 LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
@@ -4075,7 +4076,7 @@ no_agent_theirs() {
 # restart would refuse it as no_agent_lines lets it through: held_by:, no worktree (a branch left), or no
 # builder in agents.tsv (a first start that failed before it was recorded). A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
-# since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
+# since, unless the move added only git's own clean merges of the base, base_merges_only). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
 # <slug> <pr>` for each. A story in review with no PR URL: find it by hand in the story's repo (gh pr
 # list -R <its origin> --head story/<slug>, as open_pr asks), then the review-agent exit; hold takes
 # only a ready story, so it is never that.
@@ -4559,7 +4560,47 @@ lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 # comma or a space. lead_wake logs it and drops a merged story's lines by it.
 lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%,*}"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%% *}"; }
 
-# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
+# line_holds <line> — false when <line> says an agent is missing and a second read of herdr's agent list
+# shows that agent in a pane this project opened (own_panes), with each name mapped by no_agent_name as
+# its producer maps it: <slug>'s builder or review-<slug> for `no-agent: <slug>` (no_agent_lines'
+# test), review-<slug> for `no-review: <slug>` (no_review_line's), and the builder for `idle: <slug> is
+# ready with no build` (touches_rows.py --idle reads no herdr list, so this read is that line's only
+# one). Each producer reads the poll's first list (lead_agents), and an agent can start after it.
+# lead_wake asks only about a line it is about to print, so herdr is read again only on a poll with such
+# a line, and once per poll: the read lands in LEAD_RECHECK_READ, LEAD_RECHECK_OK and LEAD_RECHECK_LIVE,
+# which lead_wake makes local. True for any other line; for a `no-review:` line whose note says
+# `(started `, since this poll started that review agent (no_review_line's restart) and its line is the
+# lead's word of it; and when no second read is made, because the poll's first read failed or timed out
+# (LEAD_AGENTS_OK empty: a hung herdr would cost the poll a second wait) or the poll runs outside herdr,
+# or when the read fails, takes longer than lead_agents allows, or gives JSON that does not parse: the
+# line stands.
+LEAD_RECHECK_READ=""; LEAD_RECHECK_OK=""; LEAD_RECHECK_LIVE=""
+line_holds() {
+  local list name rname
+  case "$1" in
+    "no-review: "*" (started "*", exit: "*) return 0 ;;
+    "no-agent: "* | "no-review: "* | "idle: "*" is ready with no build, "*) ;;
+    *) return 0 ;;
+  esac
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  if [[ -z "${LEAD_RECHECK_READ}" ]]; then
+    LEAD_RECHECK_READ=1
+    if [[ "${HERDR_ENV:-}" == 1 ]] && list="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)" \
+       && LEAD_RECHECK_LIVE="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${list}" 2>/dev/null)"; then
+      LEAD_RECHECK_OK=1
+    fi
+  fi
+  [[ -n "${LEAD_RECHECK_OK}" ]] || return 0
+  lead_line_slug "$1"
+  no_agent_name name "${LEAD_LINE_SLUG}"; no_agent_name rname "review-${LEAD_LINE_SLUG}"
+  case "$1" in
+    "no-agent: "*) ! grep -qxF -e "${name}" -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    "no-review: "*) ! grep -qxF -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    *) ! grep -qxF -e "${name}" <<< "${LEAD_RECHECK_LIVE}" ;;
+  esac
+}
+
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
 # and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
 # since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
 # open_story_prs, lead_bases), start a fix-main story's writer for each red base
@@ -4568,12 +4609,13 @@ lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
 # `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
 # whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
-# and save the queue as LEAD_SEEN. Print
+# drop a no-agent:, no-review: or `idle: ... is ready with no build` line it would print whose agent a
+# second read of herdr's list shows (line_holds), and save the rest of the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet saves the lines
 # of a kind in LEAD_QUIET without printing them, and prints every other line: each is an alert.
 lead_wake() {
-  local now line new="" u merged="" gone kept=""
+  local now line new="" u merged="" gone kept="" LEAD_RECHECK_READ="" LEAD_RECHECK_OK="" LEAD_RECHECK_LIVE=""
   lead_agents
   # A merge changes the PR state the heads pass reads: read it on this poll, not up to LEAD_HEADS_EVERY later.
   if lead_events; then merged=1; fi
@@ -4617,10 +4659,18 @@ lead_wake() {
     done <<< "${now}"
     now="${kept%$'\n'}"
   fi
+  # A line about to print that says an agent is missing goes when herdr, read once more, lists it
+  # (line_holds). It is left out of LEAD_SEEN too, so a later poll prints it if it still holds then.
+  kept=""
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || { [[ -n "${1:-}" ]] && lead_quiet "${line}"; } || new+="${line}"$'\n'
+    [[ -n "${line}" ]] || continue
+    if ! grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null && ! { [[ -n "${1:-}" ]] && lead_quiet "${line}"; }; then
+      line_holds "${line}" || continue
+      new+="${line}"$'\n'
+    fi
+    kept+="${line}"$'\n'
   done <<< "${now}"
+  now="${kept%$'\n'}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
   while IFS= read -r line; do
@@ -5513,18 +5563,49 @@ upgrade_path() {
   echo "${out}"
 }
 
-# wait_command [--stall] [--idle] | --until-report <name> [timeout-ms] | --lead [timeout-ms] — the wait
-# command: a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's
-# (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
+# past_target <slug> <sha> <name> — wait --past's refusals, each naming the form, then PAST_SHA,
+# PAST_WT, PAST_BRANCH and PAST_ORIGIN for past_pushed. Dies, waiting on nothing, on a <sha> that is not
+# 40 hex characters, on a conductor or a review agent (<name>, as wait_command reads them), and on a
+# <slug> with no story file on the board or no worktree (worktree_for).
+past_target() {
+  local f src form="wait [--stall] --past <sha> <slug>"
+  [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die "${form}: <sha> is a full 40-character commit sha, not '$2'"
+  [[ "$3" != conduct-* || "$3" =~ -done[0-9]*$ ]] || die "${form} waits on a builder, not the conductor $3"
+  [[ ! "$1" =~ ^review-[a-z0-9-]+$ || "$(awk -F'\t' -v n="$3" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" != review ]] \
+    || die "${form} waits on a builder, not the review agent $3"
+  f="${BOARD}/stories/$1.md"
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f "${f}" ]] || die "${form} waits on a story's builder: no story file ${f}"
+  src="$(repo_dir "$(fm "${f}" repo)")" || die "${form}: $1: ${src}"
+  PAST_WT="$(worktree_for "${src}" "$1")"
+  [[ -d "${PAST_WT}" ]] || die "${form} waits on a story's builder: $1 has no worktree at ${PAST_WT}"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_ORIGIN="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "${form}: $1: ${src} has no origin to read the PR's head from"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_BRANCH="story/$1" PAST_SHA="$2"
+}
+
+# wait_command [--stall] [--idle] [--past <sha>] | --until-report <name> [timeout-ms] | --lead [timeout-ms]
+# — the wait command: a conductor's wait, with no timeout under --until-report, any other agent's, or the
+# lead's (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
 # wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
-# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over.
+# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over. --past <sha>,
+# on a builder only (past_target refuses the rest, with --until-report and --lead), also ends the wait
+# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed).
 wait_command() {
-  local stall until idle n out rc
+  local stall until idle n out rc a past="" sha="" other=""
+  for a in "$@"; do case "${a}" in --past) past=1 ;; --lead|--until-report) other="${a}" ;; esac; done
+  [[ -z "${past}" || -z "${other}" ]] || die "wait [--stall] --past <sha> <slug> waits on a builder; it takes no ${other}"
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""; idle=""
   case "${1:-}" in --until-report) until=1; shift ;; esac
-  while :; do case "${1:-}" in --stall) stall=--stall; shift ;; --idle) idle=1; shift ;; *) break ;; esac; done
+  while :; do case "${1:-}" in
+    --stall) stall=--stall; shift ;;
+    --idle) idle=1; shift ;;
+    --past) sha="${2:-}"; shift; [[ $# -eq 0 ]] || shift ;;
+    *) break ;;
+  esac; done
   n="$(agent_name "${1:?name}")"
+  [[ -z "${past}" ]] || past_target "$1" "${sha}" "${n}"
   if [[ -n "${until}" ]]; then
     [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
     wait_conductor "${n}" 0
