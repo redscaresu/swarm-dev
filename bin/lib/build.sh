@@ -396,6 +396,18 @@ review_tests_rule() {
   fi
 }
 
+# stop_run_rule <worktree> — the brief's sentence on stopping a test run of the builder's own before a
+# push. With scripts/select-tests.sh (swarm-dev's own runner: it execs make test, whose scripts/test.sh
+# stops every job and test of the run on a TERM, tests/test_runner_test.sh) it names that kill;
+# elsewhere the project's runner is unknown, so it names only the PID and the background task.
+stop_run_rule() {
+  if [[ -f "$1/scripts/select-tests.sh" ]]; then
+    printf '%s' "Before you push, stop any test run of yours still going: stop its background task, or kill the select-tests.sh or make you started by its PID (\`kill <pid>\`, never \`-9\`): make passes the TERM to scripts/test.sh, which then stops every job and test of the run (the guard refuses pkill and killall)."
+  else
+    printf '%s' "Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
+  fi
+}
+
 # reply_sentence — what a builder replies, and when: the brief's rule on finishing, and what its goal
 # condition waits for. One sentence, so the two cannot drift.
 reply_sentence() {
@@ -560,9 +572,7 @@ or error message the diff changes, re-read its header comment, error text and ev
 or skill line that names it, and fix each one that no longer matches. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") Run a long test run in the background
-(Bash run_in_background), so its end wakes you, and act on its result when it ends. Before you push,
-stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its
-background task (the guard refuses pkill and killall). After the PR opens, push what is ready and put
+(Bash run_in_background), so its end wakes you, and act on its result when it ends. $(stop_run_rule "${tree}") After the PR opens, push what is ready and put
 further points in the PR body, rather than a push for each: every push restarts CI. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(base_merge_rule "${base}") $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
