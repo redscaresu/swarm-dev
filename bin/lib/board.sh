@@ -15,7 +15,7 @@ fm() {
 # a report starts reads the board for itself.
 BOARD_SNAP=""
 # BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
-# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+# shell that took the snapshot drops it, a write in a $( ) subshell included; report_cleanup removes it on exit.
 BOARD_SNAP_MARK=""
 # BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
 # before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
@@ -876,8 +876,8 @@ next_report() {
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
-  # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}' '${BOARD_SNAP_MARK}'" EXIT
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'; report_cleanup" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).

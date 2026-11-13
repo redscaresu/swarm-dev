@@ -45,6 +45,9 @@ dash() {
     [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
     DASH_DIRS[i]="${d}"
   done
+  # Every way out removes the frame's skip file, a kill (TERM, HUP, INT) included; dash_watch's own EXIT
+  # trap on a terminal does it too.
+  trap report_cleanup EXIT
   if [[ ${check} == 1 ]]; then
     [[ -z "${every}" && ${DASH_LADDER} == 0 && ${DASH_TREE} == 0 ]] || die "dash --check draws nothing: --watch, --tree and --ladder do not go with it"
     dash_check; return
@@ -177,8 +180,8 @@ dash_base_ref() {
 # dash_slow.py's reads run under the report deadline (report_read, as gh PR states), with at most half
 # of it (DASH_GH_SHARE): they come first in the frame, and a slow GitHub with many PRs must leave
 # dash_render's herdr reads their own time. It stops each gh call a second short of that end
-# (DASH_READ_END), so no gh outlives the frame in a session of its own, and exits 142, report_read's
-# cut. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
+# (DASH_READ_END) and exits 142, report_read's cut. Each gh call runs in dash_slow.py's process group, so
+# report_read's KILL of that group at the report deadline (REPORT_END) reaches it if dash_slow.py misses its margin. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
 # the last cache's lines it did not reach (dash_cache_merge), so a PR state, a story's head or the ci
 # line, a local 6-hour cache, stands until a later run reads it again; a PR no run has answered shows
 # as its URL, as a PR gh cannot answer in 5 seconds does.
@@ -482,7 +485,7 @@ dash_watch() {
   # dev checkout matches no entry, so it never jumps to the installed copy.
   IFS=$'\t' read -r inst path ver <<< "$(dash_installed)"
   if [[ ${tty} == 1 ]]; then
-    trap 'printf "\033[?25h\033[?1049l"' EXIT
+    trap 'printf "\033[?25h\033[?1049l"; report_cleanup' EXIT
     printf '\033[?1049h\033[?25l'
   fi
   trap 'exit 0' INT TERM HUP
@@ -552,12 +555,13 @@ dash_installed() {
 
 # dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
 # on this project (the cwd may be gone), with the tree and ladder as they stand now and every --project. exec keeps the
-# PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
+# PID and skips the EXIT trap, so the skip file is removed and a terminal restored first, in case the new script dies before
 # it enters the alternate screen again. A script that is not an executable file is ignored.
 dash_reexec() {
   [[ -f "$1" && -x "$1" ]] || return 0
   local script="$1" d
   [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
+  report_cleanup   # exec skips the EXIT trap
   set -- dash --watch "$2"
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
