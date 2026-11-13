@@ -107,8 +107,11 @@ shows the agent in one of the project's panes (the builder or `review-<slug>` fo
 seen, so a later poll prints it if it still holds. A read that fails keeps the line, and so does a poll
 whose first read failed, which makes no second one. A `no-review: ... (started N of 3)` line is never
 dropped: that poll started the review agent itself, and the line is how the lead hears of it.
-Every run but `wait --lead 0` (a single read, silent when nothing is new) ends on a line, so a timed
-run that exits with no output was killed. Three of those lines are no queue item: none goes into
+Every run but `wait --lead 0` (a single read, silent when nothing is new) ends on a line once it has
+started. A timed run that exits with no output was stopped by a KILL (a newer run's, after 5 s in a
+slow read, or one sent by hand: exit 137, nothing on stderr) or failed before it started (not in a swarm
+project, a bad config line, a project `swarm.sh` refuses: exit 1, the cause on stderr). Three of those
+lines are no queue item: none goes into
 `.swarm/lead/seen` or logs a `lead-woken` line.
 `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` comes at the timeout (an hour by default, N its minutes rounded up) and exits 1.
 `replaced: a newer wait --lead watches now` exits 143: a newer run stopped this one with a USR1, a

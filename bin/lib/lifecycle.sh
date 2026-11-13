@@ -4794,8 +4794,10 @@ lead_poll() {
 # open_story_prs, lead_bases), on its first read, then at most once every LEAD_HEADS_EVERY seconds, and
 # on the poll after events.tsv gains a merge line (lead_events). The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
-# every line whose kind is not in LEAD_QUIET. Every exit says why on stdout, in one line that is no queue
-# item (never in LEAD_SEEN, never logged as lead-woken), and keeps its exit code:
+# every line whose kind is not in LEAD_QUIET. Every exit after the traps go on says why on stdout, in one
+# line that is no queue item (never in LEAD_SEEN, never logged as lead-woken), and keeps its exit code; a
+# die before them (no swarm project, a bad config line: exit 1, the cause on stderr) and the KILL lead_lock
+# sends a run stuck in a slow read (exit 137, nothing on stderr) print nothing:
 #   timeout: nothing new in <N> min, exit: swarm.sh wait --lead   at the timeout (default an hour), N its
 #     minutes rounded up; exit 1. wait --lead 0, a single read, prints nothing here and exits 1.
 #   replaced: a newer wait --lead watches now   a newer run stopped this one (lead_lock's USR1, lead_signal);
