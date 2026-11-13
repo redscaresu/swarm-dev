@@ -2227,6 +2227,25 @@ report_read() {
   return "${rc}"
 }
 
+# report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads), next
+# (next_reads) and dash (dash_deadline) share, so every report names a cut read the same way. Each runs
+# its program through report_read with stdin from /dev/null, since within runs it in a process group of
+# its own, where a read of the terminal would stop it until the deadline (and a read inside a while-read
+# loop must not eat the loop's input). A read is named for the program and its first two words
+# (`herdr agent list`, `gh pr list`), claude for one (`claude agents`), and any gh api read `gh api`
+# alone: its path differs per call, and each would be named. Safe under set -u with fewer words. A caller
+# adds its own on top: status's git, next's answer to herdr agent list, whose other reads go on to
+# report_herdr. unset -f herdr gh claude removes them.
+# shellcheck disable=SC2329 # the readers status, next and dash run call these functions by name
+report_wrappers() {
+  herdr() { report_herdr "$@"; }
+  claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
+  gh() { if [[ "${1:-}" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh ${*:1:2}" gh "$@" </dev/null; fi; }
+}
+
+# report_herdr <args>... — herdr <args> through report_read, as report_wrappers' herdr runs it.
+report_herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
+
 # report_cuts — how many reads report_read has cut or skipped since report_start or the last
 # report_skipped, 0 outside a report: a count that changed between two calls means a read between
 # them was cut.
@@ -3426,10 +3445,9 @@ status_report() {
 }
 
 # status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
-# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
-# these reads goes through report_read, named by its
-# command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
-# a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): herdr, gh
+# and claude are report_wrappers', and git's reads go through report_read too, named `git <subcommand>`,
+# with stdin from /dev/null, as report_wrappers' are. Of git,
 # only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
 # a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
 # base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
@@ -3439,9 +3457,7 @@ status_report() {
 # own wait.
 # shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
 status_reads() {
-  herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
-  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh $1 $2" gh "$@" </dev/null; fi; }
+  report_wrappers
   git() {
     local i=1
     # The subcommand is the first word past git's own options; -C and -c take a value.
