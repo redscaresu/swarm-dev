@@ -2200,7 +2200,8 @@ within() {
 # read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
-# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind. A
+# report that is killed mid-frame removes it through report_cleanup, its caller's EXIT trap.
 # Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
 # the rest of the report, so an edit made to a board file during it shows on the next report, and so
 # does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
@@ -2263,6 +2264,14 @@ report_skipped() {
   names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
+}
+
+# report_cleanup — a report's exit: remove its skip file and the snapshot mark (REPORT_SKIP_FILE and
+# BOARD_SNAP_MARK), so a report killed (TERM, HUP, INT) or stopped mid-frame leaves no swarm-report.*
+# file in TMPDIR. status, next and dash set it as their EXIT trap; bash runs that trap on those signals.
+report_cleanup() {
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  [[ -z "${BOARD_SNAP_MARK:-}" ]] || rm -f "${BOARD_SNAP_MARK}"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
@@ -3375,6 +3384,7 @@ status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent workspaces tabs
   status_time
   report_start || die "status: cannot start the report deadline"
+  trap report_cleanup EXIT
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then

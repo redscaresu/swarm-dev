@@ -1054,8 +1054,11 @@ With `--head <sha>`, it merges a head that moved past `<sha>` only when all it a
 Put a story or epic whose PRs are green and reviewed in review, with its PRs on its `prs:` line; a story whose `depends_on` parents are still open is held instead.
 With `--head`, it refuses, changing nothing, while the item has a PR it does not name: one on its `prs:` line or, for a story, one open from its branch `story/<slug>` (one review agent passes one PR).
 It then reads each PR's head (each gh read 60 seconds at most) and refuses unless every head is still `<sha>`, the head the review passed, or adds to `<sha>` only git's own clean merges of the PR's base, as `merge --head` reads them.
-For that it reads the PR's base branch too, one more gh read, and fetches the PR's head and base, 120 seconds at most; a fetch that fails or runs out refuses as a moved head does.
+For that it reads the PR's base branch and changed file count too, one more gh read, and fetches the PR's head and base, 120 seconds at most; a fetch that fails or runs out refuses as a moved head does.
 It takes such a head only when its own CI is green (each read 60 seconds at most), since the review waited for green on `<sha>` alone.
+Green means what `wait-pr` waits for:
+every check is green, and so is each workflow that a `pull_request` into the base runs for the PR's files.
+A workflow with no run on the new head yet counts as not finished, and the refusal names it (`<path> (no run on <new>)`).
 A head that is red, not finished or unread is refused as a moved head, with a line on stderr naming its CI state and the `wait-pr --head <new> <PR URL>` to run before `review --head <sha>` again.
 Once the story goes to review, and not for a review held for its parents, it prints `accepted: <PR URL>'s head <new> adds only clean merges of <base> (<merges>) to <sha>, the reviewed head; its pass counts for <new>` and logs `base-accepted <slug> <new head> from <sha>`, so the lead's `unmerged:` line and `queued:` count the new head as reviewed.
 Any other moved head needs a review of its own: the refusal names `swarm.sh review-agent --next <slug> <PR URL>`, run from `review-<slug>`'s pane after a pass as after findings, and a new `swarm.sh review-agent <slug> <PR URL>` once `review-<slug>` is gone.
