@@ -9,7 +9,8 @@
 # restarted once idle, and one still busy at the end of the wait is named as left on its old
 # version. One whose session is gone, or whose pane herdr no longer lists, is skipped as closed:
 # named once on a skipped (closed) line, never touched, and counted neither moved nor left; a closed
-# pane is found through its tab record, a conductor's reading `conductor`. An agent whose newest record is codex is
+# pane is found through its tab record, a conductor's reading `conductor`; a new agent under a skipped
+# one's name, in another pane, is moved after all. An agent whose newest record is codex is
 # left alone. One that cannot be told the new path stays on its old version; a restart that fails once
 # claude has exited says how to resume it; a second run skips the agents already on this version. A
 # busy conductor gets the request in its inbox. A conductor already on this version is paused while
@@ -297,6 +298,30 @@ upgrade e
 check "a session gone by its round is skipped as closed, not left" "0|1|0|upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): b1' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(tail -1 "${H}/out")"
 
+# Same-name restart: b1 and b2 are skipped as closed at the check (their sessions gone). Before the
+# round reaches its builders, the conductor starts a new b1 in pane w:b9 (session s9), as it writes
+# its handover. That new b1 is moved, named once, and counted as moved; b2, with no replacement,
+# stays skipped. If the closed markers keyed on the name alone, b1 would stay skipped.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s9","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cp "${H}/agents" "${H}/agents.same"; cp "${P}/.swarm/state/e" "${H}/state-e.same"; cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.same"
+CMD=(claude); argv b1 sonnet --session-id s9 > "${H}/argv-w:b9"
+cat > "${H}/onhandover" <<EOF
+#!/bin/sh
+sed -i.bak 's/^b1 w:b1 s1\$/b1 w:b9 s9/' "${H}/agents"
+echo 'w:b9 b1' >> "${P}/.swarm/state/e"
+printf '2026-10-22\tcode\tb1\tclaude\tsonnet\thigh\ts9\n' >> "${P}/.swarm/agents.tsv"
+EOF
+chmod +x "${H}/onhandover"
+upgrade e
+rm -f "${H}/onhandover" "${H}/argv-w:b9"
+cp "${H}/agents.same" "${H}/agents"; cp "${H}/state-e.same" "${P}/.swarm/state/e"; cp "${H}/agents.tsv.same" "${P}/.swarm/agents.tsv"
+check "a new agent under a closed agent's name is moved, not skipped; one with no replacement stays skipped" \
+  "0|1|yes|b1: 0.21.0 -> ${NEW}|1|upgrade done: 2 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'skipped (closed): b2' "${H}/out")|$(has 'agent start b1 --kind claude --pane w:b9' "$(calls 'agent start b1')")|$(grep -- '^b1: .* -> ' "${H}/out")|$(grep -cx 'b1: a new agent in pane w:b9 took its name after it was skipped as closed, so it is moved' "${H}/out")|$(tail -1 "${H}/out")"
+check "its conductor hears b1 was restarted and only b2 skipped" "yes" \
+  "$(has "Builders restarted on swarm-dev ${NEW}: b1. Left on their old version: none. Skipped as closed: b2. Carry on" "$(calls 'agent prompt w:c')")"
+
 # A conductor whose session is gone at the check is skipped before it is asked: no prompt, no note,
 # and its builders, with no conductor to pause, are restarted.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
@@ -430,6 +455,39 @@ upgrade e
 rm -f "${H}/onstart-b2"
 check "a conductor gone after its handover is skipped as closed, not left, and no longer holds its builder" "0|1|0|1|upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(grep -c '^conduct-e: ' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(tail -1 "${H}/out")"
+# The same, then a new conductor takes conduct-e's name, in pane w:c9 (session sc9), while b1 is still
+# busy: herdr's list holds it from the round after the one that skipped the old one. It is asked for
+# its own handover, not handed the old one's, and moved with b1 last; b1 goes idle once it writes it.
+# If reopening kept the old conductor's handover records, the new one would never be asked.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"busy"},{"sessionId":"s2","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cp "${H}/agents" "${H}/agents.cond"; cp "${P}/.swarm/state/e" "${H}/state-e.cond"; cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.cond"
+CMD=(claude); argv conduct-e opus --session-id sc9 > "${H}/argv-w:c9"
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak 's/{"sessionId":"sc","status":"idle"},//' "${H}/claude.json"
+touch "${H}/armed"
+EOF
+cat > "${H}/onlist" <<EOF
+#!/bin/sh
+sed -i.bak 's/^conduct-e w:c sc\$/conduct-e w:c9 sc9/' "${H}/agents"
+echo 'w:c9 conductor' >> "${P}/.swarm/state/e"
+printf '2026-10-22\tconduct\tconduct-e\tclaude\topus\thigh\tsc9\n' >> "${P}/.swarm/agents.tsv"
+sed -i.bak 's/^\[/[{"sessionId":"sc9","status":"idle"},/' "${H}/claude.json"
+touch "${H}/newcond"
+EOF
+cat > "${H}/onhandover" <<EOF
+#!/bin/sh
+[ -e "${H}/newcond" ] || exit 0   # the new conductor's handover, not the old one's
+sed -i.bak 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2" "${H}/onlist" "${H}/onhandover"
+upgrade e
+rm -f "${H}/onstart-b2" "${H}/onlist" "${H}/onhandover" "${H}/newcond" "${H}/armed" "${H}/argv-w:c9"
+cp "${H}/agents.cond" "${H}/agents"; cp "${H}/state-e.cond" "${P}/.swarm/state/e"; cp "${H}/agents.tsv.cond" "${P}/.swarm/agents.tsv"
+check "a new conductor under a closed one's name is asked for its own handover, then moved with its builder" \
+  "0|1|1|yes|yes|0|upgrade done: 3 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'conduct-e: a new agent in pane w:c9 took its name after it was skipped as closed, so it is moved' "${H}/out")|$(calls 'agent prompt w:c9' | grep -c 'Write a handover')|$(has 'agent start conduct-e --kind claude --pane w:c9' "$(calls 'agent start conduct-e')")|$(has 'agent start b1' "$(calls 'agent start b1')")|$(grep -c 'skipped (closed)' "${H}/out")|$(tail -1 "${H}/out")"
 
 # --- An idle conductor that writes no handover by the end of the wait is told to carry on by prompt.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle idle idle; touch "${H}/nohandover"

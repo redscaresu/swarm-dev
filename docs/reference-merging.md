@@ -834,6 +834,11 @@ the run; its conductor hears it was skipped. All of them are named once, on one 
 <names>` line. When that first read of herdr's list fails, upgrade says the closed check did not
 run; when Claude Code's list cannot be read, it says the check skipped no agent for a gone session.
 Either way a session found gone later in the run is still skipped.
+A skip holds only for the agent it saw, in that pane with that session. When a later round finds a
+new agent under the same name, in another pane or with another session (its conductor started it
+again), upgrade moves the new one and counts it as moved. It drops the name from the
+`skipped (closed):` line and says so on a `<name>: a new agent in pane <pane> took its name after it
+was skipped as closed, so it is moved` line.
 A builder also waits while its story's review agent (`review-<slug>`), which reviews its PR, is a
 Claude agent on the old version that is not idle. The review agent is restarted once it is idle, as
 any agent is. One left on the old version (its restart failed) still holds its builder while it is
