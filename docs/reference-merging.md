@@ -113,7 +113,8 @@ kept, or one its review agent merges next, under `merge = agent` or a `merge` gr
 money or `swarm.sh merge` has handed it to you or the lead since its last review, as `events.tsv`
 records: a hold, an unconfirmed merge, the epic guard), or a
 fix-main story it started (the `story` line in `events.tsv` names its pane), which no other conductor
-counts. A story reconcile reopened after its PR closed unmerged is the lead's. A story blocked only on
+counts. A story reconcile reopened after its PR closed unmerged is the lead's, and a story blocked only on a
+reopened one waits on you too. A story blocked only on
 a `kind: lead` story or a hand step, blocked by hand with no `depends_on`, blocked only on stories that
 wait on you that way, or in a `depends_on` cycle, waits on you: it holds nothing up, and the report lists it under
 Waits on the user. Neither does a story the brief has the conductor list for the lead: a build that
@@ -520,11 +521,16 @@ never joins the queue, where a PR queued behind it could share its push and so i
 that requires a queue takes no direct merge but `--admin`'s, which `merge_admin = off` rules out. So
 `merge --release` refuses there, naming the queue, and the release is yours to merge once the queue
 is empty. With no
-queue the path is the one above. ci.yml and zizmor.yml run on
+queue the path is the one above.
+
+To turn a queue on for a base, in GitHub, either add a ruleset on the base branch with the
+`merge_queue` rule, or turn on the merge queue in the base's branch protection. Every workflow the
+base requires must also run on `merge_group`, or its check never reports on the group, and the queue drops the
+PR once its check timeout passes. Add `merge_group:` to that workflow's `on:` triggers. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
 merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
-`merge_queue` rule for that reason.
+`merge_queue` rule for that reason. So a base with a queue cannot also use `merge_admin = on`: leave `merge_admin` off there.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
