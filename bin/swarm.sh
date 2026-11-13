@@ -246,7 +246,7 @@ CFG_top_rung_rounds=2   # with escalate_ladder set, the findings round on its to
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long, a rate-limit retry included
-CFG_fallback_reviewer="" # empty: a codex usage or rate limit skips codex's review; else a review agent on this model reviews in its place
+CFG_fallback_reviewer="" # empty: a codex usage or rate limit, unreachable codex or timeout skips codex's review; else a review agent on this model reviews in its place
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_review_verify=ci    # full: a review agent's round 1 may run the selected tests and check mutation proofs; ci: every round trusts CI
@@ -456,7 +456,7 @@ policy() {
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     review)     echo "claude opus high" ;;     # one story's PR review, the model the conductor reviewed with
-    review-fallback) echo "claude ${CFG_fallback_reviewer:-sonnet} high" ;;  # codex's review when codex hit its usage or rate limit; started only with fallback_reviewer set
+    review-fallback) echo "claude ${CFG_fallback_reviewer:-sonnet} high" ;;  # codex's review when codex hit its usage or rate limit, was unreachable or timed out; started only with fallback_reviewer set
     *) die "unknown role '$1' ($(roles))" ;;
   esac
 }
@@ -780,6 +780,10 @@ CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it i
 CODEX_RETRY_SECONDS=60   # how long codex-review waits after codex's rate limit before it runs codex once more
 # SWARM_CODEX_RETRY_SECONDS overrides it, for tests, when it is a whole number of seconds; anything else is ignored.
 [[ ! "${SWARM_CODEX_RETRY_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || CODEX_RETRY_SECONDS="${SWARM_CODEX_RETRY_SECONDS}"
+# How long codex's output must look unreachable (codex_unreachable) before codex-review stops codex. Not at
+# once: on Azure Foundry codex prints five reconnect lines before its rate-limit line, and a codex stopped at
+# its third would never reach the rate limit's retry.
+CODEX_UNREACHABLE_GRACE=15
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
@@ -859,8 +863,8 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # the caller's process group, so a harness that kills that group kills codex too (on macOS a KILL to the
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
-# TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
-# events.tsv's line says so, and it writes a reap line, target codex-<story or base>, its tail agent_fields' slug= (SWARM_STORY, none without it) and role= (SWARM_AGENT's); otherwise it exits as codex did. codex's output, stderr merged into
+# TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout writes a reap
+# line (and, with fallback_reviewer empty, dies, so events.tsv's line says so), target codex-<story or base>, its tail agent_fields' slug= (SWARM_STORY, none without it) and role= (SWARM_AGENT's); otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
 # child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex
 # keeps its last CODEX_TAIL_LINES lines in .swarm/codex/<story or base>.tail (codex_keep_tail), so a limit message
@@ -872,9 +876,13 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # same args, a fifo, log, tee and traps made new, in what is left after the first run and the wait, so the one
 # timeout still bounds both. A rate limit on the retry logs no second incident: one limit counts once. A usage
 # limit is never retried (it resets in hours). Then, with fallback_reviewer set, codex_fallback reviews in
-# codex's place, in what is left of codex_minutes.
+# codex's place, in what is left of codex_minutes. A codex whose output has looked unreachable
+# (codex_unreachable) for CODEX_UNREACHABLE_GRACE seconds while it runs is stopped; that one, or one that
+# exits with its output ending so, logs a `codex-unreachable` incident, and goes on as a limit does, with no retry; with fallback_reviewer
+# empty it dies "codex skipped: unreachable". On the timeout, with fallback_reviewer set, codex_fallback
+# reviews after the reap line with a whole codex_minutes of its own, since codex used all of the first.
 codex_review() {
-  local pid tpid left deadline step rc m i args story prompt="" dir log files fields=() kv=() f try=1
+  local pid tpid left budget deadline step rc m i args story prompt="" dir log files fields=() kv=() f try=1 stuck
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   [[ -z "${SWARM_PR:-}" || "${SWARM_PR}" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+$ ]] \
@@ -893,6 +901,7 @@ codex_review() {
   for f in "${kv[@]+"${kv[@]}"}"; do [[ -z "${SWARM_STORY:-}" && "${f}" == slug=* ]] || fields+=("${f}"); done
   left=$((CFG_codex_minutes * 60))
   [[ ! "${SWARM_CODEX_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || left="${SWARM_CODEX_SECONDS}"
+  budget="${left}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
   mkdir -p "${STATE_DIR}"
@@ -930,11 +939,26 @@ codex_review() {
     # Against the deadline, not a count of polls (poll_while's), whose forks on a busy machine would
     # stretch the wait past it. SECONDS counts whole seconds, so the poll runs through the deadline's
     # second: codex is never stopped before its time, and left (below) never exceeds codex_minutes.
-    while ((SECONDS <= deadline)) && kill -0 "${pid}" 2>/dev/null; do sleep "${step}"; done
+    # Each poll also reads codex's output: one that has looked unreachable for CODEX_UNREACHABLE_GRACE
+    # seconds (stuck holds the second it started to) ends the wait with CODEX_LIMIT_KIND=unreachable.
+    CODEX_LIMIT_KIND=""; stuck=""
+    while ((SECONDS <= deadline)) && kill -0 "${pid}" 2>/dev/null; do
+      if codex_unreachable "${log}"; then
+        stuck="${stuck:-${SECONDS}}"
+        ((SECONDS - stuck < CODEX_UNREACHABLE_GRACE)) || { CODEX_LIMIT_KIND=unreachable; break; }
+      else
+        stuck=""
+      fi
+      sleep "${step}"
+    done
     # What codex used is gone: a retry or a fallback gets only the rest.
     left=$((deadline - SECONDS)); ((left > 0)) || left=0
-    kill -0 "${pid}" 2>/dev/null && break
-    rc=0; wait "${pid}" || rc=$?
+    if kill -0 "${pid}" 2>/dev/null; then
+      [[ "${CODEX_LIMIT_KIND}" == unreachable ]] || break
+      stop_codex "${pid}"; rc=1
+    else
+      rc=0; wait "${pid}" || rc=$?
+    fi
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done
     { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
     # Both reaped: no trap may signal their pids again, which another process could have taken.
@@ -942,13 +966,16 @@ codex_review() {
     trap "codex_cleanup - ${files}" EXIT
     trap "exit 143" TERM HUP
     [[ ${rc} -eq 0 ]] || codex_keep_tail "$1" "${log}" "${rc}"
-    CODEX_LIMIT_KIND=""
-    [[ ${rc} -eq 0 ]] || CODEX_LIMIT_KIND="$(codex_limit "${log}")"
+    [[ ${rc} -eq 0 || -n "${CODEX_LIMIT_KIND}" ]] || CODEX_LIMIT_KIND="$(codex_limit "${log}")"
     [[ -n "${CODEX_LIMIT_KIND}" ]] || return "${rc}"
     # Not the slug alone, which is also its builder's agent name: login_incident would take this
     # line for the end of that builder's login episode. A rate limit on the retry is the first one still.
-    [[ ${try} -gt 1 && "${CODEX_LIMIT_KIND}" == rate ]] \
-      || record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
+    if [[ "${CODEX_LIMIT_KIND}" == unreachable ]]; then
+      record_event incident "codex-${SWARM_STORY:-$1}" "codex-unreachable" "${fields[@]+"${fields[@]}"}"
+      [[ -n "${CFG_fallback_reviewer}" ]] || die "codex skipped: unreachable"
+    elif [[ ${try} -eq 1 || "${CODEX_LIMIT_KIND}" != rate ]]; then
+      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
+    fi
     if [[ ${try} -eq 1 && "${CODEX_LIMIT_KIND}" == rate ]] && ((left >= CODEX_RETRY_SECONDS + FALLBACK_MIN_SECONDS)); then
       codex_retry_wait "codex-${SWARM_STORY:-$1}" "${fields[@]+"${fields[@]}"}"
       left=$((deadline - SECONDS)); ((left > 0)) || left=0
@@ -962,7 +989,14 @@ codex_review() {
   done
   stop_codex "${pid}"
   record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min" "${fields[@]+"${fields[@]}"}"
-  die "codex skipped: timed out after ${CFG_codex_minutes} min"
+  [[ -n "${CFG_fallback_reviewer}" ]] || die "codex skipped: timed out after ${CFG_codex_minutes} min"
+  { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
+  # shellcheck disable=SC2064
+  trap "codex_cleanup - ${files}" EXIT
+  trap "exit 143" TERM HUP
+  # codex used all of its time, so the fallback gets a whole codex_minutes of its own.
+  CODEX_LIMIT_KIND=timeout
+  codex_fallback "$1" "${prompt}" "${budget}" "${log}" 1
 }
 
 # codex_retry_wait <target> [key=value...] — codex hit its rate limit: say so, log a codex-retry line
@@ -997,21 +1031,44 @@ CODEX_LIMIT_RE="^(ERROR: |■ )?You(’ve|'ve| have) hit your usage limit"
 # "ERROR: rate limit exceeded: Your requests to <model> for <model> in <region> have exceeded token rate
 # limit."), and its retries spent on a 429 ("exceeded retry limit, last status: 429 Too Many Requests").
 CODEX_RATE_LIMIT_RE="^(ERROR: |■ )?(rate limit exceeded: |exceeded retry limit, last status: 429 Too Many Requests)"
-# CODEX_LIMIT_KIND: the limit codex_review found codex stopped on, usage or rate (codex_limit), for the
-# lines codex_fallback, fallback_skip and fallback_brief print; empty until it finds one.
+# CODEX_RECONNECT_RE: codex's line as it retries a connection ("ERROR: Reconnecting... 2/5"), and
+# CODEX_STREAM_RE its line when a response stream broke off ("stream disconnected before completion: ...",
+# codex-rs/protocol/src/error.rs). Both from the start of the line, so a diff that quotes them is no match.
+CODEX_RECONNECT_RE="^(ERROR: |■ )?Reconnecting[.][.][.]"
+CODEX_STREAM_RE="^(ERROR: |■ )?stream disconnected before completion"
+# CODEX_RECONNECTS: how many reconnect lines in a row, with no other output after them, make codex unreachable.
+CODEX_RECONNECTS=3
+# CODEX_LIMIT_KIND: what codex_review found stopped codex, for the lines codex_fallback, fallback_skip and
+# fallback_brief print: usage or rate (codex_limit's limits), unreachable, or timeout; empty until it finds one.
 CODEX_LIMIT_KIND=""
 # CODEX_TAIL_LINES: how many of a failed codex's last lines codex_keep_tail keeps.
 CODEX_TAIL_LINES=20
 
 # codex_limit <log> — usage or rate when the last 5 lines of codex's output <log> hold codex's own
-# usage-limit or rate-limit line; nothing otherwise.
+# usage-limit or rate-limit line; unreachable when its output ends unreachable (codex_unreachable);
+# nothing otherwise.
 codex_limit() {
   local last
   last="$(tail -n 5 "$1")"
   if grep -Eq "${CODEX_LIMIT_RE}" <<< "${last}"; then echo usage   # loose-match: ok CODEX_LIMIT_RE is a regex
   elif grep -Eq "${CODEX_RATE_LIMIT_RE}" <<< "${last}"; then echo rate   # loose-match: ok CODEX_RATE_LIMIT_RE is a regex
+  elif codex_unreachable "$1"; then echo unreachable
   fi
 }
+
+# codex_unreachable <log> — true when codex's output <log> ends, blank lines aside, in CODEX_RECONNECTS or
+# more CODEX_RECONNECT_RE lines in a row, or in a CODEX_STREAM_RE line: codex could not reach its
+# provider, and has printed nothing of a review since. A missing log is not unreachable.
+codex_unreachable() {
+  [[ -f "$1" ]] || return 1
+  tail -n 50 "$1" | awk -v r="${CODEX_RECONNECT_RE}" -v s="${CODEX_STREAM_RE}" -v k="${CODEX_RECONNECTS}" '
+    NF { n = ($0 ~ r) ? n + 1 : 0; last = $0 }
+    END { exit !(n >= k || last ~ s) }'
+}
+
+# codex_why — what stopped codex (CODEX_LIMIT_KIND) as the fallback's line names it: usage limit, rate
+# limit, unreachable or timeout.
+codex_why() { case "${CODEX_LIMIT_KIND}" in usage | rate) echo "${CODEX_LIMIT_KIND} limit" ;; *) echo "${CODEX_LIMIT_KIND}" ;; esac; }
 
 # codex_keep_tail <base> <log> <codex's exit> — keep a failed codex's last CODEX_TAIL_LINES lines in
 # .swarm/codex/<SWARM_STORY, or base>.tail, under a line with the time and the exit, replacing the
@@ -1033,16 +1090,21 @@ codex_keep_tail() {
 # worth starting (SWARM_FALLBACK_MIN_SECONDS overrides it, for tests).
 FALLBACK_MIN_SECONDS="${SWARM_FALLBACK_MIN_SECONDS:-120}"
 
-# fallback_skip <codex's exit> <why> — codex was skipped after all: say which limit (CODEX_LIMIT_KIND)
-# and why, and exit as codex did.
-fallback_skip() { echo "codex skipped: ${CODEX_LIMIT_KIND} limit ($2)" >&2; exit "$1"; }
+# fallback_skip <codex's exit> <why> — codex was skipped after all: say what stopped it (codex_why; on the
+# timeout, "timed out after <N> min" as with no fallback) and why, and exit as codex did.
+fallback_skip() {
+  local what
+  what="$(codex_why)"; [[ "${CODEX_LIMIT_KIND}" != timeout ]] || what="timed out after ${CFG_codex_minutes} min"
+  echo "codex skipped: ${what} ($2)" >&2; exit "$1"
+}
 
 # codex_fallback <base> <prompt> <seconds left> <scratch file> <codex's exit> — codex hit its usage
-# or rate limit (CODEX_LIMIT_KIND) and fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that
-# model) in the cwd with codex's prompt, wait what is left of codex's time (<seconds left>, its start
-# bounded by it and counted against it) for its
+# or rate limit, was unreachable or timed out (CODEX_LIMIT_KIND), and fallback_reviewer names a model: say
+# so on stderr with the time it has, start fallback-<story> (role review-fallback, on that
+# model) in the cwd with codex's prompt, wait <seconds left> (what is left of codex's time, or a whole
+# codex_minutes after a timeout; its start bounded by it and counted against it) for its
 # findings file (.swarm/reviews/fallback/<story>.md) as `wait review-<slug>` does, print it in codex's
-# place under the line the PR body takes (naming the limit), and close the agent, findings or not; an interrupt closes
+# place under the line the PR body takes (naming what stopped codex, codex_why), and close the agent, findings or not; an interrupt closes
 # it too. Every other way out is fallback_skip: outside herdr, under FALLBACK_MIN_SECONDS left, its
 # 32-character name held by another story's fallback or by a fallback still reviewing, a brief it
 # could not write, a start that failed,
@@ -1062,6 +1124,7 @@ codex_fallback() {
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
   [[ ! -s "${err}" ]] || cat "${err}" >&2   # a brief written with a warning (project_rules: no rules.md)
+  echo "codex $(codex_why): fallback ${CFG_fallback_reviewer} reviews in its place, within ${left} s" >&2
   # A tab of its own, fallback-<story>: a usage or rate limit hits every builder at once, and fallbacks
   # sharing one tab record would race on it.
   (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
@@ -1093,7 +1156,7 @@ codex_fallback() {
   trap "fallback_close ${full}; exit 143" TERM HUP
   fallback_close "${full}"
   [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
-  echo "reviewed by fallback ${CFG_fallback_reviewer}: codex ${CODEX_LIMIT_KIND} limit"
+  echo "reviewed by fallback ${CFG_fallback_reviewer}: codex $(codex_why)"
   cat "${out}"
 }
 
@@ -1130,9 +1193,14 @@ fallback_close() {
 # then project_rules, as the review agent's brief carries them.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
-  local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
+  local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.' cause
+  case "${CODEX_LIMIT_KIND}" in
+    unreachable) cause="codex could not reach its model provider" ;;
+    timeout) cause="codex timed out after ${CFG_codex_minutes} min" ;;
+    *) cause="codex hit its ${CODEX_LIMIT_KIND} limit" ;;
+  esac
   cat <<EOF
-codex hit its ${CODEX_LIMIT_KIND} limit, so you review in its place. You are read-only: never edit, commit or push
+${cause}, so you review in its place. You are read-only: never edit, commit or push
 here, and never merge, by any route. The one file you write is $3.
 
 ${2:-${diff}}
