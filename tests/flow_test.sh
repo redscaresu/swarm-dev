@@ -176,7 +176,9 @@ done
 # (#15, epic e12) is a hand fix whose diff against the base alone fails, by a git stub. m16 (#16, epic e13)
 # conflicts on docs/reference-logs.md and m17 (#17, epic e13) on a code file, g. m18 (#18, epic e14) merged
 # main in twice, in conflict on reference docs both times: on docs/reference.md and docs/reference-logs.md
-# the first time, on docs/reference-logs.md alone the second.
+# the first time, on docs/reference-logs.md alone the second. m19 (#19, epic e15) conflicts on docs/reference.md
+# alone, and m20 (#20, epic e15) on templates/docs/reference.md, a path that holds the pattern but is no
+# top-level reference doc.
 S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
 g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g2() { git -C "${dir}/s2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
@@ -206,15 +208,17 @@ g branch -f story/m14 "$(printf 'tree %s\nparent %s\nparent %s\nauthor t <t@t> 0
 g checkout -qb story/m15 story/m2^1; g merge -q --no-ff --no-commit main > /dev/null 2>&1; echo 15 > "${S}/fifteen"; g add fifteen
 g commit -qm "Merge branch 'main' into story/m15"
 side() { # <branch> <from> <text> <path>...: a new branch from <from> whose one commit writes text to each path
-  g checkout -qb "$1" "$2"; mkdir -p "${S}/docs"; local p; for p in "${@:4}"; do echo "$3" > "${S}/${p}"; done; g add -- "${@:4}"; g commit -qm "$1"
+  g checkout -qb "$1" "$2"; local p; for p in "${@:4}"; do mkdir -p "$(dirname "${S}/${p}")"; echo "$3" > "${S}/${p}"; done; g add -- "${@:4}"; g commit -qm "$1"
 }
 mergein() { # <story branch> <ours> <base>: point the branch at a commit that merges base into ours, with ours' tree
   g branch -f "$1" "$(g commit-tree "$2^{tree}" -p "$2" -p "$3" -m "Merge branch 'main' into $1")"
 }
 side s16 main ours docs/reference-logs.md; side b16 main base docs/reference-logs.md; side s17 main ours g; side b17 main base g
 side s18 main ours docs/reference.md docs/reference-logs.md; side b18 main base docs/reference.md docs/reference-logs.md
-side b18b b18 again docs/reference-logs.md; g checkout -q story/m9
+side b18b b18 again docs/reference-logs.md; side s19 main ours docs/reference.md; side b19 main base docs/reference.md
+side s20 main ours templates/docs/reference.md; side b20 main base templates/docs/reference.md; g checkout -q story/m9
 mergein story/m16 s16 b16; mergein story/m17 s17 b17; mergein story/m18 s18 b18; mergein story/m18 story/m18 b18b
+mergein story/m19 s19 b19; mergein story/m20 s20 b20
 for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: s2\n---\n' > "${S}/docs/stories/m7.md"
 printf -- '---\nkind: code\nstatus: ready\nepic: e11\nrepo: s2\n---\n' > "${S}/docs/stories/m12.md"
@@ -222,12 +226,13 @@ printf -- '---\nkind: code\nstatus: ready\nepic: e10\n---\n' > "${S}/docs/storie
 for n in 14 15; do printf -- '---\nkind: code\nstatus: ready\nepic: e12\n---\n' > "${S}/docs/stories/m${n}.md"; done
 for n in 16 17; do printf -- '---\nkind: code\nstatus: ready\nepic: e13\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e14\n---\n' > "${S}/docs/stories/m18.md"
-printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 > "${S}/.swarm/agents.tsv"
+for n in 19 20; do printf -- '---\nkind: code\nstatus: ready\nepic: e15\n---\n' > "${S}/docs/stories/m${n}.md"; done
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 > "${S}/.swarm/agents.tsv"
 commits() { # <PR> <git function> <merge-in>: gh api's commits of the PR, its merge-in's parent and then its merge-in, whose message has a body
   printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
     "$("$2" rev-parse "$3^1")" "$("$2" rev-parse "$3")" "$("$2" log -1 --format=%s "$3")" > "${dir}/sbin/$1"
 }
-for n in 1 2 3 5 9 10 14 15 16 17; do commits "${n}" g "story/m${n}"; done
+for n in 1 2 3 5 9 10 14 15 16 17 19 20; do commits "${n}" g "story/m${n}"; done
 printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s"}},{"sha":"%s","commit":{"message":"%s"}}]]' "$(g rev-parse s18)" \
   "$(g rev-parse story/m18^1)" "$(g log -1 --format=%s story/m18^1)" "$(g rev-parse story/m18)" "$(g log -1 --format=%s story/m18)" > "${dir}/sbin/18"
 commits 6 g2 story/m6; commits 7 g2 story/m7; cp "${dir}/sbin/2" "${dir}/sbin/13"
@@ -308,6 +313,15 @@ neither\t0\t0\t-
 unread\t0\t0\t-
 file\tconflicts
 docs/reference-logs.md\t2'
+check "merge_ins: a conflict on docs/reference.md alone counts under reference_docs; one on templates/docs/reference.md, which only holds the pattern, does not" \
+  "$(mi --since 2026-10-01 --epic e15)" $'cause\tmerge_ins\tprs\treference_docs
+conflict\t2\t2\t1
+behind\t0\t0\t-
+neither\t0\t0\t-
+unread\t0\t0\t-
+file\tconflicts
+docs/reference.md\t1
+templates/docs/reference.md\t1'
 
 # ci_health's flaky tests: a fifth project, its origin o/r, its PRs #1 (t1, epic e1) and #2 (t2). gh
 # lists 11 of the 12 runs of o/r created 10-01 to 10-03. Run 11 was red on both attempts (e_test.sh)
