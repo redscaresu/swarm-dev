@@ -5114,8 +5114,10 @@ upgrade_held_why() {
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
 
-# upgrade_end <want> <version> — at the end of the wait: each conductor marked ready is read again (it
-# may have gone busy since), each builder still waiting is left, then each conductor idle with its
+# upgrade_end <want> <version> — at the end of the wait: each conductor asked for its handover is read
+# again: one marked ready may have gone busy since, and one whose session is gone is done with
+# (upgrade_conductor_gone: skipped as closed once its handover is in, else left), so it holds no
+# builder and is told nothing. Each builder still waiting is left, then each conductor idle with its
 # handover in is moved (upgrade_conductor); one whose handover is not, or that
 # stayed busy after it, is told to carry on as before, by prompt once it is idle (UPGRADE_GRACE_MS
 # more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
@@ -5129,9 +5131,14 @@ upgrade_end() {
   else echo "herdr's agent list could not be read during the run, so no agent was moved" >> "${UPGRADE_DIR}/summary"; list=""; fi
   UPGRADE_HERDR=""   # each state read from here on asks herdr afresh: the end may wait minutes
   while IFS=$'\t' read -r name pane role cur; do
-    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" ]] || continue
-    [[ "$(upgrade_state "${name}" "${pane}" </dev/null)" == idle ]] || rm -f "${UPGRADE_DIR}/ready-${name}"
+    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
+    case "$(upgrade_state "${name}" "${pane}" </dev/null)" in
+      idle) ;;
+      gone) upgrade_conductor_gone "${name}" ;;
+      *) rm -f "${UPGRADE_DIR}/ready-${name}" ;;
+    esac
   done <<< "${list}"
+  list="$(upgrade_open <<< "${list}")"   # less a conductor that went: it holds no builder, and is told nothing
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
@@ -5332,14 +5339,20 @@ upgrade_ask() {
   : > "$(upgrade_paused "$1")" || true
   st="$(upgrade_state "$1" "$2")"
   case "${st}" in
-    gone) rm -f "$(upgrade_paused "$1")" "${d}/ready-$1"
-          if [[ -s "$(cat "${d}/hand-$1")" ]]; then upgrade_closed "$1"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
-          return 0 ;;
+    gone) upgrade_conductor_gone "$1"; return 0 ;;
     idle) if [[ -s "$(cat "${d}/hand-$1")" ]]; then : > "${d}/ready-$1"; return 0; fi
           [[ "$(cat "${d}/asked-$1")" != note ]] || upgrade_request "$1" "$2" "$4" || true ;;
   esac
   rm -f "${d}/ready-$1"
   return 1
+}
+
+# upgrade_conductor_gone <conductor> — the asked conductor's Claude session is gone: its pause and
+# ready markers go, and it is skipped as closed (upgrade_closed) once its handover is written, else
+# left, as one that wrote none.
+upgrade_conductor_gone() {
+  rm -f "$(upgrade_paused "$1")" "${UPGRADE_DIR}/ready-$1"
+  if [[ -s "$(cat "${UPGRADE_DIR}/hand-$1")" ]]; then upgrade_closed "$1"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
 }
 
 # upgrade_request <conductor> <pane> <version> — mark it paused (upgrade_paused), then ask it

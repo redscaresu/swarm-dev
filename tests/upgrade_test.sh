@@ -431,6 +431,40 @@ rm -f "${H}/onstart-b2"
 check "a conductor gone after its handover is skipped as closed, not left, and no longer holds its builder" "0|1|0|1|upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(grep -c '^conduct-e: ' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(tail -1 "${H}/out")"
 
+# --- A conductor with its handover in whose session goes just before the end of the wait is skipped
+# as closed there too: never told to give up, not left. onlist takes sc away at the first read of
+# herdr's list that follows another with no Claude Code read between: the end's own state read (a
+# round reads herdr's list once, and every state read in it uses that copy).
+cat > "${H}/onlist" <<EOF
+#!/bin/sh
+if [ "\$(tail -2 "${LOG}" | grep -c '^agent list')" = 2 ]; then sed -i.bak 's/{"sessionId":"sc","status":"[a-z]*"},//' "${H}/claude.json"; touch "${H}/took-sc"
+else touch "${H}/armed"; fi
+EOF
+chmod +x "${H}/onlist"
+# Still marked ready at the end (b1, busy, holds it): its ready marker goes and it is skipped, so it
+# holds b1 no more and b1 is left only for being busy.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"busy"},{"sessionId":"s2","status":"idle"},{"sessionId":"s4","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2" "${H}/took-sc"
+echo 1 > "${H}/arm"
+WAIT_MS=300 upgrade e
+check "a ready conductor gone at the end is skipped as closed, never told to give up, not left" "yes|1|0|0|yes|upgrade done: 1 moved, 1 left (exit 1)" \
+  "$([[ -e "${H}/took-sc" ]] && echo yes || echo no)|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(grep -c '^conduct-e: ' "${H}/out")|$(calls 'agent prompt w:c' | grep -c 'gave up waiting')|$(has 'b1: left on 0.21.0: still busy at the end of the wait' "$(cat "${H}/out")")|$(tail -1 "${H}/out")"
+# Busy after its handover (b2's start makes it so, and it stays busy), then gone at the end: the run
+# moves both builders and succeeds.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"idle"},{"sessionId":"s2","status":"idle"},{"sessionId":"s4","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/took-sc"
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak 's/"sc","status":"idle"/"sc","status":"busy"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2"
+echo 1 > "${H}/arm"
+WAIT_MS=2000 upgrade e
+rm -f "${H}/onstart-b2" "${H}/onlist" "${H}/arm" "${H}/armed"
+check "a busy conductor gone at the end after its handover is skipped as closed, and the run succeeds" "yes|0|1|0|0|no|upgrade done: 2 moved, 0 left (exit 0)" \
+  "$([[ -e "${H}/took-sc" ]] && echo yes || echo no)|${rc}|$(grep -cx 'skipped (closed): conduct-e' "${H}/out")|$(grep -c '^conduct-e: ' "${H}/out")|$(calls 'agent prompt w:c' | grep -c 'gave up waiting')|$(grep -qs 'gave up waiting' "${P}/.swarm/inbox/conduct-e.md" && echo yes || echo no)|$(tail -1 "${H}/out")"
+rm -f "${H}/took-sc"
+
 # --- An idle conductor that writes no handover by the end of the wait is told to carry on by prompt.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle idle idle; touch "${H}/nohandover"
 WAIT_MS=300 upgrade e
