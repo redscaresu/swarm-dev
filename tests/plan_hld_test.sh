@@ -4,7 +4,8 @@
 # codex, critic) in tab plan-$1 writing to .swarm/$1/, the epics grant read before the ask, epics
 # carrying hld: $1, the HLD's planned: and ## Epics in one board PR, and the cleanup after its merge.
 # It also pins commands/swarm.md's plan-hld and hld steps, and that the HLD skeleton holds no planned:.
-# Run on other copies with `bash tests/plan_hld_test.sh <plan-hld.md> <swarm.md> <hld README.md> <hld.md>`.
+# Run on other copies with `bash tests/plan_hld_test.sh <plan-hld.md> <swarm.md> <hld README.md> <hld.md>
+# <reference.md>`; with no <reference.md> it reads every docs/reference*.md.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -19,6 +20,7 @@ F="${1:-$ROOT/commands/plan-hld.md}"
 S="${2:-$ROOT/commands/swarm.md}"
 T="${3:-$ROOT/templates/docs/hld/README.md}"
 H="${4:-$ROOT/commands/hld.md}"
+if [ -n "${5:-}" ]; then M=("$5"); else M=("$ROOT"/docs/reference*.md); fi
 fails=0
 # Each file with line breaks folded to spaces, so a wrapped phrase still matches.
 flat=$(tr '\n' ' ' < "$F" | tr -s ' ')
@@ -58,6 +60,14 @@ has three-surveys 'role `survey`, three in parallel'
 has one-hld-lead 'one `hld-lead`, role `hld-lead`'
 has skeptic-cap 'role `skeptic` \(capped at five'
 has codex 'one `codex`, role `codex`'
+# Each planning agent's pane closes once its answer is read, never on a lone .partial (that agent may
+# be started again from it), and a pane still working stays open and is named in the report.
+has close-once-read 'Once you have read an agent.s `<project>/\.swarm/\$1/<name>\.json`, run `swarm\.sh close <name>` for it'
+has close-never-partial 'Never close an agent while only its `\.partial` exists: that run is unfinished, and the agent may be started again from it'
+has close-working-named 'A pane still working is left open, and your report names it'
+# The reference section runs to the next ## or the end of whichever file holds it.
+m=$(awk 'FNR==1{on=0} /^## Decomposing an HLD/{on=1;next} /^## /{on=0} on' "${M[@]}" | tr '\n' ' ' | tr -s ' ')
+has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its JSON has been read, never while only its `\.partial` exists\. A pane still working is left open, and the report names it' "$m"
 has critic 'one `critic`, role `critic`'
 has agent-tab 'swarm\.sh agent plan-\$1 <name> "<project>" <role>'
 has agents-in-project 'start each agent in `<project>`, as `/plan-epic` does, so its one write lands inside its working directory'
