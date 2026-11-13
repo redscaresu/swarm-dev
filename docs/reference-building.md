@@ -786,8 +786,8 @@ as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment. After a 
 for the builder, then for green on the head the builder pushed. The green step runs once per round,
 on the first head and then on the head the builder pushes after each findings `tell`, and each run is
 bounded: at most two nudges, and at most two heads `wait-pr` calls red. Before any findings or wording nudge went to the builder, when
-a green head is not the one the agent was started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
-again once `watch` reports the new head's checks finished. When the builder goes idle without pushing, `wait-pr` ends the same way twice,
+a green head is not the one the agent was started on, the agent follows it in the same session (below, under a moved head).
+When the builder goes idle without pushing, `wait-pr` ends the same way twice,
 or the bound is reached, it writes a not-green file, which ends the green step: a round file
 (`.swarm/reviews/<slug>.round.md`, below) whose
 `head:` line is the head `wait-pr` waited on last and whose `## Findings` has one item,
@@ -801,7 +801,7 @@ failed after closing the builder ends the agent with that `step-up failed:` line
 finding; the line itself says to leave the story alone, as `wait --lead` tells the lead, whose exit
 is `step-up --resume`. Before it reads the diff, each round, it runs `swarm.sh dropped-lines
 <owner/repo> <n> <head> <base>` in the background on the round's head: the head its brief names on
-round 1, and from round 2 the command `review-agent --next` prints, on the head that round pins. A
+round 1, and from round 2, or on a moved head it follows, the command `review-agent --next` prints, on the head that round pins. A
 run that is killed, or that exits with anything but 0 or 1, counts as exit 2. On exit 1, each line
 it printed is a base line one of the PR's own merges dropped. The check reads each merge and never
 the head, so it prints a line again after the builder has put it back. The agent counts the
@@ -858,11 +858,13 @@ unless the push added only git's own clean merges of the base. `review --head` a
 own CI green, since the agent waited for green on the head it reviewed. It then puts the story in
 review on that head, logs `base-accepted <slug> <new head> from <reviewed head>` and prints an
 `accepted:` line. `merge --head` merges it. Neither needs a new review
-([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On
-either refusal the agent writes `head moved:`, sends its conductor a stop note naming that line (below), and
-stops. The conductor starts a new review agent on the new head on that note (the lead does when no
-conductor runs). When it was `merge` that refused, the story
-is already in review on a head nobody reviewed, and the agent's reply says so first. `review --head`
+([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). When
+`review --head` refuses, the story is not in review yet, and the agent follows the new head in the
+same session (below, under a moved head); `review-agent --next` moves its pass of the old head aside.
+When `merge --head` refuses, `review` has already put the story in review on a head nobody reviewed.
+The agent writes `head moved:`, sends its conductor a stop note naming that line (below), and stops,
+and its reply says first that the story is in review on an unreviewed head. The conductor starts a
+new review agent on the new head on that note (the lead does when no conductor runs). `review --head`
 also refuses while the story has a PR the agent did not review, on its `prs:` line or open from its
 branch `story/<slug>`, so a story with two PRs never finishes with one of them still open. When the base gained code since the head's CI ran,
 `merge` merges the base in, waits for the new head's CI and merges that head itself (§ Merging,
@@ -929,11 +931,19 @@ How each kind of stop reaches an owner:
 
 - A moved head. A builder can push while the old review agent is still in its session (mid-round,
   or after a pass while `swarm.sh merge` runs). `watch` prints `checks finished` for that head once,
-  and `review-agent` refuses the conductor's start then. So every stop on a moved head (`head moved:`,
-  in the green step, after the review, or from `review` or `merge`) also sends the conductor the stop
-  note, its why that `head moved:` line, and the conductor starts the review agent again on it. A
-  `head moved: stepped up:` stop sends none: the head is the same, and the new builder's push gets
-  its review from `watch`. When
+  and `review-agent` refuses the conductor's start then. So the agent follows the new head in the
+  same session at three points: in the green step, when the builder
+  pushed past the start head before any findings went out; at the review's end, when the worktree
+  moved; and on `review --head`'s refusal. It writes no review file for the old head, runs the green
+  step on the new head (`wait-pr --head <that head>`), then `swarm.sh review-agent --next <slug>
+  <PR URL>`, and does the round that prints: the same round on the new head, with its dropped-lines
+  check and codex again. When `--next` refuses because the worktree is not at the PR's head or has
+  uncommitted changes, the builder is still at work: the agent waits for it and follows again. A
+  second such refusal on the same head ends the agent with `head moved:` and a stop note. Besides
+  that one, only `merge`'s moved-head refusal and a step-up still end the agent with `head moved:`.
+  The merge one sends the conductor the stop note, its why that `head moved:` line, and the
+  conductor starts the review agent again on it. A `head moved: stepped up:` stop sends none: the
+  head is the same, and the new builder's push gets its review from `watch`. When
   `review-agent` refuses because `review-<slug>` is still working (it is ending the turn that sent the
   note), the conductor starts it again once `swarm.sh wait review-<slug>` returns, the one wait on a
   review agent it runs.

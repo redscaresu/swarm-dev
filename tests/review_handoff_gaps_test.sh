@@ -72,14 +72,15 @@ lib() {
 
 # --- 1. A stop on a moved head sends the conductor a stop note, which starts a new review.
 brief="$(flat "$(lib 'review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 1')")"
-check "1 the brief sends the stop note on every moved-head stop" yes \
-  "$(has 'A stop on a moved head, wherever this brief or `review-agent --next` has you write '"${F}"' with a `head moved:` line, sends the conductor the same stop note' "${brief}")"
+check "1 the brief sends the stop note on every moved-head stop it still has" yes \
+  "$(has 'A stop on a moved head, wherever this brief has you write '"${F}"' with a `head moved:` line, sends the conductor the same stop note' "${brief}")"
 lbrief="$(flat "$(lib 'CFG_escalate_ladder=sonnet,opus; review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 1')")"
 check "1 with the ladder on, a stepped up: stop, whose head did not move, sends no stop note" yes \
   "$(has 'line, unless that line names a `stepped up:` build, whose head has not moved' "${lbrief}")"
 check "1 with the ladder off, the brief names no step-up" no "$(has 'stepped up' "${brief}")"
-check "1 the pass step's moved head sends the stop note before it stops" yes \
-  "$(has 'then send the conductor the stop note, as below, naming that `head moved:` line, and stop' "${brief}")"
+# merge's refusal comes once review put the story in review, so it is no head to follow in the session.
+check "1 merge's moved-head refusal in the pass step writes head moved: and sends the stop note before it stops" yes \
+  "$(has 'holding two lines, `head: '"${HB}"'` and `head moved: <the head merge named>`, then send the conductor the stop note, as below, naming that `head moved:` line, and stop' "${brief}")"
 check "1 the stop note goes to s1's epic conductor" yes "$(has 'tell conduct-e note '"${F%.md}"'.stop.md`' "${brief}")"
 rule="$(flat "$(lib review_rule)")"
 check "1 the conductor starts a new review on a head moved: note" yes \

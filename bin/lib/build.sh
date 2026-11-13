@@ -1038,7 +1038,7 @@ review_next() {
   lead="Review round ${round} of story ${slug}:"
   [[ -z "${REVIEW_FROM}" ]] \
     || lead="Review round ${round} of story ${slug} again: ${pr}'s head moved from ${REVIEW_FROM} to ${REVIEW_HEAD} with no findings sent since this round started, so the round stays ${round};"
-  echo "${lead} review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  echo "${lead} review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line. If the worktree moved, write neither: follow the new head as your brief says, with the green step on it, then review-agent --next again."
   review_round_line "${round}" "${pr}"
   echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` in the background and act on its exit as your brief's dropped-lines check says."
 }
@@ -1415,15 +1415,24 @@ story_conductor() {
   group_conductor "$(note_group "$1" "${e:--}")"
 }
 
+# follow_moved <slug> <PR URL> <swarm.sh> — how the review brief follows a PR head that moved under the
+# round it is in (review_brief's three moved-head sites): the green step on the new head, then
+# review-agent --next (review_next), which runs the same round on it, in the same session.
+follow_moved() {
+  printf '%s' "run the green step above on the new head, waiting with \`$3 wait-pr --head <that head, from git rev-parse HEAD> $2\`, then run \`$3 review-agent --next $1 $2\` and do the round it prints in this session, as following a moved head says above"
+}
+
 # review_handoff <slug> <PR URL> <findings file> <head> <swarm.sh> — the review brief's pass step. A round
 # with nothing to fix writes its review file first: a wait on the agent ends on it, and once the PR
 # merges, the merge's reconcile, run from this pane, retires the agent and removes its worktree, so a
 # file written after would never come. Then it puts the story in review pinned to <head>, the head it
 # reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
 # swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
-# checks the PR is still at it; otherwise the review is the handoff to the user. A moved head
-# turns the file into a head moved: one and sends the conductor (story_conductor) a stop note naming it,
-# on which it starts a new agent on the new head. A base merged in whose CI goes red or conflicts (base merged,
+# checks the PR is still at it; otherwise the review is the handoff to the user. A head review refuses
+# as moved is followed in the same session (follow_moved), --next moving the pass aside. A head merge
+# refuses as moved (the story already in review) turns the file into a head moved: one and sends the
+# conductor (story_conductor) a stop note naming it, on which it starts a new agent on the new head.
+# A base merged in whose CI goes red or conflicts (base merged,
 # red: or conflict:), or a moved base merge refuses on, has the agent nudge the builder (pull the branch
 # first) and stop; its push is a new head, which the conductor gives a new agent the same way. Any other
 # refusal or failure (a dequeue, an unconfirmed merge, a red or timed-out base after it) sends the
@@ -1444,13 +1453,15 @@ A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line.
 ${3} first: a wait on you ends on it, and once the PR merges, the merge's reconcile retires you
 and removes this worktree, so a file written after would never come. Then hand the PR on: run
 \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
-When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
-head has had no review, and you do not review it in this session. Write ${3} again with the Write tool,
+When review refuses because the PR's head is no longer $4 (a push since your review), that head has
+had no review, and the story is not in review: write no review file for it, and
+$(follow_moved "$1" "$2" "$5"). --next moves your pass of $4 aside, so it is never read as one.
+When merge refuses because the PR's head is no longer $4, review had already put the story in
+review, and you do not review that head in this session. Write ${3} again with the Write tool,
 holding two lines, \`head: $4\` and
-\`head moved: <the head review or merge named>\`, then send the conductor the stop note, as below,
+\`head moved: <the head merge named>\`, then send the conductor the stop note, as below,
 naming that \`head moved:\` line, and stop: the conductor starts a new review agent on the new head on
-that note (the lead does when no conductor runs). When it was merge that refused,
-review had already put the story in review: your reply's first line says \`$1 is in review on
+that note (the lead does when no conductor runs). Your reply's first line says \`$1 is in review on
 <the new head>, which nobody reviewed\`.
 When merge prints \`base merged: <PR URL> is now ...\`, GitHub merged the base into the PR's branch:
 that head needs no new review, and merge goes on to wait for its CI and merge it, so leave it running
@@ -1467,7 +1478,7 @@ in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> ag
 merge the base in and nothing is known to conflict: nudge nobody, and run \`$5 merge --head <sha> $2\`,
 with the <sha> it names, once more, in the background as before. A second such refusal is one of the
 other refusals below. A \`base merged, head moved:\` refusal is a moved
-head, as above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
+head, as for merge's above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the
 conductor the stop note, as for any other refusal below, naming that line, so it closes the builder.
 Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
@@ -1502,7 +1513,11 @@ EOF
 # refusal naming --next counts the round (review_rounds), and --next runs the full round. A stop before a
 # pass (a wait that ends other than idle, a refused tell, no fix pushed) writes <findings file> with head:
 # and stopped: lines and no ## Findings: no pass. Each stop, and each stop on a moved head (head moved:),
-# sends the story's conductor (story_conductor) a stop note.
+# sends the story's conductor (story_conductor) a stop note. A head that moves under a round (pushed past
+# the start head before any findings, a worktree moved by the review's end, or review --head's refusal)
+# is followed instead (follow_moved): the green step on it, then review-agent --next, in the same
+# session; --next refused twice on one head for the worktree ends it with a head moved: stop. Only
+# merge's moved-head refusal, a step-up and that stop still write head moved:.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
@@ -1597,10 +1612,19 @@ head>: <the stopped: line's why>\`, and run \`${sw} tell ${cond} note ${stop}\`.
 and stop: with no \`## Findings\` heading it is no pass, and the conductor takes the story from there.
 When that tell fails (no conductor runs for the story), your reply's first line says so: the lead
 takes it.
-A stop on a moved head, wherever this brief or \`review-agent --next\` has you write ${4} with a
+A stop on a moved head, wherever this brief has you write ${4} with a
 \`head moved:\` line, sends the conductor the same stop note once ${4} is written, its why that
 \`head moved:\` line${stepnote}: watch's \`checks finished\` line for the new head may have come while you were
 still in this session, when the conductor's start was refused, so the note is what starts its review.
+A head that moves under a round you are in is followed in this session instead, at each place this
+brief says to follow it. To follow a moved head, write no review file for the head you were on, run the
+green step below on the new head, then \`review-agent --next\`, which prints this round again on
+the new head (or the next round, when findings went out since), and do that round: its dropped-lines
+check and codex again, then triage. When --next refuses because the worktree is not at the PR's
+head or has uncommitted changes, the builder is still at work: wait for it as above, then follow
+again from the green step. A second such refusal on the same head ends the follow: write ${4} with
+the Write tool holding two lines, \`head: <the head you were on>\` and \`head moved: <that refusal
+line>\`, then stop. When --next refuses any other way, stop with what it printed, as above.
 
 Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
 background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
@@ -1636,8 +1660,8 @@ conflict, or what wait-pr printed last>\`, then a \`## Handled by the review age
 \`none\`. Its one finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
 to fix. Once a head is green and
 triaged with nothing to nudge, review it as below when it is $5. When the builder pushed past $5
-before any findings or wording nudge went to it, write ${4} with the Write tool holding two lines,
-\`head: $5\` and \`head moved: <the green head>\`, then stop; once findings went to it, run
+before any findings or wording nudge went to it, that head has had no review:
+$(follow_moved "$1" "$2" "${sw}"); once findings went to it, run
 \`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\`
 first, as below.
 
@@ -1657,8 +1681,9 @@ its findings as codex's, under that line, and log each with \`--reviewer fallbac
 $(review_checklist "${story}")
 
 When the review is done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
-prints nothing. If not, the worktree moved under you: write ${4} with the Write tool holding two
-lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
+prints nothing. If not, the worktree moved under you, so this review is of a head the PR no longer
+has: drop its findings, wait for the builder as above, and
+$(follow_moved "$1" "$2" "${sw}").
 
 Otherwise, fix or decline each finding. ${fix} Decline the rest, each with its reason: nit for a nit, an edge case or a
 low-value point, wrong for a mistaken one, out-of-scope for a point only a change to a file outside
