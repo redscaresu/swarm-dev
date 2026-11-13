@@ -157,6 +157,10 @@ check "the load rule names the leftover cleanup, the labelled container cleanup,
   "$(has "Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=f1)\`)" "${brief}")|$(has "Name and label every container (\`--name f1-load-<n> --label swarm=f1\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name" "${brief}")|$(has "Never start load with run_in_background" "${brief}")|$(has "Cap your test runner's parallelism at 4 (its jobs or workers setting) too" "${brief}")|$(has "make test JOBS=4" "${brief}" | grep -q '^yes' && echo "project flag in brief" || echo yes)|$(has "no longer than the check and you kill it when the check ends" "${brief}")|$(has "or wrap each in \`timeout <seconds>\`" "${brief}")|$(has "\`docker ps --filter label=swarm=f1\`" "${brief}")"
 check "a builder re-reads, before it pushes, the comments and docs naming what its diff changes, and fixes the stale ones" "yes" \
   "$(has "Before you push, for each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it, and fix each one that no longer matches." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
+# If the brief drops the sentence, builders go back to merging the base in each time it moves, and
+# each merge-in reruns CI: this goes red.
+check "a builder merges the base in only on a conflict or a swarm.sh line, never because the base moved" "yes" \
+  "$(has "Merge origin/dev into your branch only when the PR is CONFLICTING or a swarm.sh line tells you to (a Stacked line, a merge refusal, a nudge); never because the base moved: \`swarm.sh merge\` brings the base in at merge time, and each merge-in reruns CI." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
 # f1's review brief: its checklist names the docs-move-with-behaviour line, with swarm-dev's env:
 # line as the example. The gh stub answers the PR's head with the worktree's while ${ROOT}/head
 # exists; it is removed after the check. The review-f1 agent in the herdr stub, its events and f1's

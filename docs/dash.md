@@ -20,7 +20,9 @@ about 30 seconds plus its own work, even when herdr or GitHub hangs. When the Gi
 short, dash keeps what they got; a PR they did not reach keeps the state from whichever run last
 read it, until a run reaches it again, and one no run has read shows as its URL. With `--project`
 each project's frame has 30 seconds of its own. `dash --check` reads everything in full, and so do
-the `status` and `next` it compares with.
+the `status` and `next` it compares with. Each frame also reads the board's story, epic and HLD
+files, and their board state, once at its start, so an edit made to them while a frame is drawn
+shows on the next frame.
 
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
@@ -89,7 +91,7 @@ is one column, top to bottom:
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
-  by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story, for any agent no test suite running in its pane and no background task its session waits on, each counting only while younger than 3 times `stall_minutes`,
+  by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story, for any agent no test suite running in its pane, whatever its age, and no background task its session waits on, which counts only while younger than 3 times `stall_minutes`,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
   pane, nudges, resumes, incidents, failed tells and `watch`'s and `wait-pr`'s `pr-opened` and
   `first-green` lines excepted), `agree` a draft epic, `staged epic

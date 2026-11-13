@@ -202,14 +202,19 @@ item stories/s-late.md "status: ready" "kind: code" "epic: e" "repo: svc" "env: 
 check "a story added after its conductor started, with a new env: name, is refused with the restart to run" "1|yes" \
   "$(set +e; o="$(as_agent conduct-e story s-late)"; echo "$?|$(has "the lead restarts it with \`swarm.sh conduct e\` so it picks the name up" "${o}")")"
 
-# --- A pane run that fails typed nothing: retried once, then the pane is closed and nothing is left.
+# --- A pane run that fails typed nothing: retried once in its pane. Two failures there close the pane,
+# and the start is tried once more in a fresh one; two in that one too stop it, and nothing is left.
 echo 1 > "${ROOT}/runfail"
 check "a pane run that fails once is retried, and the agent starts" "0|2" \
   "$(set +e; run agent t1 retry-one "${p}" conduct "${ROOT}/brief.md" >/dev/null; echo $?)|$(grep -c "^pane run $(pane_of retry-one) " "${ROOT}/herdr.log")"
 echo 2 > "${ROOT}/runfail"
 o="$(set +e; run agent t2 retry-two "${p}" conduct "${ROOT}/brief.md"; echo "rc=$?")"
-check "one that fails twice stops the start, closes its pane, and leaves no launch file" "yes|yes|yes|no|0" \
-  "$(has "rc=1" "${o}")|$(has "retry-two: the pane's shell did not take the agent's environment" "${o}")|$(has "pane close w:$(cat "${ROOT}/n")" "$(cat "${ROOT}/herdr.log")")|$([[ -e "${ROOT}/agent-env-retry-two" ]] && echo yes || echo no)|$(launch_left)"
+check "one that fails twice closes its pane, and the agent starts in a fresh one" "yes|yes|w:$(cat "${ROOT}/n")|yes|0" \
+  "$(has "rc=0" "${o}")|$(has "pane close w:$(( $(cat "${ROOT}/n") - 1 ))" "$(cat "${ROOT}/herdr.log")")|$(pane_of retry-two)|$(has "tried once more in a fresh pane" "${o}")|$(launch_left)"
+echo 4 > "${ROOT}/runfail"
+o="$(set +e; run agent t2b retry-four "${p}" conduct "${ROOT}/brief.md"; echo "rc=$?")"
+check "one that fails twice in each of two panes stops the start, closes both, and leaves no launch file" "yes|yes|yes|yes|no|0" \
+  "$(has "rc=1" "${o}")|$(has "retry-four: the pane's shell did not take the agent's environment" "$(tail -2 <<< "${o}")")|$(has "pane close w:$(( $(cat "${ROOT}/n") - 1 ))" "$(cat "${ROOT}/herdr.log")")|$(has "pane close w:$(cat "${ROOT}/n")" "$(cat "${ROOT}/herdr.log")")|$([[ -e "${ROOT}/agent-env-retry-four" ]] && echo yes || echo no)|$(launch_left)"
 
 # A board found only through SWARM_PROJECT (run from outside it): the agent keeps it, so its own
 # swarm.sh calls find the same project.

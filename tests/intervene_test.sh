@@ -35,7 +35,7 @@ lines() { if [[ -f "${EV}" ]]; then wc -l < "${EV}" | tr -d ' '; else echo 0; fi
 KINDS="$(sed -n 's/^INTERVENE_KINDS="\(.*\)"$/\1/p' "${REPO}/bin/swarm.sh")"
 check "swarm.sh names the two kinds" "${KINDS}" "lead-hand user-caught"
 CAUSES="$(sed -n 's/^INTERVENE_CAUSES="\(.*\)"$/\1/p' "${REPO}/bin/swarm.sh")"
-check "swarm.sh names the causes" "$(wc -w <<< "${CAUSES}" | tr -d ' ')" 20
+check "swarm.sh names the causes" "$(wc -w <<< "${CAUSES}" | tr -d ' ')" 21
 # outcome() and fields() of events.tsv's last line, read by bin/lib/events_outcome.py.
 last_line() { python3 -c 'import csv, sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e; row = list(csv.reader(open(sys.argv[2]), delimiter="\t"))[-1]; print(e.outcome(row)); print(" ".join("%s=%s" % kv for kv in sorted(e.fields(row).items())))' "${REPO}/bin/lib" "${EV}" | no_version; }
 
@@ -69,6 +69,14 @@ rc=0; out="$(sw intervene user-caught other "found by asking" 2>&1)" || rc=$?
 chmod u+w "${P}/.swarm" "${EV}"
 check "intervene fails when it cannot write events.tsv, and logs nothing" "${rc} $(lines)" "1 2"
 check "it says nothing was logged" "$(grep -c 'nothing was logged' <<< "${out}") $(grep -c '^logged:' <<< "${out}")" "1 0"
+
+# review-stopped: a review the lead started again by hand. In a project of its own, so the counts below stay.
+# Without review-stopped in INTERVENE_CAUSES, intervene refuses the cause and logs nothing.
+lines2() { if [[ -f "${P2}/.swarm/events.tsv" ]]; then wc -l < "${P2}/.swarm/events.tsv" | tr -d ' '; else echo 0; fi; }
+P2="${ROOT}/p2"; mkdir -p "${P2}/.swarm" "${P2}/docs/stories"; git -C "${P2}" init -q; touch "${P2}/docs/stories/README.md"
+(cd "${P2}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${REPO}/bin/swarm.sh" intervene lead-hand review-stopped "restarted a review that stopped on a moved head" >/dev/null 2>&1) || true
+check "intervene lead-hand review-stopped logs one incident with cause=review-stopped" \
+  "$(lines2) $(cut -f2,3 "${P2}/.swarm/events.tsv" 2>/dev/null) $(grep -c 'cause=review-stopped' "${P2}/.swarm/events.tsv" 2>/dev/null || true)" $'1 incident\t- 1'
 
 # The fixture: on top of those two, interventions 1, 3 and 6 days ago (two kinds), one 8 days ago that
 # the 7 days leave out, and other incidents that are not interventions. One pinned now (dash's
