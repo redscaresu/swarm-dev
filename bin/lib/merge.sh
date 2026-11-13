@@ -762,6 +762,15 @@ base_merged_from() {
     END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
+# base_accepted_from <slug> <sha> — the reviewed head review --head took <sha> in place of, as adding
+# to it only git's own clean merges of the base (mark_review's `base-accepted <slug> <sha> from <head>`,
+# read without its key=value tail), or nothing.
+base_accepted_from() {
+  awk -F'\t' -v t="$1" -v o="$2 from " "${EVENT_OUTCOME_AWK}"'
+    $2 == "base-accepted" && $3 == t { oc = outcome($5); if (index(oc, o) == 1) h = substr(oc, length(o) + 1) }
+    END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
 # only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
 # among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
@@ -2215,6 +2224,25 @@ report_read() {
   return "${rc}"
 }
 
+# report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads), next
+# (next_reads) and dash (dash_deadline) share, so every report names a cut read the same way. Each runs
+# its program through report_read with stdin from /dev/null, since within runs it in a process group of
+# its own, where a read of the terminal would stop it until the deadline (and a read inside a while-read
+# loop must not eat the loop's input). A read is named for the program and its first two words
+# (`herdr agent list`, `gh pr list`), claude for one (`claude agents`), and any gh api read `gh api`
+# alone: its path differs per call, and each would be named. Safe under set -u with fewer words. A caller
+# adds its own on top: status's git, next's answer to herdr agent list, whose other reads go on to
+# report_herdr. unset -f herdr gh claude removes them.
+# shellcheck disable=SC2329 # the readers status, next and dash run call these functions by name
+report_wrappers() {
+  herdr() { report_herdr "$@"; }
+  claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
+  gh() { if [[ "${1:-}" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh ${*:1:2}" gh "$@" </dev/null; fi; }
+}
+
+# report_herdr <args>... — herdr <args> through report_read, as report_wrappers' herdr runs it.
+report_herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
+
 # report_cuts — how many reads report_read has cut or skipped since report_start or the last
 # report_skipped, 0 outside a report: a count that changed between two calls means a read between
 # them was cut.
@@ -3329,8 +3357,26 @@ stacked_lines() {
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
 # to them the same way. A read cut there, or due after it, fails as it would on an error, and
 # report_skipped's line, printed last, names it.
+# status_time [<section>|total] — with SWARM_REPORT_TIMES=1 (for diagnosis, like SWARM_REPORT_SECONDS;
+# no config key), write `time: <section> <s.mmm>` to stderr: the seconds since the last mark, or with
+# total since the first, by now_ms, run_time_start's clock. No argument only sets the first mark. Any
+# other value, or none, reads no clock and prints nothing. status_report marks its sections in order:
+# no-agent, agents, stacked, waiting, next, idle, then total.
+STATUS_TIME_START=""; STATUS_TIME_AT=""
+status_time() {
+  [[ "${SWARM_REPORT_TIMES:-}" == 1 ]] || return 0
+  local now since
+  now="$(now_ms 2>/dev/null)" || return 0
+  if [[ -z "${1:-}" ]]; then STATUS_TIME_START="${now}"; STATUS_TIME_AT="${now}"; return 0; fi
+  [[ -n "${STATUS_TIME_AT}" ]] || return 0
+  if [[ "$1" == total ]]; then since="${STATUS_TIME_START}"; else since="${STATUS_TIME_AT}"; fi
+  STATUS_TIME_AT="${now}"
+  printf 'time: %s %d.%03d\n' "$1" $(((now - since) / 1000)) $(((now - since) % 1000)) >&2
+}
+
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent workspaces tabs
+  status_time
   report_start || die "status: cannot start the report deadline"
   trap report_cleanup EXIT
   status_reads
@@ -3352,6 +3398,7 @@ status_report() {
   # next_step, at the end, takes these lines rather than asking herdr and ps again.
   # shellcheck disable=SC2034 # next_step (board.sh) reads it
   NO_AGENT_SET=1
+  status_time no-agent
   if [[ -z "${agents}" ]]; then
     if [[ "${HERDR_ENV:-}" == 1 ]]; then echo "Agents: herdr gave no agent list, so their states are not available"
     else echo "Agents: not inside herdr, so their states are not available"; fi
@@ -3376,8 +3423,10 @@ status_report() {
       SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
+  status_time agents
   local stacked; stacked="$(stacked_lines)" || true
   [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
+  status_time stacked
   echo; echo "Waiting on you"
   waiting="$(waiting_on_user)"
   if [[ "${all}" != --all ]]; then
@@ -3387,21 +3436,24 @@ status_report() {
     [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
   fi
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  status_time waiting
   local nx; nx="$(next_lines)"
   echo; echo "Next"
   [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
+  status_time next
   # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
   # next would take goes with it, so the epic that step names gets no idle: line.
   idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  status_time idle
   local skipped; skipped="$(report_skipped)"
   [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
+  status_time total
 }
 
 # status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
-# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
-# these reads goes through report_read, named by its
-# command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
-# a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): herdr, gh
+# and claude are report_wrappers', and git's reads go through report_read too, named `git <subcommand>`,
+# with stdin from /dev/null, as report_wrappers' are. Of git,
 # only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
 # a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
 # base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
@@ -3411,9 +3463,7 @@ status_report() {
 # own wait.
 # shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
 status_reads() {
-  herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
-  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh $1 $2" gh "$@" </dev/null; fi; }
+  report_wrappers
   git() {
     local i=1
     # The subcommand is the first word past git's own options; -C and -c take a value.

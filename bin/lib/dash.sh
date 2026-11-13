@@ -93,7 +93,7 @@ dash_size() {
 
 # dash_deadline — start one frame's report deadline (report_start): REPORT_SECONDS (merge.sh:
 # SWARM_REPORT_SECONDS when it is whole seconds above 0, else 30). From here on every herdr, claude and
-# gh call in this process goes through report_read, named by its subcommand: those reads sit deep in
+# gh call in this process goes through report_read (report_wrappers): those reads sit deep in
 # helpers dash shares with next and status (next_lines, test_running), and dash only reads, so no write
 # or agent start is cut. The deadline and the skip file go to the python dash runs too (SWARM_REPORT_END
 # and SWARM_REPORT_SKIP_FILE, as status sets them): panes.py's pane_text, dash_render.py's read of an
@@ -103,12 +103,8 @@ dash_size() {
 dash_deadline() {
   report_start || die "dash: could not start the report deadline"
   export SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}"
-  # </dev/null, as status_reads (merge.sh) has: a read inside a while-read loop must not eat the loop's input.
-  herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
-  # shellcheck disable=SC2329 # claude_agents (agents.sh) calls it
-  claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
-  # shellcheck disable=SC2329 # for any gh call a helper dash shares with status makes; dash_slow's own are python's
-  gh() { if [[ "${1:-}" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh ${*:1:2}" gh "$@" </dev/null; fi; }
+  # The herdr, claude and gh that status and next use too (merge.sh); dash_slow's own gh calls are python's.
+  report_wrappers
 }
 
 # bin/lib/dash_legend.py — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
