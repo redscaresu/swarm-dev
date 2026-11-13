@@ -527,6 +527,57 @@ flow_sections() {
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
 
+# retro [--since <tag>] [--memory <dir>] — the release retro's report, read-only, with no gh call.
+# --since defaults to the newest v<x.y.z> tag on origin's base (newest_tag; base_for fetches that
+# branch); a tag this repo does not have dies naming it. The window starts on the day of the tag's
+# commit. The first two lines name the tag and that day, then the swarm.sh that wrote it: its short
+# commit when SWARM_HOME is a git checkout's top, else plugin.json's version (the plugin cache).
+# --memory defaults to Claude Code's memory folder for this project (CLAUDE_PROJECTS, then the main
+# checkout's path with each character outside A-Za-z0-9 turned into -, then /memory).
+# Then retro_report.py runs each bin/lib/retro_<name>.py under `## <name>`, with the context below.
+# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run. A new
+# section is a new retro_<name>.py; neither this nor retro_report.py changes. Exits 1 when a section fails.
+retro_report() {
+  local usage="usage: swarm.sh retro [--since <tag>] [--memory <dir>]" tag="" memory="" main base day home top writer v open rc=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || die "${usage}"; tag="$2"; shift 2 ;;
+      --memory) [[ -n "${2:-}" ]] || die "${usage}"; memory="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  # The main checkout's folder even when SWARM_PROJECT names a worktree of it (find_project keeps that path).
+  if [[ -z "${memory}" ]]; then
+    main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || main="${PROJECT_DIR}"
+    memory="${CLAUDE_PROJECTS}/${main//[^A-Za-z0-9]/-}/memory"
+  fi
+  if [[ -z "${tag}" ]]; then
+    base="$(base_for "${PROJECT_DIR}")"
+    v="$(newest_tag "origin/${base}")"
+    [[ -n "${v}" ]] || die "retro: origin/${base} has no v<x.y.z> tag; name one with --since <tag>"
+    tag="v${v}"
+  fi
+  git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/tags/${tag}^{commit}" >/dev/null || die "retro: no tag ${tag} in ${PROJECT_DIR}"
+  day="$(git -C "${PROJECT_DIR}" log -1 --format=%cs "refs/tags/${tag}")"
+  home="$(cd "${SWARM_HOME}" && pwd -P)"
+  top="$(git -C "${home}" rev-parse --show-toplevel 2>/dev/null)" || top=""
+  if [[ -n "${top}" && "$(cd "${top}" && pwd -P)" == "${home}" ]]; then
+    writer="commit $(git -C "${home}" rev-parse --short HEAD)"
+  else
+    v="$(plugin_version < "${home}/.claude-plugin/plugin.json" 2>/dev/null)" || v="unknown (no readable .claude-plugin/plugin.json)"
+    writer="version ${v}, not a git checkout"
+  fi
+  echo "retro since ${tag}: from ${day}, the day of its commit"
+  echo "written by swarm.sh at ${writer}"
+  echo
+  open="$(mktemp "${TMPDIR:-/tmp}/retro-findings.XXXXXX")" || die "retro: cannot make a temp file"
+  out_of_scope_findings "${day}" > "${open}"
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${memory}" "${open}" || rc=$?
+  rm -f "${open}"
+  return "${rc}"
+}
+
 # moved <command> <where> <run> — a report folded into another (flow's sections, outcomes' recurring
 # block): say where its numbers went, and the command, with the flags it reads, that prints them.
 moved() {

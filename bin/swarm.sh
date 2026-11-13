@@ -17,6 +17,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
+#   swarm.sh retro [--since <tag>] [--memory <dir>]        the release retro's report, read-only, with no gh call: the tag (default the newest v<x.y.z> tag on origin's base) and its commit's day, the swarm.sh that wrote it (its commit, or its version when not a git checkout), then one section per bin/lib/retro_<name>.py: memories (the lead's memory notes in --memory <dir>, by default Claude Code's memory folder for this project, each with its name and description)
 #   swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred, with --because the builder's own reason in one line; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
 #   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
@@ -650,6 +651,7 @@ dispatch() {
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
     dataset) dataset_report "$@" ;;
+    retro)  retro_report "$@" ;;
     review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
@@ -721,7 +723,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main"
+READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
