@@ -15,7 +15,7 @@ fm() {
 # a report starts reads the board for itself.
 BOARD_SNAP=""
 # BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
-# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+# shell that took the snapshot drops it, a write in a $( ) subshell included; report_cleanup removes it on exit.
 BOARD_SNAP_MARK=""
 # BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
 # before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
@@ -838,25 +838,23 @@ idle_lines() {
   printf '%s\n' "${found}" | awk '{ sub(/\t/, " finding: "); print "  " $0 }'
 }
 
-# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
-# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
-# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
-# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
-# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
-# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
-# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
-# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, are
+# report_wrappers' (merge.sh), so each read runs within the report's deadline and a cut one is named as
+# status and dash name it. Inside herdr, `herdr agent list` is answered from the one list next_report
+# read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a later list cut
+# at the deadline cannot hide a conductor an earlier one showed; herdr's other reads go on to
+# report_herdr. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # herdr is called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  report_wrappers
   herdr() {
     if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
       [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
       printf '%s\n' "${LEAD_AGENTS}"; return 0
     fi
-    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+    report_herdr "$@"
   }
-  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
@@ -930,8 +928,8 @@ next_report() {
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
-  # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}' '${BOARD_SNAP_MARK}'" EXIT
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'; report_cleanup" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).
@@ -1042,6 +1040,13 @@ lead_blocked() {
   done
 }
 
+# reopened_ready <story-file> — true for a ready story whose last event is reconcile's reopen, after its
+# PR closed unmerged: the lead's, not an agent's. agent_work_left skips it, and lead_held reads a story
+# blocked only on it as the lead's too.
+reopened_ready() {
+  [[ "$(fm "$1" status)" == ready && "$(last_event "$(basename "$1" .md)")" == $'reconcile\tok (reopened)' ]]
+}
+
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
 # open and not yet in review), unless reconcile reopened it after its PR closed unmerged (the lead's);
@@ -1063,7 +1068,7 @@ agent_work_left() {
     else
       [[ "${e:--}" == "$1" ]] || continue
       case "$(fm "${f}" status)" in
-        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        ready) ! reopened_ready "${f}" || continue ;;
         blocked) ! lead_held "${f}" || continue ;;
         review) review_agent_owns "${f}" || continue ;;
         *) continue ;;
@@ -1101,7 +1106,8 @@ note_group() {
 # lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
 # blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
 # reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
-# that is itself lead_held, so a chain of agent stories under a lead story waits too. A depends_on
+# that is itself lead_held, so a chain of agent stories under a lead story waits too, or a ready story
+# reconcile reopened (reopened_ready), which the lead restarts. A depends_on
 # cycle ([seen], space-separated slugs) waits on the lead as well: no merge can break it.
 lead_held() {
   local p f open seen
@@ -1115,6 +1121,7 @@ lead_held() {
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     agent_kind "$(fm "${f}" kind)" || continue
+    ! reopened_ready "${f}" || continue
     lead_held "${f}" "${seen}" || return 1
   done
 }

@@ -154,6 +154,17 @@ is "merge = human, s2 handed over while s3 and s4 wait on each other: the finish
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: ready" "epic: e"; ev reconcile s3 - "ok (reopened)"
 review s2 "${U2}"
 is "merge = human, s2 handed over while s3 was reopened after its PR closed unmerged: the finish: line" finish "$(finished)"
+# A story blocked only on a reopened story (s3 reopened, s4 depends_on s3) waits on the lead too; one
+# blocked on a plain ready story (s3 not reopened) still holds the finish: line.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: ready" "epic: e"; ev reconcile s3 - "ok (reopened)"
+item s4 "status: blocked" "depends_on: [s3]" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s4 waits on s3, which was reopened: the finish: line" finish "$(finished)"
+# s3 sits in another epic here, so only s4 can hold e: the case fails if lead_held skipped any ready dependency.
+printf -- '---\nstatus: active\n---\n' > "${P}/docs/epics/other.md"
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: ready" "epic: other"
+item s4 "status: blocked" "depends_on: [s3]" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s4 waits on s3 (another epic's), a plain ready story: no finish: line" hold "$(finished)"
+rm -f "${P}/docs/epics/other.md"
 # A story a close kept with one PR waits for its review agent; one with several PRs is the lead's.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"
 item s3 "status: review" "kept: 2026-10-28 stalled" "prs: https://github.com/o/r/pull/9" "epic: e"; review s2 "${U2}"
