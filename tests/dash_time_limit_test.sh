@@ -296,7 +296,7 @@ is "with dash_slow.py past its margin, no gh it started is alive once dash exits
 # --- A gh call stopped on its own 5 s timeout lets go of dash_slow.py's pipe though its child holds it
 # (FORK_GH): dash_slow.py KILLs the call's whole tree, so its three PR reads end in about 15 s, well inside
 # gh's share of a 120 s deadline (60 s). With only the stub killed, the first read waits on its pipe until
-# report_read cuts the PR states at that share and names them.
+# report_read cuts the PR states at the 120 s deadline itself (REPORT_END) and names them.
 fresh; : > "${GH_PIDS}"
 read -r forked _ <<< "$(FORK_GH=1 SWARM_REPORT_SECONDS=120 run_dash "${ROOT}/fork.out" $((bound + 125)) "")"
 left="$(alive "${GH_PIDS}")"
@@ -306,8 +306,8 @@ check "a gh call whose child holds the pipe: the PR states are not cut at the de
 is "a gh call whose child holds the pipe: no child it started is alive once dash exits" "" "${left}"
 echo "     the forked-gh dash took ${forked} s"
 # With ps failing as well (FAIL_PS), dash_slow.py kills only the stub, and its wait on the pipe lasts until
-# report_read's group KILL at gh's share of the deadline (15 s of 30 s), which reaches the sleep in the same
-# group. Were the wait given up early, dash_slow.py would exit with the sleep still running.
+# report_read's group KILL at the 30 s report deadline (REPORT_END, not gh's 15 s share), which reaches the
+# sleep in the same group. Were the wait given up early, dash_slow.py would exit with the sleep still running.
 fresh; : > "${GH_PIDS}"
 FORK_GH=1 FAIL_PS=1 SWARM_REPORT_SECONDS=30 run_dash "${ROOT}/fork-ps.out" $((bound + 35)) "" > /dev/null
 left="$(alive "${GH_PIDS}")"

@@ -6,12 +6,13 @@ FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # closed PR's ci_time if the calls ever crowd gh's rate limit.
 CI_SECONDS, CI_RETRY, CI_TIMEOUT = 6 * 3600, 600, 1800
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache is text to print, not escapes
-# GH_WAIT: the most one gh call may take. DASH_READ_END is dash's report deadline (an epoch, set by
-# dash_slow); each call also stops a second short of it, so this ends, its gh calls killed on their own
-# timeout (kill_tree), before report_read KILLs it. A gh call stays in this process's group, so when this
-# misses that margin report_read's group KILL reaches it too; only the detached ci refresh has a session
-# of its own. A call cut or not made for the deadline sets CUT, and the run then exits 142 (report_read's
-# cut) once the rest is printed.
+# GH_WAIT: the most one gh call may take. DASH_READ_END is gh's share of dash's frame (an epoch, set by
+# dash_slow: the earlier of the report deadline and REPORT_SECONDS / DASH_GH_SHARE from now, so usually
+# half the frame). Each call also stops a second short of it, so this ends, its gh calls killed on their
+# own timeout (kill_tree), well before report_read KILLs its group at the report deadline (REPORT_END). A
+# gh call stays in this process's group, so when this misses that margin report_read's group KILL reaches
+# it too; only the detached ci refresh has a session of its own. A call cut or not made for DASH_READ_END
+# sets CUT, and the run then exits 142 (report_read's cut) once the rest is printed.
 GH_WAIT, CUT = 5, False
 END = float(os.environ.get("DASH_READ_END") or "inf") - 1
 def private(path, flags):
@@ -36,12 +37,14 @@ def gh(args):
     if left <= 0:
         CUT = True
         return None
-    p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    # stdin from /dev/null, as report_wrappers gives every report read: this group is report_read's own,
+    # in the background on dash's terminal, where a read of the terminal would stop gh (SIGTTIN).
+    p = subprocess.Popen(["gh"] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     try:
         out, _ = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
         # A child kill_tree missed (ps failed) still holds the pipe, and this waits on it until
-        # report_read's group KILL at the deadline, which reaches it in this group: never a gh left behind.
+        # report_read's group KILL at the report deadline, which reaches it in this group: no gh is left.
         kill_tree(p.pid); p.communicate()
         CUT = CUT or left < GH_WAIT
         return None

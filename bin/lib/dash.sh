@@ -181,7 +181,7 @@ dash_base_ref() {
 # of it (DASH_GH_SHARE): they come first in the frame, and a slow GitHub with many PRs must leave
 # dash_render's herdr reads their own time. It stops each gh call a second short of that end
 # (DASH_READ_END) and exits 142, report_read's cut. Each gh call runs in dash_slow.py's process group, so
-# report_read's KILL of that group at the deadline reaches it if dash_slow.py misses its margin. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
+# report_read's KILL of that group at the report deadline (REPORT_END) reaches it if dash_slow.py misses its margin. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
 # the last cache's lines it did not reach (dash_cache_merge), so a PR state, a story's head or the ci
 # line, a local 6-hour cache, stands until a later run reads it again; a PR no run has answered shows
 # as its URL, as a PR gh cannot answer in 5 seconds does.
