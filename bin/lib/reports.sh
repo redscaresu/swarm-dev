@@ -382,15 +382,18 @@ dataset_report() {
 #     p90_min max_min over the per-day table's items in the window (never a no-agent item), p90 by
 #     nearest rank, - in each column with none.
 #     --epic does not narrow it.
-#   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
-#     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
-#     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from
-#     its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head once when it is
-#     not there, as conflict (a conflict, or a tree that is not git's clean merge), behind (clean, and
-#     the base had commits the branch lacked) or neither; unread for a PR gh cannot read, a merge-in gh
-#     does not list, a commit git cannot find, a merge-in whose git log, merge-tree, diff or merge-base
-#     fails, or a one-parent "merge", each named on a `merge ins: left out` line. Then, after a blank
-#     line, TSV file conflicts: the top three files, or `none conflicted`.
+#   merge_ins: TSV cause merge_ins prs reference_docs, why the PRs epic_totals counts under main_merged
+#     merged their base in (without --since, the 30 days up to --until or today): each merge-in (a PR
+#     commit gh's REST API lists whose headline merges the base in, by outcomes' main_merges rule)
+#     re-merged from its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head
+#     once when it is not there, as conflict (a conflict, or a tree that is not git's clean merge),
+#     behind (clean, and the base had commits the branch lacked) or neither; unread for a PR gh cannot
+#     read, a merge-in gh does not list, a commit git cannot find, a merge-in whose git log, merge-tree,
+#     diff or merge-base fails, or a one-parent "merge", each named on a `merge ins: left out` line.
+#     reference_docs, on the conflict row, counts the conflict merge-ins whose files include
+#     docs/reference.md or a docs/reference-*.md, once each (0: no conflict touched them); the other
+#     rows print -. Then, after a blank line, TSV file conflicts: the top three files, or
+#     `none conflicted`.
 #   merges: TSV day finished, the stories finished per local day (a finish ok line, or reconcile's ok
 #     (finished, each slug once on its newest such day), which dash's speedometer shows. Then, after a
 #     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
@@ -522,6 +525,59 @@ flow_sections() {
   SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_NO_AGENT_STARTS="${NO_AGENT_STARTS}" SWARM_AGENT_NAME_MAX="${AGENT_NAME_MAX}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
+}
+
+# retro [--since <tag>] [--memory <dir>] — the release retro's report, read-only, with no gh call.
+# --since defaults to the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, as
+# stage_due reads it (newest_tag; no fetch, so it runs offline); with origin/HEAD unset, or a tag this
+# repo does not have, it dies naming --since or the tag. The window starts on the day of the tag's
+# commit. The first two lines name the tag and that day, then the swarm.sh that wrote it: its short
+# commit when SWARM_HOME is a git checkout's top, else plugin.json's version (the plugin cache).
+# --memory defaults to Claude Code's memory folder for this project (CLAUDE_PROJECTS, then the main
+# checkout's path with each character outside A-Za-z0-9 turned into -, then /memory).
+# Then retro_report.py runs each bin/lib/retro_<name>.py under `## <name>`, with the context below.
+# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run. A new
+# section is a new retro_<name>.py; neither this nor retro_report.py changes. Exits 1 when a section fails.
+retro_report() {
+  local usage="usage: swarm.sh retro [--since <tag>] [--memory <dir>]" tag="" memory="" main base day home top writer v open rc=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || die "${usage}"; tag="$2"; shift 2 ;;
+      --memory) [[ -n "${2:-}" ]] || die "${usage}"; memory="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  # The main checkout's folder even when SWARM_PROJECT names a worktree of it (find_project keeps that path).
+  if [[ -z "${memory}" ]]; then
+    main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || main="${PROJECT_DIR}"
+    memory="${CLAUDE_PROJECTS}/${main//[^A-Za-z0-9]/-}/memory"
+  fi
+  if [[ -z "${tag}" ]]; then
+    base="$(git -C "${PROJECT_DIR}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
+      || die "retro: origin/HEAD is not set in ${PROJECT_DIR}, so there is no default branch to find a tag on; name one with --since <tag>"
+    v="$(newest_tag "${base}")"
+    [[ -n "${v}" ]] || die "retro: ${base} has no v<x.y.z> tag; name one with --since <tag>"
+    tag="v${v}"
+  fi
+  git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/tags/${tag}^{commit}" >/dev/null || die "retro: no tag ${tag} in ${PROJECT_DIR}"
+  day="$(git -C "${PROJECT_DIR}" log -1 --format=%cs "refs/tags/${tag}")"
+  home="$(cd "${SWARM_HOME}" && pwd -P)"
+  top="$(git -C "${home}" rev-parse --show-toplevel 2>/dev/null)" || top=""
+  if [[ -n "${top}" && "$(cd "${top}" && pwd -P)" == "${home}" ]]; then
+    writer="commit $(git -C "${home}" rev-parse --short HEAD)"
+  else
+    v="$(plugin_version < "${home}/.claude-plugin/plugin.json" 2>/dev/null)" || v="unknown (no readable .claude-plugin/plugin.json)"
+    writer="version ${v}, not a git checkout"
+  fi
+  echo "retro since ${tag}: from ${day}, the day of its commit"
+  echo "written by swarm.sh at ${writer}"
+  echo
+  open="$(mktemp "${TMPDIR:-/tmp}/retro-findings.XXXXXX")" || die "retro: cannot make a temp file"
+  out_of_scope_findings "${day}" > "${open}"
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${memory}" "${open}" || rc=$?
+  rm -f "${open}"
+  return "${rc}"
 }
 
 # moved <command> <where> <run> — a report folded into another (flow's sections, outcomes' recurring

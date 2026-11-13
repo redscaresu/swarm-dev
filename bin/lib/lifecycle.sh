@@ -68,16 +68,18 @@ board_changes() (
 )
 
 # board_pr_kind <name> <board> — the kind of the board PR <name>: plan (plan-<hld>, scope-<epic>),
-# agreement (agree-<hld or epic>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else
-# story-scope edit. A plan or agreement name counts only when it names an HLD or epic in <board> (the
-# PR's worktree's), by its file name made clean (board_pr_names); a story slug such as plan-hld-gaps
-# or scope-creep is a story-scope edit.
+# agreement (agree-<hld or epic>), retro file (retro-<x>), finish (finish-<slug>, drop-<slug>), hold
+# (hold-<slug>), else story-scope edit. A plan, agreement or retro file name counts only when it names
+# an HLD, epic or retro in <board> (the PR's worktree's), by its file name made clean
+# (board_pr_names); a story slug such as plan-hld-gaps, scope-creep or retro-goals-step is a
+# story-scope edit.
 board_pr_kind() {
   local x="${1#*-}"
   case "$1" in
     plan-?*) board_pr_names "$2/hld" "${x}" && { echo plan; return; } ;;
     scope-?*) board_pr_names "$2/epics" "${x}" && { echo plan; return; } ;;
     agree-?*) { board_pr_names "$2/hld" "${x}" || board_pr_names "$2/epics" "${x}"; } && { echo agreement; return; } ;;
+    retro-?*) board_pr_names "$2/retros" "${x}" && { echo "retro file"; return; } ;;
     finish-?* | drop-?*) echo finish; return ;;
     hold-?*) echo hold; return ;;
   esac
@@ -920,7 +922,7 @@ start_rung() {
 }
 
 # rung_late <slug> <model> <err> [who] — when start_agent's stderr <err> says the brief may have gone out
-# (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
+# (the tries review_start_failed reads as unclear, start_unclear's words) and the agent was not blocked on a question before
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
@@ -932,7 +934,7 @@ rung_late() {
   local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v who="${4:-step-up}"
   case "$3" in
     *agent_blocked*) return 1 ;;
-    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"reply to the brief could not be read"*) ;;
     *) return 1 ;;
   esac
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
@@ -4511,9 +4513,10 @@ try:
             sr = started.get(n) or told(n, t)
         else:
             sr = started[n] = stem(c, t)
-        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it,
+        # in the words of sent_note: another thing that could not be read (its pane) says nothing about the brief.
         o = outcome(f)
-        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "reply to the brief could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
             newest[n] = (f[0], c, alike[k]) + sr

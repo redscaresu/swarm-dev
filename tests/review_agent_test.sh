@@ -1005,15 +1005,22 @@ merge_main() {
   [[ $# -lt 2 ]] || echo "$3" > "${W}/$2"
   "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -q --no-edit; "${GIT[@]}" -C "${W}" rev-parse HEAD
 }
+# The PR's one workflow, ci.yml, runs on every pull_request, so ci_gate head, given the PR's base, number
+# and file count as wait-pr gives them, waits for a pull_request run of it on the head.
+echo '[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]' > "${FXH}/workflows"
+printf 'name: ci\non:\n  pull_request:\n' > "${FXH}/wf.ci.yml"
 # h3_at <head> [<status> <conclusion>] — PR 15's head is <head> (gh and refs/pull/15/head), its one check
-# run test is <status> <conclusion> (completed success, green, by default), h3 is ready with no prs:, and
-# its review file is a pass on REV, the head the review read.
+# run test is <status> <conclusion> (completed success, green, by default), and so is the one
+# pull_request run of ci.yml on it; h3 is ready with no prs:, and its review file is a pass on REV, the
+# head the review read.
 h3_at() {
   "${GIT[@]}" -C "${W}" push -q -f "${ROOT}/o/svc.git" "$1:refs/pull/15/head"; echo "$1" > "${FXH}/head"
   local c=null; [[ "${3-success}" == null ]] || c="\"${3-success}\""
   printf '{"total_count":1,"check_runs":[{"name":"test","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/runs/1","path":".github/workflows/test.yml","head_sha":"%s"}]}\n' \
     "${2:-completed}" "${c}" "$1" > "${FXH}/$1.checks"
   echo '{"total_count":0,"statuses":[]}' > "${FXH}/$1.status"
+  printf '{"total_count":1,"workflow_runs":[{"id":1,"name":"ci","path":".github/workflows/ci.yml","event":"pull_request","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/actions/runs/1","head_sha":"%s"}]}\n' \
+    "${2:-completed}" "${c}" "$1" > "${FXH}/$1.runs"
   printf '%s\n' --- "status: ready" "kind: code" "epic: e" "repo: svc" "touches: [bin/h3.sh:fn_h3]" --- "" "# h3" > "${b}/stories/h3.md"
   rm -f "${p}/.swarm/state/h3"*; mkdir -p "${p}/.swarm/reviews"
   printf '%s\n' "head: ${REV}" "## Findings" "none" > "${p}/.swarm/reviews/h3.md"
@@ -1042,10 +1049,15 @@ done
 h3_at "${CLEAN}" in_progress null; o="$(review_h3)"
 check "review --head on a clean merge of the base whose CI has not finished refuses as a moved head, naming wait-pr, and leaves h3 ready with no pass on it" "rc:1|yes|yes|yes|ready||none" \
   "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: " "${o}")|$(has "; once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0, review --head ${REV} takes it" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+# A clean merge whose one check is green while ci.yml, which runs on every pull_request, has not started
+# on it: CI there is not finished, as wait-pr reads it, so the head is not taken.
+h3_at "${CLEAN}"; echo '{"total_count":0,"workflow_runs":[]}' > "${FXH}/${CLEAN}.runs"; o="$(review_h3)"
+check "review --head on a clean merge of the base with its one check green and ci.yml not started on it refuses as a moved head, naming ci.yml with no run on the head, and leaves h3 ready with no pass on it" "rc:1|yes|yes|ready||none" \
+  "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: .github/workflows/ci.yml (no run on ${CLEAN:0:7}); once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
 h3_at "${CLEAN}"
 check "before review --head, the clean merge ${CLEAN:0:7} has no pass of its own" "none" "$(h3_pass "${CLEAN}")"
 o="$(review_h3)"
-check "review --head on the reviewed head plus one clean merge of the base puts h3 in review, says so naming both heads, and records the pass on the new head" \
+check "review --head on the reviewed head plus one clean merge of the base, its check and ci.yml's pull_request run green, puts h3 in review, says so naming both heads, and records the pass on the new head" \
   "rc:0|yes|review|${PRC}|${CLEAN} from ${REV}|pass" \
   "$(tail -1 <<< "${o}")|$(has "accepted: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, the reviewed head; its pass counts for ${CLEAN:0:7}" "${o}")|$(fm_of h3 status)|$(fm_of h3 prs)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
 check "the clone keeps no ref of review --head's fetch" "" "$(git -C "${ROOT}/svc" for-each-ref refs/swarm)"
