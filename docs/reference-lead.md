@@ -64,13 +64,17 @@ outside the repo is edited where it is, and `board-pr` refuses it.
 **Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
 alone. Only a plan or an agreement PR gets a codex review, and only when its name names an HLD or
 epic in the PR's worktree (by the file name lower-cased, each run of characters other than `a-z`
-and `0-9` one `-`, trimmed). A story slug that starts the same way, such as `plan-hld-gaps`, is a
+and `0-9` one `-`, trimmed). A retro file PR is named the same way, after a file in the board's
+`retros/`. A story slug that starts the same way, such as `plan-hld-gaps`, is a
 story-scope edit:
 
 - plan: `plan-<hld>` (`/plan-hld`) and `scope-<epic>` (`/plan-epic`). It needs one
   `swarm.sh codex-review` pass before it merges, which those commands run before `open`.
 - agreement: `agree-<hld or epic>`, the HLD or epic the user agreed (`/hld` and `/epic` step 5).
   One `swarm.sh codex-review` pass before it merges, which those commands run before `open` too.
+- retro file: `retro-<x>`, when the PR's worktree has `<board>/retros/<f>.md` with `<f>` made clean
+  equal to `<x>`: `retros/v0.31.0.md` makes `retro-v0-31-0` one. No codex-review. A story slug
+  such as `retro-goals-step` is a story-scope edit.
 - finish: `finish-<slug>` and `drop-<slug>`, which `swarm.sh finish` and `swarm.sh drop` open. No
   codex-review.
 - hold: `hold-<slug>`. No codex-review. (`swarm.sh hold` itself only logs.)

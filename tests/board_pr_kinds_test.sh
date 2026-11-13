@@ -2,9 +2,10 @@
 # board_pr_kinds_test.sh — board-pr open names a board PR's kind on stderr, with its stdout the URL
 # alone. plan-<hld> and scope-<epic> are plan PRs and agree-<hld or epic> an agreement PR, each only
 # when the name names an HLD or epic in the PR's worktree (its file name made clean); they need one
-# codex-review pass. finish-<slug> and drop-<slug> (swarm.sh finish and drop), hold-<slug> and any
-# other name, a story slug such as plan-hld-gaps too, are story-scope edits, holds and finishes, which
-# get none. Each name runs through board-pr start and open (or finish, or drop) on a local bare
+# codex-review pass. retro-<x> is a retro file PR only when <board>/retros holds a file of that name
+# (retros/v0.31.0.md makes retro-v0-31-0 one); retro-goals-step, with no such file, is a story-scope
+# edit. finish-<slug> and drop-<slug> (swarm.sh finish and drop), hold-<slug> and any other name, a
+# story slug such as plan-hld-gaps too, are story-scope edits, holds and finishes, which get none. Each name runs through board-pr start and open (or finish, or drop) on a local bare
 # origin, with no codex call. merge --board, which never reads the kind, is checked once: refused on
 # a red head, merged on a green one, with no codex call. Then the command files: the plan and
 # agreement steps keep their codex-review pass, run before board-pr open, and /epic names its
@@ -69,7 +70,7 @@ opened() {
   fresh_codex; sw board-pr start "$1"; is "$1: start exits 0" 0 "${rc}"
   wt="$(cat "${ROOT}/sw.out")"
   printf -- '---\nstatus: ready\n---\n\n# %s\n' "$1" > "${wt}/docs/stories/$1.md"
-  [[ -z "${3:-}" ]] || printf '%b' "$4" > "${wt}/$3"
+  [[ -z "${3:-}" ]] || { mkdir -p "$(dirname "${wt}/$3")" && printf '%b' "$4" > "${wt}/$3"; }
   sw board-pr open "$1" "Board edit $1" "${ROOT}/body.md"
   is "$1: open exits 0" 0 "${rc}"
   is "$1: open's stdout is the URL alone" "${URL}" "$(cat "${ROOT}/sw.out")"
@@ -87,6 +88,10 @@ opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md "---\nsta
 # --- A story slug that starts like a plan PR names no HLD or epic: a story-scope edit.
 opened plan-hld-gaps "$(none_line plan-hld-gaps "story-scope edit")"
 opened scope-creep "$(none_line scope-creep "story-scope edit")"
+# --- A retro file PR: retro-<x> with a retros/ file whose clean name is <x>; no codex-review. A retro-
+# story slug with no such file is a story-scope edit.
+opened retro-v0-31-0 "$(none_line retro-v0-31-0 "retro file")" docs/retros/v0.31.0.md "# v0.31.0\n"
+opened retro-goals-step "$(none_line retro-goals-step "story-scope edit")"
 # --- Holds and story-scope edits: no codex-review.
 opened hold-s "$(none_line hold-s hold)"
 opened rescope-s "$(none_line rescope-s "story-scope edit")"
