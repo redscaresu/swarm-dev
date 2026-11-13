@@ -157,14 +157,30 @@ def admin(repo, base, sha, method):
 # GitHub's compare lists this many files at most: a list that long may be cut short.
 COMPARE_FILES = 300
 
+def on_board(p, board):
+    """Whether path p is on board's paths (merge.sh's board_paths, one entry each), as merge.sh's
+    on_board_paths has them: an entry ending in / is a folder, one whose last part holds a * a glob,
+    and any other a file. The glob's last * is any run of characters, slashes too, and its text either
+    side is taken as it is, so a board folder named with a * stays literal. So Board.base is not
+    Board.base.py, and retros/*.md takes retros/v1.0.0.md, not retros/x.sh. behind and fixed both
+    judge a path by it."""
+    def one(b):
+        if b.endswith("/"):
+            return p.startswith(b)
+        if "*" not in b.rsplit("/", 1)[-1]:
+            return p == b
+        pre, _, suf = b.rpartition("*")
+        return len(p) >= len(pre) + len(suf) and p.startswith(pre) and p.endswith(suf)
+    return any(one(b) for b in board)
+
 def behind(repo, sha, base, board, wait):
     """The commits base has that sha lacks, and each path they change that is off board's paths (a
     renamed file's old path too): compare sha...base, whose ahead_by counts them and whose files are
-    their changes taken together. A board entry ending in / is a folder, any other a file, as merge.sh's
-    on_board_paths has them; a README.md there is off the board, since a test may check it (this repo's
-    CI gate tests one). A transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES
-    reads in all, wait seconds apart; any other fails at once. A list of COMPARE_FILES or more may be cut
-    short, and commits with no file listed may be a list GitHub left out: both are Unlisted."""
+    their changes taken together. A path is on the board as on_board has it, but a README.md there is
+    off the board, since a test may check it (this repo's CI gate tests one). A transient gh error
+    (TRANSIENT, in gh's own words) is read again, READ_TRIES reads in all, wait seconds apart; any other
+    fails at once. A list of COMPARE_FILES or more may be cut short, and commits with no file listed may
+    be a list GitHub left out: both are Unlisted."""
     path = "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))
     for i in range(READ_TRIES):
         try:
@@ -186,7 +202,7 @@ def behind(repo, sha, base, board, wait):
     if n and not paths:
         raise Unlisted("the compare of %s with %s lists no file for %d commit(s)" % (sha[:7], base, n))
     def on(p):
-        return p.rsplit("/", 1)[-1] != "README.md" and any(p.startswith(b) if b.endswith("/") else p == b for b in board)
+        return p.rsplit("/", 1)[-1] != "README.md" and on_board(p, board)
     return n, [p for p in paths if not on(p)]
 
 def merged(repo, head, new, second):
@@ -815,9 +831,9 @@ def red_line(red, failed, under, refused=""):
     return "red " + "; ".join(red) + ("\nnote: " + "; ".join(why) if why else "")
 
 def fixed(repo, sha, base, red_sha, board, names):
-    """Why sha does not show a red main fixed, or None. A board-only commit's CI may skip its tests,
-    so it is judged by its first parent, back to the newest commit that is not board-only (a fix, then
-    a finish or a merge --board). There everything must be green, as main_ci judges a merge commit (no
+    """Why sha does not show a red main fixed, or None. A board-only commit (each file on board's
+    paths, as on_board has it) may skip its tests in CI, so it is judged by its first parent, back to
+    the newest commit that is not board-only (a fix, then a finish or a merge --board). There everything must be green, as main_ci judges a merge commit (no
     check run needed of its own), and either each check that went red passed there, or base requires
     checks and each of those passed: a fix may rename or drop the job that failed, but a check a path
     filter skipped has no run that passed. Once each required check has a run, only those must be
@@ -830,7 +846,7 @@ def fixed(repo, sha, base, red_sha, board, names):
                 raise Err("unreadable commit " + sha[:7])
             files += [f.get("filename") or "" for f in d["files"]]
             parents = [p.get("sha") for p in d.get("parents") or [] if isinstance(p, dict)] or parents
-        if not (board and files and all(f.startswith(tuple(board)) for f in files)):
+        if not (board and files and all(on_board(f, board) for f in files)):
             break
         if not parents or not re.fullmatch(r"[0-9a-f]{40}", parents[0] or ""):
             return "%s changes only the board's files" % sha[:7]
@@ -855,86 +871,88 @@ def fixed(repo, sha, base, red_sha, board, names):
         return "; ".join("%s (no run that passed)" % n for n in missing)
     return None
 
-try:
-    mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    if mode == "head":
-        red, wait, ok = checks(repo, args[0])
-        # A red head is red whatever has run, so the expected workflows are read only when there is none.
-        bad, more, unread = head_expected(repo, args[0], args[1:]) if args[1:] and not red else ([], [], [])
-        red, wait = red + bad, wait + more
-        print("; ".join(red + wait or ok))
-        if unread:
-            print("not waited on: " + "; ".join(unread))
-        if red or wait:
-            sys.exit(1 if red else 2)
-    elif mode == "fixed":
-        why = fixed(repo, args[0], args[1], args[2], [b for b in args[3].split("\n") if b], args[4:])
-        print(why or "fixed")
-        if why:
-            sys.exit(1)
-    elif mode == "base":
-        # head's rule for a base's head: a commit status alone counts, as on main, but with no check
-        # run and no status nothing has concluded. A red head prints its red checks alone.
-        red, wait, ok = checks(repo, args[0], need_run=False)
-        wait = wait if red or wait or ok else ["no check runs or statuses"]
-        print("; ".join(red or wait or ok))
-        if red or wait:
-            sys.exit(1 if red else 2)
-    elif mode == "required":
-        # The checks base requires, one name a line (none for a base that requires none); an error when any
-        # part of its rules cannot be read.
-        req, why = required(repo, args[0])
-        if why:
-            raise Err(why)
-        print("\n".join(sorted({c for c, _ in req})))
-    elif mode == "age":
-        # head's rule; once green, the whole minutes since its last run or status finished.
-        done = []
-        red, wait, ok = checks(repo, args[0], done=done)
-        if red or wait:
-            print("; ".join(red + wait))
-            sys.exit(1 if red else 2)
-        try:
-            last = max(calendar.timegm(time.strptime(t, "%Y-%m-%dT%H:%M:%SZ")) for t in done)
-        except (TypeError, ValueError):
-            raise Err("unreadable finish time on " + args[0])
-        print(int(time.time() - last) // 60)
-    elif mode == "admin":
-        why = admin(repo, args[0], args[1], args[2])
-        if why:
-            print("; ".join(why))
-            sys.exit(1)
-    elif mode == "behind":
-        try:
-            n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
-        except Unlisted as e:
-            print("error %s" % e)
-            sys.exit(UNLISTED)
-        print("\n".join([str(n)] + off))
-    elif mode == "merged":
-        extra = merged(repo, args[0], args[1], args[2])
-        if extra:
-            print(", ".join(extra[:5]) + (" and %d more" % (len(extra) - 5) if len(extra) > 5 else ""))
-            sys.exit(1)
-    elif mode == "queue":
-        print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
-    elif mode == "pushed":
-        print(pushed(repo, args[0], args[1], float(args[2])))
-    elif mode == "stop":
-        print(stop_pr(repo, args[0]))
-    elif mode == "queued":
-        rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
-        print(msg)
-        sys.exit(rc)
-    elif mode in ("files", "files-status"):
-        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4], hold=float(args[4]) if len(args) > 4 else None)
-        if not files:
-            raise Err("gh listed no files, or fewer than the PR changes")
-        print("\n".join(files))
-    else:
-        rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
-        print(msg)
-        sys.exit(rc)
-except Exception as e:
-    print("error %s" % (e or type(e).__name__))
-    sys.exit(CI_ERROR)
+# The command line, run only as a script, so a test can import on_board.
+if __name__ == "__main__":
+    try:
+        mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+        if mode == "head":
+            red, wait, ok = checks(repo, args[0])
+            # A red head is red whatever has run, so the expected workflows are read only when there is none.
+            bad, more, unread = head_expected(repo, args[0], args[1:]) if args[1:] and not red else ([], [], [])
+            red, wait = red + bad, wait + more
+            print("; ".join(red + wait or ok))
+            if unread:
+                print("not waited on: " + "; ".join(unread))
+            if red or wait:
+                sys.exit(1 if red else 2)
+        elif mode == "fixed":
+            why = fixed(repo, args[0], args[1], args[2], [b for b in args[3].split("\n") if b], args[4:])
+            print(why or "fixed")
+            if why:
+                sys.exit(1)
+        elif mode == "base":
+            # head's rule for a base's head: a commit status alone counts, as on main, but with no check
+            # run and no status nothing has concluded. A red head prints its red checks alone.
+            red, wait, ok = checks(repo, args[0], need_run=False)
+            wait = wait if red or wait or ok else ["no check runs or statuses"]
+            print("; ".join(red or wait or ok))
+            if red or wait:
+                sys.exit(1 if red else 2)
+        elif mode == "required":
+            # The checks base requires, one name a line (none for a base that requires none); an error when any
+            # part of its rules cannot be read.
+            req, why = required(repo, args[0])
+            if why:
+                raise Err(why)
+            print("\n".join(sorted({c for c, _ in req})))
+        elif mode == "age":
+            # head's rule; once green, the whole minutes since its last run or status finished.
+            done = []
+            red, wait, ok = checks(repo, args[0], done=done)
+            if red or wait:
+                print("; ".join(red + wait))
+                sys.exit(1 if red else 2)
+            try:
+                last = max(calendar.timegm(time.strptime(t, "%Y-%m-%dT%H:%M:%SZ")) for t in done)
+            except (TypeError, ValueError):
+                raise Err("unreadable finish time on " + args[0])
+            print(int(time.time() - last) // 60)
+        elif mode == "admin":
+            why = admin(repo, args[0], args[1], args[2])
+            if why:
+                print("; ".join(why))
+                sys.exit(1)
+        elif mode == "behind":
+            try:
+                n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
+            except Unlisted as e:
+                print("error %s" % e)
+                sys.exit(UNLISTED)
+            print("\n".join([str(n)] + off))
+        elif mode == "merged":
+            extra = merged(repo, args[0], args[1], args[2])
+            if extra:
+                print(", ".join(extra[:5]) + (" and %d more" % (len(extra) - 5) if len(extra) > 5 else ""))
+                sys.exit(1)
+        elif mode == "queue":
+            print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
+        elif mode == "pushed":
+            print(pushed(repo, args[0], args[1], float(args[2])))
+        elif mode == "stop":
+            print(stop_pr(repo, args[0]))
+        elif mode == "queued":
+            rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
+            print(msg)
+            sys.exit(rc)
+        elif mode in ("files", "files-status"):
+            files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4], hold=float(args[4]) if len(args) > 4 else None)
+            if not files:
+                raise Err("gh listed no files, or fewer than the PR changes")
+            print("\n".join(files))
+        else:
+            rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
+            print(msg)
+            sys.exit(rc)
+    except Exception as e:
+        print("error %s" % (e or type(e).__name__))
+        sys.exit(CI_ERROR)
