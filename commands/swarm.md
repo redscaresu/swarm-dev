@@ -67,7 +67,13 @@ Repeat until a step below says stop:
    Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
    30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
    worked out without them, so it may have missed a working conductor, or one stopped on an expired
-   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. A line
+   `unlisted: <PR URL> (<head>): no story or epic lists it; ...` names an open PR you opened that no
+   story or epic lists, so `swarm.sh merge` would refuse it. Find the `kind: lead` story that covers
+   it, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge <PR URL>` once its checks are green
+   and the merge is yours to make. With no such story, tell the user the PR waits on them. An
+   `unlisted: not checked (<why>)` line means the check could not run, so such a PR may be missed;
+   run `swarm.sh next` again later. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
@@ -279,7 +285,7 @@ Repeat until a step below says stop:
      uncommitted, as review-agent checks. codex-review reviews the directory it runs in, so run it
      from the story's worktree (`<repo>-wt/<slug>`, beside its repo), in the background:
      `cd <repo>-wt/<slug> || exit 1 && SWARM_STORY=<slug> SWARM_PROJECT=<this project> swarm.sh codex-review <base>`
-     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage limit the model
+     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage or rate limit the model
      `fallback_reviewer` names. Write its findings to a file and send them with
      `swarm.sh tell <slug> findings <file>`: that tell is a round under way, and the line goes quiet.
      If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
@@ -404,8 +410,8 @@ Repeat until a step below says stop:
      the conductor and deletes its report, so the collect would never run. Then read the report.
      `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
      `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
-     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
-     does not count. Handle all of these first: a build that died as
+     The report may also list a PR closed unmerged or a story in review with several PRs, kept or
+     not, which `<n>` does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
      report says for each (docs/reference-merging.md § Merging lists them). Clear any other cause the report
@@ -423,9 +429,17 @@ Repeat until a step below says stop:
      commits, its worktree is clean or gone, or it stops running.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference-lead.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
-     `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
-     time: a new one stops the earlier one, which then ends with nothing printed; that needs
-     nothing from you. A new run first reports anything that landed while none was running.
+     `wait --lead` ends on a `timeout:` or `wait-failed:` line, start it again. Neither is a queue
+     item. `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` (exit 1) means its timeout
+     passed with nothing new. `wait-failed: exit <rc>, exit: swarm.sh wait --lead` means it stopped on
+     an error before anything new came in: a bad argument, a lock it could not take, a failed read
+     of the queue, or a TERM from outside it (exit 143). Read its stderr for the cause and fix it if it is yours before you start it again.
+     Only one runs at a time: a new one stops the earlier one, which then prints
+     `replaced: a newer wait --lead watches now` (exit 143), or, when it was still in a slow read 5 s
+     later, exits 137 with nothing printed. After a newer run took over, either needs nothing from you,
+     since the newer one watches. Any other exit with nothing printed failed before it started (exit 1,
+     the cause on stderr, which you fix if it is yours) or was stopped by a KILL from outside (exit 137,
+     nothing on stderr): start it again. A new run first reports anything that landed while none was running.
 
      Once both waits are running, send each
      `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why

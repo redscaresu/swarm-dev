@@ -64,7 +64,7 @@ stop_rule() {
   printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand), or in review with its review agent still to merge it (not one \`swarm.sh merge\` has held for the user or the lead since), or kept by a close with one PR and still to be reviewed $(fix_running)." \
     " A merge or handover note that ends \`finish: ${fin} has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours that \`herdr agent list\` still lists as idle, with \`swarm.sh close review-<slug>\` (leave a working one: it is still handing its PR on, and reconcile or tidy closes it), then write your report." \
     " With no such note, write it only once you find none left by the same rule." \
-    " A story another rule here has you list in your report for the lead (a build that died, a \`not held:\` line, a PR closed unmerged, a kept story with several PRs) is not agent work either." \
+    " A story another rule here has you list in your report for the lead (a build that died, a \`not held:\` line, a PR closed unmerged, a story in review with several PRs, kept or not) is not agent work either." \
     " A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
   if [[ "${CFG_merge}" == agent ]]; then echo " The one exception: stop and report at once when $(base_stop)."; else echo; fi
 }
@@ -77,7 +77,8 @@ base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-mai
 # review_rule — who reviews a story's PR: its own review agent (review_agent, review_brief), which waits
 # for green, triages, reviews each head, tells the builder its findings, logs them, and merges the PR or
 # hands it to the user. The conductor starts it on watch's opened line (or a queued: line, or for a kept:
-# story), and again on each new head's checks-finished line, which review-agent refuses while the last one
+# story with one PR; a story in review with several PRs, kept or not, is the lead's, as review_agent_owns
+# counts it), and again on each new head's checks-finished line, which review-agent refuses while the last one
 # still reviews or once the head has passed; it is never in the loop otherwise: two in it would send
 # findings and count rounds twice. A review agent's stop note hands the story back: on head moved: it
 # starts a new one, on review's held: it waits for the parent's merge, and on the rest it acts as on its
@@ -101,8 +102,8 @@ longer ready, the review passed and its hand-off has the PR: start nothing for t
 A story \`swarm.sh status\` lists as \`kept:\` (a close kept its PR unreviewed) gets one the same
 way: first make sure its builder is open, since the review agent sends it the findings (with none,
 start one in its worktree as the Stacked rule says for \`(no builder)\`, with a brief that names the
-story and its PR), then start the review agent on the line's PR. A \`kept:\` line with more than one
-PR is the lead's: list it in your report. When review-agent refuses because review-<slug> is
+story and its PR), then start the review agent on the line's PR. A story in review with more than
+one PR is the lead's, kept or not: list it in your report. When review-agent refuses because review-<slug> is
 still reviewing, that agent has the PR: start nothing. When it refuses because the story's worktree
 is not at the PR's head or has uncommitted changes, the builder is still at work: whatever the
 refusal says to do next, start it again once \`swarm.sh wait <slug>\` on that builder returns, or
@@ -168,14 +169,14 @@ codex_review_cmd() {
   [[ -z "${3:-}" ]] || printf 'SWARM_PR=%q ' "$3"
   printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
 }
-# codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
+# codex_rule — how to run codex-review, and what a usage or rate limit or a timeout means, for a builder, a
 # conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
 codex_rule() {
   # shellcheck disable=SC2154 # assigned in another file
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
-  printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage limit or on "codex skipped: ...", do not run it again: a builder carries on without it, whoever reviews the PR reads the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
-  printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit", a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" in place of codex skipped.'
+  printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage or rate limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage or rate limit or on "codex skipped: ...", do not run it again: a builder carries on without it, whoever reviews the PR reads the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit", "codex skipped: rate limit" or "codex skipped: timed out".'
+  printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit" (or "codex rate limit"), a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" (or "codex rate limit", as printed) in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
 # are logged too, with their reason, and never count toward it. A deferred one (the round cap's) that
@@ -384,14 +385,14 @@ load_rule() {
   printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops). Cap your test runner's parallelism at 4 (its jobs or workers setting) too; it counts toward the same 4. Start each load process itself, with no wrapper that forks, record each \`\$!\`, and give it a marker in its command line (an argument \`${slug}-load\`), or wrap each in \`timeout <seconds>\`. Never start load with run_in_background, which outlives the step so its trap never fires, unless it is wrapped in \`timeout <seconds>\` no longer than the check and you kill it when the check ends. Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=${slug})\`). Name and label every container (\`--name ${slug}-load-<n> --label swarm=${slug}\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name: killing the \`docker run\` client leaves the container running. Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps. Before you end any turn, check that none of it is still running, orphaned children too, which a load script that forks and exits leaves behind (\`ps -p <pids>\`, \`pgrep -f '[${slug:0:1}]${slug:1}-load'\`, killing what it finds by PID, \`docker ps --filter label=swarm=${slug}\`). Say in the PR how you loaded the machine. Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Poll the PIDs you recorded with \`ps -p <pids>\` (a later step's shell cannot \`wait\` on them), and find load by its \`${slug}-load\` marker with the bracketed pattern above, keeping the bare marker out of the poll's own command."
 }
 
-# review_tests_rule <dir> — what a builder runs after review fixes: only the tests for the change, as
-# a full local run is slow and CI shards the full suite. It names
-# scripts/select-tests.sh only when <dir>, the tree the builder works in, has it.
+# review_tests_rule <dir> — what a builder runs before its first push and after review fixes: only
+# the tests for the change, then a push once they pass, as a full local run is slow and CI shards the
+# full suite. It names scripts/select-tests.sh only when <dir>, the tree the builder works in, has it.
 review_tests_rule() {
   if [[ -f "$1/scripts/select-tests.sh" ]]; then
-    printf '%s' "After review fixes, run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
+    printf '%s' "Before your first push, and after review fixes, run only the tests mapped to the change (\`scripts/select-tests.sh --run\`), push once they pass, and let CI run the full suite."
   else
-    printf '%s' "After review fixes, run only the project's own tests for the change and let CI run the full suite."
+    printf '%s' "Before your first push, and after review fixes, run only the project's own tests for the change, push once they pass, and let CI run the full suite."
   fi
 }
 
@@ -558,7 +559,11 @@ credentials. Open the PR against \`${base}\`. Before you push, for each function
 or error message the diff changes, re-read its header comment, error text and every README, doc, command
 or skill line that names it, and fix each one that no longer matches. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") Run a long test run in the background
+(Bash run_in_background), so its end wakes you, and act on its result when it ends. Before you push,
+stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its
+background task (the guard refuses pkill and killall). After the PR opens, push what is ready and put
+further points in the PR body, rather than a push for each: every push restarts CI. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(base_merge_rule "${base}") $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)
@@ -1289,19 +1294,22 @@ review_start_failed() {
   die "review-agent: review-$1 did not start${note}${back}${retry}"
 }
 
-# BASE_MERGED_LINKS: how many base-merged heads review_pass follows back from a head to a reviewed one.
+# BASE_MERGED_LINKS: how many base-merged or base-accepted heads review_pass follows back from a head to a reviewed one.
 BASE_MERGED_LINKS=10
 
 # review_pass <slug> <sha> [file] [links] — true when <slug>'s findings file (or <file>, as review_recheck's
 # round file) is a pass on <sha>: its head: line is <sha>, and it has a ## Findings section and no head
 # moved: line (review_rule's test). A head that merge made by merging the base into the PR (events.tsv's
-# `base-merged <sha> from <head>`, base_merged_from) passes when the head it was made from does, since
-# its only new content is the base's; <links> counts the heads followed so far, BASE_MERGED_LINKS at most.
+# `base-merged <sha> from <head>`, base_merged_from), or that review --head took as adding only clean
+# merges of the base to the head it named (`base-accepted <slug> <sha> from <head>`, base_accepted_from),
+# passes when that head does, since its only new content is the base's; <links> counts the heads
+# followed so far, BASE_MERGED_LINKS at most.
 review_pass() {
   local f="${3:-${PROJECT_DIR}/.swarm/reviews/$1.md}" from
   if grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"; then return 0; fi
   (( ${4:-0} < BASE_MERGED_LINKS )) || return 1
   from="$(base_merged_from "$1" "$2")"
+  [[ -n "${from}" ]] || from="$(base_accepted_from "$1" "$2")"
   [[ -n "${from}" && "${from}" != "$2" ]] && review_pass "$1" "${from}" "${3:-}" $(( ${4:-0} + 1 ))
 }
 
@@ -1618,12 +1626,13 @@ $(dropped_lines_rule "$2" "$5" "$3" "$4")
 
 Run \`$(codex_review_cmd "$3" "$1" "$2")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
-Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
-a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
-again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`, and in a round
+Wait for it to exit, and act on what it prints last: a usage or rate limit it prints early may be
+followed by a fallback's review. If it ends on codex's usage or rate limit or on "codex skipped: ...",
+do not run it again: you report \`codex skipped: usage limit\`, \`codex skipped: rate limit\` or
+\`codex skipped: timed out\`, and in a round
 with no \`/code-review\`, you read the diff yourself in codex's place, so the round is never a pass
 on no review at all. When it prints
-\`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
+\`reviewed by fallback <model>: codex usage limit\` (or \`codex rate limit\`), a fallback agent reviewed in codex's place: report
 its findings as codex's, under that line, and log each with \`--reviewer fallback\`, as below. ${cr}
 
 $(review_checklist "${story}")
