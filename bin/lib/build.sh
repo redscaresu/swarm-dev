@@ -61,11 +61,11 @@ wait_pr_rule() {
 stop_rule() {
   local scope="of this epic" fin="epic $1"
   [[ "$1" != backlog ]] || { scope="with no \`epic:\`"; fin="the backlog"; }
-  printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand), or in review with its review agent still to merge it (not one \`swarm.sh merge\` has held for the user or the lead since), or kept by a close with one PR and still to be reviewed $(fix_running)." \
+  printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand, and not blocked only on a story reconcile reopened), or in review with its review agent still to merge it (not one \`swarm.sh merge\` has held for the user or the lead since), or kept by a close with one PR and still to be reviewed $(fix_running)." \
     " A merge or handover note that ends \`finish: ${fin} has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours that \`herdr agent list\` still lists as idle, with \`swarm.sh close review-<slug>\` (leave a working one: it is still handing its PR on, and reconcile or tidy closes it), then write your report." \
     " With no such note, write it only once you find none left by the same rule." \
     " A story another rule here has you list in your report for the lead (a build that died, a \`not held:\` line, a PR closed unmerged, a story in review with several PRs, kept or not) is not agent work either." \
-    " A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
+    " A story blocked only on a \`kind: lead\` story, a hand step, a story reconcile reopened after its PR closed unmerged, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
   if [[ "${CFG_merge}" == agent ]]; then echo " The one exception: stop and report at once when $(base_stop)."; else echo; fi
 }
 # fix_running — a fix-main story an epic conductor started has no epic, yet the conductor built it:
@@ -179,8 +179,8 @@ codex_rule() {
   printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit" (or "codex rate limit"), a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" (or "codex rate limit", as printed) in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
-# are logged too, with their reason, and never count toward it. A deferred one (the round cap's) that
-# proves real is logged escaped, its text copied from the deferred row, so the two rows match.
+# are logged too, with their reason, and never count toward it. A deferred one (held back by the round
+# cap or demote_kinds) that proves real is logged escaped, its text copied from the deferred row, so the two rows match.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -197,7 +197,7 @@ no new round. <n> is 0 for a finding on a plan or a board PR.
 
 <reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
 it is real but not worth the change, wrong when it is mistaken, and deferred when the round cap held
-it back (from review round ${CAP_ROUND}).
+it back (from review round ${CAP_ROUND}) or demote_kinds did (a kind it lists, before that round).
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's
@@ -1190,6 +1190,8 @@ CAP_ROUND=3   # the review round from which the round cap holds findings back (r
 # with ci, reads the diff and trusts CI, its line naming which of the two it is. From round CAP_ROUND on,
 # the round cap: only a regression the PR introduces or a line now false about the code goes to the
 # builder, and the rest is declined as deferred, with no --because (the call is the review agent's).
+# Before CAP_ROUND, demote_kinds (when set) does the same for the kinds it lists; from CAP_ROUND on the
+# cap line covers them, so it prints no line of its own there.
 review_round_line() {
   if [[ "$1" == 1 ]]; then
     echo "This is review round 1 of the story. When the PR
@@ -1216,6 +1218,12 @@ send the builder only a regression this PR introduces or a line now false about 
 replaces the rule that each of them is to fix. Decline the rest as deferred: rebut them in the PR with
 the other declined ones, and log each with \`--declined deferred\` and no \`--because\`, since holding
 it back is your call, not the builder's."
+  [[ -z "${CFG_demote_kinds:-}" || "$1" -ge "${CAP_ROUND}" ]] || echo "Demoted kinds (demote_kinds = ${CFG_demote_kinds}):
+of the findings that are real and inside the story, send the builder one of kinds ${CFG_demote_kinds//,/, }
+only when it is a regression this PR introduces or a line now false about the code; this replaces the
+rule that each of them is to fix. Decline the rest of those kinds as deferred: rebut them in the PR
+with the other declined ones, and log each with \`--declined deferred\` and no \`--because\`, since
+holding it back is your call, not the builder's."
 }
 
 # tab_pane <tab> <pane-name> — the last pane <tab>'s records (next_pane's, <tab> and <tab>-<n>) hold
@@ -1480,7 +1488,8 @@ EOF
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), /code-review on round 1 when the PR
 # changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding
-# (from round CAP_ROUND, the round cap: only a regression or a line now false is to fix, the rest deferred), logs each
+# (from round CAP_ROUND, the round cap, and before it for demote_kinds' kinds: only a regression or a line
+# now false is to fix, the rest deferred), logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
@@ -1499,9 +1508,19 @@ review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
   local fix="One that is real and inside the story is to fix: the builder fixes it, never you."
   cr="$(review_round_line "$6" "$2")"
-  # From the round cap on, the round line above narrows what is to fix (review_round_line).
-  [[ "$6" -lt "${CAP_ROUND}" ]] || fix="Under the round cap above, only a regression this PR introduces or a line now false about the
+  # From the round cap on, the round line above narrows what is to fix (review_round_line); before it,
+  # demote_kinds narrows it for the kinds it lists.
+  local defer="the round cap holds back (from
+round ${CAP_ROUND})"
+  if [[ "$6" -ge "${CAP_ROUND}" ]]; then
+    fix="Under the round cap above, only a regression this PR introduces or a line now false about the
 code is to fix: the builder fixes it, never you."
+  elif [[ -n "${CFG_demote_kinds:-}" ]]; then
+    fix="One that is real and inside the story is to fix, except one of the demoted kinds above, which is
+to fix only as a regression this PR introduces or a line now false about the code: the builder fixes
+it, never you."
+  fi
+  [[ -z "${CFG_demote_kinds:-}" ]] || defer+=" or, before that round, demote_kinds holds back (kinds ${CFG_demote_kinds//,/, })"
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   # findings takes the story's repo by name; a story with no repo: is in the project's own.
   repo="$(fm "${story}" repo)"; [[ -n "${repo}" ]] || repo="$(basename "${PROJECT_DIR}")"
@@ -1643,8 +1662,7 @@ lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
 
 Otherwise, fix or decline each finding. ${fix} Decline the rest, each with its reason: nit for a nit, an edge case or a
 low-value point, wrong for a mistaken one, out-of-scope for a point only a change to a file outside
-the touches can fix, deferred for a real one inside the story that the round cap holds back (from
-round ${CAP_ROUND}), and, for a point declined in an earlier round, the reason it was declined with
+the touches can fix, deferred for a real one inside the story that ${defer}, and, for a point declined in an earlier round, the reason it was declined with
 then. Rebut the declined ones in the PR, in one comment:
 \`gh pr comment $2 --body '<each declined finding and its reason>'\`. Log each declined one now, as
 below; log each one to fix only once the builder has pushed, as below. A finding's round is $6 on
@@ -1892,7 +1910,8 @@ A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent
 session has ended, and the refusal names who acts on it. List the story under no agent in your report
 and never tell it again.
 
-A finding a review agent declined as \`deferred\` (the round cap, from review round ${CAP_ROUND}) that a
+A finding a review agent declined as \`deferred\` (held back by the round cap, from review round
+${CAP_ROUND}, or by demote_kinds before it) that a
 later fix proves real is logged as escaped by the lead, against the PR it was deferred on, its text
 copied exactly from the deferred row: name both in your report, and log nothing yourself.
 
