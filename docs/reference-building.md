@@ -102,13 +102,20 @@ gives one carries the project's label, joined to the rest by ` · `:
   and label in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it under
   that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
   whose they are; one relabelled is left alone, and a new one made. An agent started outside the
-  project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
-  own, so the workspace stays the project's while that pane is open. When herdr gives no list, no
-  workspace or no such pane within a few seconds, the agent opens in the lead's own workspace, and
-  swarm.sh says so. Two first agents started at once share one workspace: the record is made under a
-  lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
-  `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
-  `backlog`.
+  project, as from a board kept outside the repo, opens there only behind a first pane at the
+  project directory, so the workspace stays the project's. In a new workspace that is the
+  placeholder's pane, kept open; in a found one it may be a project agent's own pane, such as the
+  HLD co-author's. In a workspace with no pane swarm.sh reads for its directory (see below),
+  swarm.sh makes one. A new pane goes after the others, so once the first pane is outside the
+  project none can be put first. That happens when every pane at the project ahead of the outside
+  agent's has closed: the kept pane, or a project agent's own pane once that agent retires. A
+  project pane opened later goes after the outside one and does not help. Then the next agent
+  started outside the project opens in the lead's own workspace, and swarm.sh says so. It does the
+  same when, within a few seconds, herdr gives no list or no workspace, or will not open the pane
+  at the project directory. Two first agents started at once share one workspace: the record is
+  made under a lock, and the second waits for the first's. A conductor still opens in its epic's
+  workspace, and `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it
+  refuses one named `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
@@ -845,8 +852,11 @@ removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
-hands the PR over too. `review --head` refuses a head pushed since the review. So does `merge --head`,
-unless the push added only git's own clean merges of the base, which it merges with no new review
+hands the PR over too. `review --head` and `merge --head` refuse a head pushed since the review,
+unless the push added only git's own clean merges of the base. `review --head` also needs that head's
+own CI green, since the agent waited for green on the head it reviewed. It then puts the story in
+review on that head, logs `base-accepted <slug> <new head> from <reviewed head>` and prints an
+`accepted:` line. `merge --head` merges it. Neither needs a new review
 ([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On
 either refusal the agent writes `head moved:`, sends its conductor a stop note naming that line (below), and
 stops. The conductor starts a new review agent on the new head on that note (the lead does when no
@@ -1013,7 +1023,7 @@ rebutted in the PR with a reason and logged with `log-finding --declined <reason
 `deferred` for one the round cap holds back from round 3, and a point already declined with the
 reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
-reviewed. `merge --head` also takes a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
+reviewed. Both also take a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell

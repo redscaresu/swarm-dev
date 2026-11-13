@@ -35,8 +35,11 @@ wording recheck passed is not that one. The line means the builder declined ever
 nothing. It has `round=N verdict=decline-only`, and so does the `review` line after it. A
 `review --head` that succeeds also writes `review-finished <slug>`, outcome `ok`, just before its own
 line and with the same fields; a review refused `held:` writes none. A hold on the ladder's top rung
-writes `review-finished` with `verdict=held` and the round whose findings it held. Neither
-`decline-only` nor `review-finished` is a command of its own. `status`, `next` and `dash` log
+writes `review-finished` with `verdict=held` and the round whose findings it held. A `review --head`
+that takes a green head adding only git's own clean merges of the base to the reviewed one, and is
+not held, writes
+`base-accepted <slug>`, outcome `<new head> from <reviewed head>`, once per such PR, before its own
+line. Neither `decline-only`, `review-finished` nor `base-accepted` is a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
