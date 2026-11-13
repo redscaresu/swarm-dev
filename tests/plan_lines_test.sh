@@ -100,15 +100,16 @@ check "with an agent still at work (only its .partial), no planned: line" test -
 # start failed and a later start pruned its pane from the record), skeptic-f (not listed, marked now:
 # its start may still be under way), skeptic-i (its mark only, older than the epic file: an earlier
 # attempt's), skeptic-j (listed working, but in a pane no record of this project has), skeptic-k (a claude
-# agent listed idle whose session has a background task in flight, only a .partial).
+# agent listed idle whose session has a background task in flight, only a .partial), skeptic-l (its mark only,
+# while an agent of the same name works in a pane of epic f's plan record).
 # missing_line <epic> <name> — the plan-missing: line for <name> of epic <epic>'s plan.
 missing_line() { echo "plan-missing: $1 $2 ended without its output, exit: /swarm-dev:plan-epic $1 (it starts that agent again)"; }
 many() {
   fresh; rm -f "${S}/e/critic.json"
   printf 'w:p1 survey-e\nw:p2 critic\nw:p3 skeptic-a\nw:p4 skeptic-b\n' > "${S}/state/scope-e"
   printf 'w:p5 skeptic-c\nw:p6 skeptic-d\nw:p7 skeptic-f\nw:p8 skeptic-h\n' > "${S}/state/scope-e-2"
-  printf 'w:p10 skeptic-k\n' > "${S}/state/scope-e-3"
-  mark survey-e critic skeptic-a skeptic-b skeptic-c skeptic-d skeptic-g skeptic-h skeptic-j skeptic-k
+  printf 'w:p10 skeptic-k\n' > "${S}/state/scope-e-3"; printf 'w:p21 skeptic-l\n' > "${S}/state/scope-f"
+  mark survey-e critic skeptic-a skeptic-b skeptic-c skeptic-d skeptic-g skeptic-h skeptic-j skeptic-k skeptic-l
   printf '2026-11-12\tcritic\tskeptic-k\tclaude\tsonnet\thigh\ts-pl-k\n' > "${S}/agents.tsv"
   mkdir -p "${CLAUDE_CONFIG_DIR}/projects/p"
   printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
@@ -117,9 +118,9 @@ many() {
   echo '{"findings":[]}' > "${S}/e/skeptic-a.json.partial"; echo '{"findings":[]}' > "${S}/e/skeptic-b.json.partial"
   echo '{"findings":[' > "${S}/e/skeptic-d.json"   # vacuous-test: ok, malformed on purpose
   echo '{"findings":[]}' > "${S}/e/skeptic-h.json"; older "${S}/e/skeptic-h.json"
-  printf '%s,%s,%s,%s,%s' '{"name":"skeptic-a","agent_status":"working","pane_id":"w:p3"}' '{"name":"skeptic-b","agent_status":"idle","pane_id":"w:p4"}' \
+  printf '%s,%s,%s,%s,%s,%s' '{"name":"skeptic-a","agent_status":"working","pane_id":"w:p3"}' '{"name":"skeptic-b","agent_status":"idle","pane_id":"w:p4"}' \
     '{"name":"skeptic-c","agent_status":"done","pane_id":"w:p5"}' '{"name":"skeptic-j","agent_status":"working","pane_id":"w:p99"}' \
-    '{"name":"skeptic-k","agent_status":"idle","pane_id":"w:p10"}' > "${ROOT}/agents"
+    '{"name":"skeptic-k","agent_status":"idle","pane_id":"w:p10"}' '{"name":"skeptic-l","agent_status":"working","pane_id":"w:p21"}' > "${ROOT}/agents"
 }
 many; touch "${ROOT}/no-list"
 check "a poll with no herdr list prints no plan-missing: line" test -z "$(poll | grep '^plan-missing: ')"
@@ -139,6 +140,7 @@ check "a skeptic marked within PLAN_START_GRACE (its start may still be under wa
 check "a mark older than the epic file (an earlier attempt's) gets no line" test -z "$(grep '^plan-missing: e skeptic-i ' <<< "${out}")"
 check "an agent of that name in a pane no record of this project has is not the skeptic: plan-missing:" grep -qxF "$(missing_line e skeptic-j)" <<< "${out}"
 check "a skeptic listed idle whose session has a background task in flight gets no line" test -z "$(grep '^plan-missing: e skeptic-k ' <<< "${out}")"
+check "an agent of the same name working in another plan's record pane does not hide this plan's ended one" grep -qxF "$(missing_line e skeptic-l)" <<< "${out}"
 check "survey, its output counted, gets no line" test -z "$(grep '^plan-missing: e survey ' <<< "${out}")"
 touch "${ROOT}/no-list"
 check "a later poll with no herdr list keeps the seen lines, so it wakes no one" test -z "$(poll)"
@@ -147,7 +149,8 @@ check "nor does the good poll after it: the lines never left the seen queue" tes
 
 # The marks start_agent writes: a critic whose start fails (herdr agent start refused twice, its pane closed),
 # then survey-e's start, which prunes the closed pane from the record before it opens its own. The same
-# poll reads an HLD plan h whose marked hld-lead has ended without its output.
+# poll reads an HLD plan h whose marked hld-lead has ended without its output, with its plan worktree there
+# (/plan-hld makes it before any agent starts) and survey-code's output written.
 fresh; rm -f "${S}/state/scope-e" "${S}/e/critic.json"; echo 'brief' > "${ROOT}/brief.md"
 start() { (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w bash "${SWARM}" agent scope-e "$1" "${P}" codex "${ROOT}/brief.md" >/dev/null 2>&1); }
 echo 'w:p1' > "${ROOT}/next-pane"; touch "${ROOT}/start-fails"
@@ -160,13 +163,15 @@ perl -e 'my $t = time - 1800; utime $t, $t, @ARGV' "${S}/e/started/critic" "${S}
 echo '{"name":"survey-e","agent_status":"working","pane_id":"w:p9"}' > "${ROOT}/agents"
 printf -- '---\nstatus: agreed\n---\n\n# h\n' > "${P}/docs/hld/h.md"
 mkdir -p "${S}/h/started"; echo 0123abc > "${S}/h/base-rev"; old "${S}/h/base-rev"
-echo 'w:p4 hld-lead' > "${S}/state/plan-h"; touch "${S}/h/started/hld-lead"
+printf 'w:p3 survey-code\nw:p4 hld-lead\n' > "${S}/state/plan-h"; touch "${S}/h/started/hld-lead"
+echo '{"summary":"s","facts":[]}' > "${S}/h/survey-code.json"; mkdir -p "${ROOT}/proj-wt/_board-plan-h"
 perl -e 'my $t = time - 1800; utime $t, $t, @ARGV' "${S}/h/started/hld-lead"
 out="$(poll)"
 check "a critic that failed to start, its pane pruned by a sibling's start, still gets plan-missing: e critic" grep -qxF "$(missing_line e critic)" <<< "${out}"
 check "and survey, with its output written, gets no plan-missing: line" test -z "$(grep '^plan-missing: e survey ' <<< "${out}")"
-check "an HLD plan's ended agent gets plan-missing: with the /swarm-dev:plan-hld exit" \
+check "an HLD plan's ended agent gets plan-missing: with the /swarm-dev:plan-hld exit, while its plan worktree exists" \
   grep -qxF 'plan-missing: h hld-lead ended without its output, exit: /swarm-dev:plan-hld h (it starts that agent again)' <<< "${out}"
+check "and that HLD plan gets no planned: line" test -z "$(grep '^planned: h ' <<< "${out}")"
 
 # An HLD plan: the record plan-h, its outputs newer than .swarm/h/base-rev.
 hld() {

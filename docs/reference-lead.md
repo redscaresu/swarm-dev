@@ -574,7 +574,7 @@ then; a start that fails with no agent running puts the note back. It reads the 
 when it parses as JSON and is newer than its planner's resume reference. For `/plan-epic` that is
 the epic file, and for its split critic the plan's board PR worktree. For `/plan-hld` it is
 `.swarm/<hld>/base-rev`, or the HLD file on a board outside the repo. A malformed file, or one
-from an earlier attempt, does not count, and neither does a `.partial`. There is no line while
+from an earlier attempt, does not count, and neither does a `.partial`. There is no `planned:` line while
 the plan's board PR worktree exists (`<repo>-wt/_board-scope-<epic>`, or `_board-plan-<hld>`),
 from `board-pr start` until `board-pr done`: the plan is then in its board PR, or about to be.
 As `/plan-hld` makes its worktree before it starts an agent, an HLD's plan gets this line only
@@ -589,9 +589,13 @@ start in the tab then drops that pane's line from the record. So `swarm.sh agent
 `.swarm/<epic>/started/<name>`, before it opens the pane. The plan's agents are the record's and
 those whose mark is newer than the same resume reference; an older mark is an earlier attempt's.
 A marked agent gets the line when its file does not count, its mark is 300 seconds old (a start
-and its brief can take minutes), and the poll's herdr list shows it in no pane this project
-opened, or shows it idle or done with no background task still running in its session. While any agent's file does not count, there is no `planned:`
-line. A split critic is never named, as its reference is gone once there can be a line. A poll
+and its brief can take minutes), and the poll's herdr list shows it in no pane of this plan's own
+tab records, or shows it idle or done with no background task still running in its session. An agent
+of the same name in another plan's pane does not count: plan agents share bare names such as
+`critic`. While any agent's file does not count, there is no `planned:` line. The board PR
+worktree does not hold this line back, so an in-repo HLD plan, which runs with its worktree there
+from the start, gets it too. A split critic can be named only while that worktree, its reference,
+exists. A poll
 whose herdr list failed keeps the `plan-missing:` lines it saw last. Both lines read the tab
 records, the start marks, the board and `.swarm` files, with one `python3` for the JSON, one for
 the poll's herdr list and one for each idle agent's session log, and make no gh or herdr call of their own. Both are alerts, so a run's first
