@@ -57,6 +57,10 @@ sections=$'Alternatives\nCurrent state\nDesign\nEpics\nGoals\nNon-goals\nOpen qu
 check "init writes the HLD template with a grants line and the ten sections" "yes|${sections}" \
   "$(grep -qxF 'grants: []' "${p}/docs/hld/README.md" && echo yes)|$(sed -nE 's/^## ([^ ]+( [^ ]+)*)  .*/\1/p' "${p}/docs/hld/README.md" | LC_ALL=C sort)"
 check "init's Board.base has a view on the HLDs" "yes" "$(grep -qF -- '- file.inFolder("hld")' "${p}/docs/Board.base" && echo yes || echo no)"
+check "init writes the retros README" "yes" "$([[ -f "${p}/docs/retros/README.md" ]] && echo yes || echo no)"
+# The Retros view picks retro files by a covers: value, so README.md and the notes in retros/ stay out.
+check "init's Board.base has a Retros view that filters on covers" "yes" \
+  "$(awk '/^  - type:/{v=0; n=0} /^    name: Retros$/{v=1} v && /^      not:$/{n=1} v && n && /^        - covers\.isEmpty\(\)$/{f=1} END{print (f ? "yes" : "no")}' "${p}/docs/Board.base")"
 check "init creates .claude/swarm/" "yes" "$([[ -d "${p}/.claude/swarm" ]] && echo yes || echo no)"
 check "init adds the three .gitignore lines after the existing one" \
   $'node_modules/\n.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json' "$(cat "${p}/.gitignore")"
@@ -271,7 +275,8 @@ check "with core.sshCommand set, init leaves the user's ssh as it is" "yes|no" \
 q="${ROOT}/hooked"; "${GIT[@]}" init -q "${q}"
 run "${q}" init >/dev/null || true
 printf 'check:\n\t@echo checked; false\n' > "${q}/Makefile"
-(cd "${q}" && "${GIT[@]}" add Makefile && "${GIT[@]}" commit -qm make --no-verify)
+# init's retros/README.md is not among the hook's board paths, so it goes in with the Makefile.
+(cd "${q}" && "${GIT[@]}" add Makefile docs/retros && "${GIT[@]}" commit -qm make --no-verify)
 echo s > "${q}/docs/stories/s.md"
 check "the hook lets a board-only commit through without make check" "ok" \
   "$(cd "${q}" && "${GIT[@]}" add -A docs && "${GIT[@]}" commit -qm board >/dev/null 2>&1 && echo ok || echo refused)"
