@@ -988,6 +988,13 @@ lead_blocked() {
   done
 }
 
+# reopened_ready <story-file> — true for a ready story whose last event is reconcile's reopen, after its
+# PR closed unmerged: the lead's, not an agent's. agent_work_left skips it, and lead_held reads a story
+# blocked only on it as the lead's too.
+reopened_ready() {
+  [[ "$(fm "$1" status)" == ready && "$(last_event "$(basename "$1" .md)")" == $'reconcile\tok (reopened)' ]]
+}
+
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
 # open and not yet in review), unless reconcile reopened it after its PR closed unmerged (the lead's);
@@ -1009,7 +1016,7 @@ agent_work_left() {
     else
       [[ "${e:--}" == "$1" ]] || continue
       case "$(fm "${f}" status)" in
-        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        ready) ! reopened_ready "${f}" || continue ;;
         blocked) ! lead_held "${f}" || continue ;;
         review) review_agent_owns "${f}" || continue ;;
         *) continue ;;
@@ -1047,7 +1054,8 @@ note_group() {
 # lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
 # blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
 # reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
-# that is itself lead_held, so a chain of agent stories under a lead story waits too. A depends_on
+# that is itself lead_held, so a chain of agent stories under a lead story waits too, or a ready story
+# reconcile reopened (reopened_ready), which the lead restarts. A depends_on
 # cycle ([seen], space-separated slugs) waits on the lead as well: no merge can break it.
 lead_held() {
   local p f open seen
@@ -1061,6 +1069,7 @@ lead_held() {
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     agent_kind "$(fm "${f}" kind)" || continue
+    ! reopened_ready "${f}" || continue
     lead_held "${f}" "${seen}" || return 1
   done
 }
