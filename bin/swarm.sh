@@ -23,7 +23,7 @@
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
-#   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
+#   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it with the tab's id, t1 (w1:t3) (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
 #   swarm.sh swarms                                         every swarm herdr runs on this machine: each `swarm-lead · <project>` workspace as a project, with its dir, then its workspaces (the lead's first) with their agents; a workspace is a project's by its label and its dir, never by a prefix of another project's label or a dir name two projects share
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's), a builder not while its Claude review agent is busy on the old version; one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
@@ -250,14 +250,19 @@ CFG_fallback_reviewer="" # empty: a codex usage or rate limit skips codex's revi
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_review_verify=ci    # full: a review agent's round 1 may run the selected tests and check mutation proofs; ci: every round trusts CI
+CFG_demote_kinds=""      # empty: off; else finding kinds, comma-separated, that rounds before the round cap send only as a regression or a now-false line
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
 CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify lead_epics commit_trailers agent_env"
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify demote_kinds lead_epics commit_trailers agent_env"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
+
+# A finding kind, as log-finding takes it (record_finding) and demote_kinds lists them: short kebab-case.
+FINDING_KIND_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
+FINDING_KIND_MAX=32
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
@@ -312,6 +317,15 @@ load_config() {
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: merge_admin must be off or on, not '${value}'" ;;
       review_verify)
         [[ "${value}" == ci || "${value}" == full ]] || die "${where}: review_verify must be ci or full, not '${value}'" ;;
+      demote_kinds)
+        # Each kind as log-finding takes it, so a kind the review agent logs can match the list.
+        # read drops a trailing empty field, so a value ending in a comma gets one back to refuse.
+        IFS=, read -r -a words <<< "${value}"
+        [[ "${value}" != *, ]] || words+=("")
+        for w in ${words[@]+"${words[@]}"}; do
+          [[ "${w}" =~ ${FINDING_KIND_RE} && ${#w} -le ${FINDING_KIND_MAX} ]] \
+            || die "${where}: demote_kinds: '${w}' is not a finding kind; name kinds separated by commas, each short kebab-case (${FINDING_KIND_MAX} characters at most), such as duplicate-code,efficiency, not '${value}'"   # loose-match: ok FINDING_KIND_RE is a fixed regex
+        done ;;
       lead_epics)
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
       commit_trailers)
