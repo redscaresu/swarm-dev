@@ -525,6 +525,43 @@ check "a refused pane at the project dir sends the agent to the lead's own works
   "${lc}|yes|" \
   "$(tab_ws s12 | cut -d'|' -f2)|$(grep -q 'would not open a pane at .* the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$(ws_tabs "${hc#*|}")"
 
+# --- Pane order. A pane made at the project dir goes after the workspace's others, so it keeps the
+# workspace the project's only when nothing outside the project is ahead of it. (b) Once the kept pane
+# is closed, the agent outside the project is the workspace's first pane: the next agent started outside
+# opens in the lead's own workspace, saying why, and no pane is made at the project dir behind it.
+# tab_of <workspace> <tab label> — the id of that tab.
+tab_of() { herdr_q "next(t['tab_id'] for t in s['tabs'] if t['workspace_id'] == '$1' and t['label'] == '$2')"; }
+# opened_here — yes when lead.err says the first pane is outside the project and the agent opens in the lead's workspace.
+opened_here() { grep -q "first pane is at ${ROOT}/elsewhere, outside the project, .* the agent opens in this workspace instead" "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")"; }
+hw="${hc#*|}"
+lead "${C}" "${lc}" agent s13 s13 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+"${ROOT}/bin/herdr" tab close "$(tab_of "${hw}" lead-agents)" > /dev/null
+: > "${ROOT}/lead.err"
+lead "${C}" "${lc}" agent s14 s14 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+check "with the kept pane closed, an agent outside the project opens in the lead's own workspace, saying why, and no pane is made behind the outside one" \
+  "${lc}|yes|s13" "$(tab_ws s14 | cut -d'|' -f2)|$(opened_here)|$(ws_tabs "${hw}")"
+
+# (c) A pane at the project made after one outside it (a project agent started after s13) leaves the
+# outside pane first, so the next agent outside the project is sent to the lead's workspace too.
+lead "${C}" "${lc}" agent hld-c3 hld-c3 "${C}" hld "${ROOT}/brief.md" > /dev/null
+: > "${ROOT}/lead.err"
+lead "${C}" "${lc}" agent s15 s15 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+check "a project pane made after an outside one does not keep the workspace: an agent outside the project opens in the lead's own, saying why" \
+  "${lc}|yes|s13 hld-c3|${ROOT}/elsewhere" "$(tab_ws s15 | cut -d'|' -f2)|$(opened_here)|$(ws_tabs "${hw}")|$(first_cwd "${hw}")"
+
+# The first pane is read as herdr_workspaces reads it: a pane in another repo's worktree (zzz-wt/s9) is
+# skipped. With only such a pane left, a pane is made at the project dir behind it, and that pane then
+# keeps the workspace the project's, so the next agent outside the project opens there too.
+lead "${C}" "${lc}" close s13 > /dev/null || true; lead "${C}" "${lc}" close hld-c3 > /dev/null || true
+lead "${C}" "${lc}" agent s16 s16 "${ROOT}/zzz-wt/s9" code "${ROOT}/brief.md" > /dev/null
+"${ROOT}/bin/herdr" tab close "$(tab_of "${hw}" lead-agents)" > /dev/null
+: > "${ROOT}/lead.err"
+lead "${C}" "${lc}" agent s17 s17 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+lead "${C}" "${lc}" agent s18 s18 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+check "a pane in another repo's worktree ahead of the project's is skipped, as herdr_workspaces skips it" \
+  "${hw}|${hw}|s16 lead-agents s17 s18|${ROOT}/zzz-wt/s9|0" \
+  "$(tab_ws s17 | cut -d'|' -f2)|$(tab_ws s18 | cut -d'|' -f2)|$(ws_tabs "${hw}")|$(first_cwd "${hw}")|$(grep -c 'opens in this workspace instead' "${ROOT}/lead.err" || true)"
+
 # Two first agents the lead starts at once (plan-hld's surveys), with no record yet: the record's lock
 # makes the second wait for the first's workspace, so both open in one site-<hash> · lead-agents, one
 # workspace is made, and no lock is left.
