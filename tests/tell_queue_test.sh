@@ -369,7 +369,8 @@ printf -- '---\nkind: code\nstatus: ready\n---\n' > "${p}/docs/stories/b1.md"
 mkdir -p "${ROOT}/proj-wt/b1"; git -C "${p}" remote add origin https://github.com/o/proj.git
 # shellcheck disable=SC2016 # the stub's own shell expands $*
 printf '#!/bin/sh\ncase "$*" in "pr list"*"--state all"*) echo "[]" ;; *) exit 1 ;; esac\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
-tell "fix round held" >/dev/null
+# Queued first: a hold run on the tell sent at once would leave this case no queue path to check.
+check "findings due a top-rung hold, told to a busy builder: queued, exit 0" "${QUEUED} rc=0" "$(tell "fix round held")"
 state idle; settle
 # Its claim leaves b1.findings.sent (when it went), and nothing else of the tell: not queued, on its way,
 # claimed or undelivered.
