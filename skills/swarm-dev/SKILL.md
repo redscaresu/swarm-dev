@@ -39,7 +39,7 @@ re-scopes it and runs `swarm.sh reset`, or `swarm.sh drop`, and tells the user w
 
 The lead keeps one `swarm.sh wait --lead` running and acts on each line it prints: `stuck:` (an idle
 builder, 60 minutes by default), `conflict:`, `unmerged:`, `no-review:`, `main-red:`, `sign-blocked:`,
-`planned:` (a plan swarm's agents have all written their output) and `idle:` each name their exit. From review round 3 the round cap sends back only regressions and
+`planned:` (a plan swarm's agents have all written their output), `plan-missing:` (one of them ended without it) and `idle:` each name their exit. From review round 3 the round cap sends back only regressions and
 false statements; the rest is logged as deferred. Each time a person steps in, log it with
 `swarm.sh intervene lead-hand|user-caught <cause> "<line>"`.
 

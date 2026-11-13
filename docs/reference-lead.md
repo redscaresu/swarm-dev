@@ -575,9 +575,23 @@ the plan's board PR worktree exists (`<repo>-wt/_board-scope-<epic>`, or `_board
 from `board-pr start` until `board-pr done`: the plan is then in its board PR, or about to be.
 As `/plan-hld` makes its worktree before it starts an agent, an HLD's plan gets this line only
 when its worktree is gone. The lead runs the exit, which reuses the outputs and starts the next step.
-The next step's agents change the names, so the line comes again when that step ends. It reads
-the tab records, the board and `.swarm` files, with one `python3` for the JSON, and makes no gh or
-herdr call. It is an alert, so a run's first read prints it.
+The next step's agents change the names, so the line comes again when that step ends.
+
+An agent that ended without its output gets a line of its own:
+`plan-missing: <epic> <name> ended without its output, exit: /swarm-dev:plan-epic <epic> (it starts that agent again)`,
+with the `/swarm-dev:plan-hld <hld>` exit for an HLD's plan. The record alone cannot say which
+agents a plan expects: a start that fails closes its pane, you can close one by hand, and the next
+start in the tab then drops that pane's line from the record. So `swarm.sh agent` also leaves a start mark,
+`.swarm/<epic>/started/<name>`, before it opens the pane. The plan's agents are the record's and
+those whose mark is newer than the same resume reference; an older mark is an earlier attempt's.
+A marked agent gets the line when its file does not count, its mark is 300 seconds old (a start
+and its brief can take minutes), and the poll's herdr list shows it in no pane this project
+opened, or shows it idle or done. While any agent's file does not count, there is no `planned:`
+line. A split critic is never named, as its reference is gone once there can be a line. A poll
+whose herdr list failed keeps the `plan-missing:` lines it saw last. Both lines read the tab
+records, the start marks, the board and `.swarm` files, with one `python3` for the JSON and one for
+the poll's herdr list, and make no gh or herdr call of their own. Both are alerts, so a run's first
+read prints them.
 
 **A conductor that reported with agent work left wakes the lead too.** A conductor writes
 `.swarm/conduct-<epic>.report.md` as its last act, and a new `swarm.sh conduct` removes an earlier
