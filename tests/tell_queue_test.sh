@@ -24,12 +24,17 @@
 # and lands after it, its check stamped live meanwhile; a mark whose process is dead
 # (b1.findings.direct.<pid>, b1.findings.claimed.<token>) holds nothing up. A queued tell to a builder whose pane closed, or
 # whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a tell
-# undelivered: line for the lead, again for a later drop of its kind. One herdr sent but never showed
+# undelivered: line for the lead, again for a later drop of its kind. A queued delivery goes to the
+# pane its check read (TELL_PANE), not to a new pane that took the name before it prompts
+# (${ROOT}/movepane). One herdr sent but never showed
 # taken up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as
 # findings: its line says it may have arrived, and it counts as one round. One herdr refused as
 # blocked before sending anything (${ROOT}/blocked), whose pane then could not be read, was never
 # sent: its line says to send it again. Queued findings due a
-# step-up or a top-rung hold while the story's lock is held go back in the queue. A builder at its
+# step-up or a top-rung hold while the story's lock is held go back in the queue; with no lock held, a
+# top-rung hold takes them into its block and kept file, never sent nor handed to the lead. tell_requeue
+# (agents.sh sourced) puts a tell on its way back once: under the queue's lock when it is free, and with
+# another caller's lock held all the same, leaving that lock; never over a newer one. A builder at its
 # prompt with a background shell (busy, its turn over) gets its queued tell; mid-turn it waits. A
 # queued tell whose check died goes to the lead through wait --lead, and so does one whose delivery
 # failed before claiming it three times (${ROOT}/childfail). One a newer tell replaced on its way
@@ -82,7 +87,9 @@ case "$1 $2" in
     if [ -f "$F/childreplace" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then rm -f "$F"/proj/.swarm/tells/b1.findings.sending.*; exit 1; fi
     awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
-    END { print "]}}" }' "$F/agents" ;;
+    END { print "]}}" }' "$F/agents"
+    # With movepane, a new b1 holds the name in w:10 from the next read on: the read after a delivery's own.
+    if [ -f "$F/movepane" ]; then rm -f "$F/movepane"; echo "b1 w:10 idle" > "$F/agents"; fi ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
   "agent prompt") case "$*" in *"fix round A"*) while [ -f "$F/promptslow" ]; do sleep 0.1; done ;; esac   # that tell stays on its way until the test lets its prompt through; any other prompt goes at once
     echo "$*" >> "$F/keys.log"   # logged once herdr has it, after any stall: keys.log's order is the order herdr got them
@@ -323,6 +330,17 @@ state idle w:10; settle   # a new b1, idle in another pane
 check "a queued tell to a builder whose name a new pane holds: not sent to that pane" 0 "$(prompts)"
 check "a queued tell to a builder whose name a new pane holds: wait --lead prints its line" yes "$(alert "$(lead)")"
 
+# A queued delivery whose pane check passed goes to that pane (TELL_PANE), even when a new b1 holds the
+# name by the time it prompts (${ROOT}/movepane: herdr lists b1 in w:10 after the delivery's own read):
+# never to whatever pane the name points at then.
+fresh; state idle; mkdir -p "${Q}"
+printf 'b1 w:9 conductor\nfix round pinned\n' > "${Q}/b1.findings.sending.t1"   # on its way, as the check takes it
+touch "${ROOT}/movepane"
+out="$(VIA="w:9 conductor t1" tell "fix round pinned")"
+check "a queued delivery prompts the pane its check read, not a new pane that took the name meanwhile" "told b1 rc=0|w:10 idle|1 0" \
+  "${out}|$(cut -d' ' -f2- "${ROOT}/agents")|$(grep -c '^agent prompt w:9 ' "${ROOT}/keys.log" || true) $(grep -c '^agent prompt w:10 ' "${ROOT}/keys.log" || true)"
+rm -f "${ROOT}/movepane"
+
 # With the ladder on, the next findings round is a step-up's (round 3 of the build, sonnet,opus,fable)
 # or a top-rung hold's (round 2 on the top rung: b1 runs opus, sonnet,opus), and a step-up, restart or
 # hold of b1 holds the story's lock: the queued findings go back in the queue, never to the lead,
@@ -344,6 +362,61 @@ for how in "a step-up:sonnet,opus,fable:2" "a top-rung hold:sonnet,opus:1"; do
   : > "${p}/.claude/swarm/config"; rm -rf "${p}/.swarm/locks"; settle
   check "queued findings due ${what} while the story's lock was held: sent once it is gone" "1 yes" "$(prompts) $(sent "fix round three")"
 done
+
+# The same top-rung hold with no lock held and a story a step-up could run on (ready, kind: code, a
+# worktree, gh listing no PR on story/b1): the hold takes the queued findings. They go into its block and
+# its kept file, are never sent, and nothing is left queued or handed to the lead.
+fresh; state busy
+echo "escalate_ladder = sonnet,opus" > "${p}/.claude/swarm/config"
+printf '2026-10-27T09:01:00Z\ttell:findings\tb1\t-\tok\n' > "${p}/.swarm/events.tsv"
+printf -- '---\nkind: code\nstatus: ready\n---\n' > "${p}/docs/stories/b1.md"
+mkdir -p "${ROOT}/proj-wt/b1"; git -C "${p}" remote add origin https://github.com/o/proj.git
+# shellcheck disable=SC2016 # the stub's own shell expands $*
+printf '#!/bin/sh\ncase "$*" in "pr list"*"--state all"*) echo "[]" ;; *) exit 1 ;; esac\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
+# Queued first: a hold run on the tell sent at once would leave this case no queue path to check.
+check "findings due a top-rung hold, told to a busy builder: queued, exit 0" "${QUEUED} rc=0" "$(tell "fix round held")"
+state idle; settle
+# Its claim leaves b1.findings.sent (when it went), and nothing else of the tell: not queued, on its way,
+# claimed or undelivered.
+check "queued findings a top-rung hold takes: not sent, nothing left queued, no line for the lead" "0|b1.findings.sent" \
+  "$(prompts)|$(cd "${Q}" 2>/dev/null && compgen -G 'b1.findings*' | tr '\n' ' ' | sed 's/ $//' || true)"
+# The hold's own record: its held line, and the story's board state (kind: lead, held_for: top-rung).
+S="${p}/.swarm/board-state/stories/b1"
+check "queued findings a top-rung hold takes: in its block and its kept file, the story held for the lead" \
+  "yes|fix round held|held ok (top-rung: findings round 2 on opus)|lead top-rung" \
+  "$(grep -qx 'fix round held' "${p}/.swarm/escalated/b1" 2>/dev/null && echo yes || echo no)|$(cat "${p}/.swarm/briefs/b1.held-findings.md" 2>/dev/null)|$(awk -F'\t' "${EVENT_AWK}"' $2 == "held" && $3 == "b1" { print $2, outcome($5) }' "${p}/.swarm/events.tsv")|$(awk '/^kind:/ { k = $2 } /^held_for:/ { h = $2 } END { print k, h }' "${S}" 2>/dev/null)"
+: > "${p}/.claude/swarm/config"; git -C "${p}" remote remove origin
+rm -rf "${ROOT}/bin/gh" "${ROOT}/proj-wt" "${p}/docs/stories/b1.md" "${p}/.swarm/escalated" "${p}/.swarm/briefs" "${p}/.swarm/board-state"
+
+# tell_requeue, called as the check calls it (agents.sh sourced): it puts a tell on its way
+# (.sending.<token>) back in the queue under the queue's lock. With the lock free it takes it for the
+# move (${ROOT}/mv.log: whether b1.lock was there when mv ran) and lets it go after; with another
+# caller's lock held past note_lock's wait it puts the tell back all the same and leaves that lock as it
+# was. A newer tell queued meanwhile is kept, never overwritten (mv -n): the tell is not doubled.
+# requeue — tell_requeue b1's findings entry and its .sending.t5.
+requeue() {
+  PROJECT_DIR="${p}" SWARM_HOME="${HERE}/.." MVLOG="${ROOT}/mv.log" bash -c 'source "$1/agents.sh"
+    mv() { if [[ -d "${TELL_QUEUE}/b1.lock" ]]; then echo locked; else echo unlocked; fi >> "${MVLOG}"; command mv "$@"; }
+    tell_requeue b1 "${TELL_QUEUE}/b1.findings" "${TELL_QUEUE}/b1.findings.sending.t5"' _ "${HERE}/../bin/lib"
+}
+# requeued — the queue's findings entries, then the text of b1.findings and whether b1.lock is there.
+requeued() { echo "$(cd "${Q}" && compgen -G 'b1.findings*' | tr '\n' ' ')|$(tail -n +2 "${Q}/b1.findings" 2>/dev/null)|$([[ -d "${Q}/b1.lock" ]] && echo locked || echo free)"; }
+fresh; mkdir -p "${Q}"; : > "${ROOT}/mv.log"
+printf 'b1 w:9 conductor\nfix round back\n' > "${Q}/b1.findings.sending.t5"
+requeue
+check "tell_requeue with the queue's lock free: puts the tell back once, under the lock, and lets it go" "b1.findings |fix round back|free|locked" \
+  "$(requeued)|$(cat "${ROOT}/mv.log")"
+fresh; mkdir -p "${Q}/b1.lock"; : > "${ROOT}/mv.log"   # another caller holds the lock past note_lock's wait
+printf 'b1 w:9 conductor\nfix round back\n' > "${Q}/b1.findings.sending.t5"
+requeue
+check "tell_requeue with another caller's lock held: puts the tell back once all the same, that lock left as it was" "b1.findings |fix round back|locked" \
+  "$(requeued)"
+rmdir "${Q}/b1.lock"
+fresh; mkdir -p "${Q}"
+printf 'b1 w:9 conductor\nfix round newer\n' > "${Q}/b1.findings"; printf 'b1 w:9 conductor\nfix round back\n' > "${Q}/b1.findings.sending.t5"
+requeue
+check "tell_requeue with a newer tell queued meanwhile: keeps the newer, the older not put back over it or left on its way" "b1.findings |fix round newer|free" \
+  "$(requeued)"
 
 fresh; state busy
 tell "fix round one" >/dev/null
