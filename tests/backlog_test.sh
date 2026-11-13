@@ -86,10 +86,12 @@ item "${b}" stories/bx.md "status: blocked" "kind: code" "epic: other" "depends_
 check "unblock --startable of an epic whose file is gone runs unblock, then lists nothing and exits 0; a bare backlog is that, not --backlog" "ready: bx|0|" \
   "$(run unblock --startable gone)|$(run unblock --startable gone >/dev/null; echo $?)|$(run unblock --startable backlog)"
 # st depends on o1, still open (running): it starts stacked on it. rp's last event is reconcile's reopen
-# (its PR closed unmerged), which the lead decides on.
+# (its PR closed unmerged; a pane-closed line after it does not count), which the lead decides on.
 item "${b}" stories/st.md "status: ready" "kind: code" "depends_on: [o1]"
 item "${b}" stories/rp.md "status: ready" "kind: code" "prs: https://github.com/o/r/pull/9"
 printf '2026-10-22T10:00:00Z\treconcile\trp\t-\tok (reopened)\n' >> "${p}/.swarm/events.tsv"
+# A tidy after the reopen closed rp's empty pane: its pane-closed line does not hide the reopen.
+printf '2026-10-22T10:05:00Z\tpane-closed\trp\t-\tok ~~ pane=w:9 slug=rp\n' >> "${p}/.swarm/events.tsv"
 check "unblock --startable marks a story stacked on an open parent, and one whose PR closed unmerged" \
   "startable: o2|startable: rp (its PR https://github.com/o/r/pull/9 was closed unmerged)|startable: st (stacked on o1)" \
   "$(run unblock --startable --backlog | paste -sd'|' -)"
