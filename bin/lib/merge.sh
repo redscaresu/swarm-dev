@@ -762,6 +762,15 @@ base_merged_from() {
     END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
+# base_accepted_from <slug> <sha> — the reviewed head review --head took <sha> in place of, as adding
+# to it only git's own clean merges of the base (mark_review's `base-accepted <slug> <sha> from <head>`,
+# read without its key=value tail), or nothing.
+base_accepted_from() {
+  awk -F'\t' -v t="$1" -v o="$2 from " "${EVENT_OUTCOME_AWK}"'
+    $2 == "base-accepted" && $3 == t { oc = outcome($5); if (index(oc, o) == 1) h = substr(oc, length(o) + 1) }
+    END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
 # only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
 # among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
