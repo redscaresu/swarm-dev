@@ -197,9 +197,9 @@ or `* ` list item and may use `-` or `--` for the dash. The reason must be at le
 and a placeholder such as `<reason>` does not count, nor does a line inside a ```` ``` ```` fence or
 a `>` quote. A change to `commands/*.md` is the text a user reads, so it covers itself when nothing
 else in the code changed; next to a `bin/` or `hooks/` change it does not. The board's own paths
-(`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/`) are not docs, even when the board is
-`docs/`; the rest of `docs/` is. It compares against origin's tag by its SHA and never fetches
-over your local tag. It refuses when origin has no
+(`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files `retros/*.md`) are not
+docs, even when the board is `docs/`; the rest of `docs/` is. It compares against origin's tag by its
+SHA and never fetches over your local tag. It refuses when origin has no
 such tag or the tag is not on the base. No story or epic need list it. These checks all read one
 commit of the base: `--release` fetches the base from origin first and remembers what it got. Right
 before `gh pr merge` it fetches the base again. If the base moved, it prints `origin/<base> moved
@@ -263,9 +263,10 @@ every merge that does not join a merge queue: a base with no queue, and every me
 commits the head lacks and any of them changes a path off the board, `merge` does not merge that
 head. It has GitHub merge the base into the PR's branch, waits for the new head's CI and merges the new
 head instead (Merging the base in, and Waiting for the new head, below). The board's paths are `board_paths`' entries, which the board-only CI gate from `swarm.sh
-init` skips: `stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under the board, and only in
-the board's own repo. Commits that change only those run no tests there, so they do not count. A
-`README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
+init` skips: `stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files
+`retros/*.md` under the board, and only in the board's own repo. `retros/*.md` is a glob, so a script
+under `retros/` is off the board. Commits that change only those run no tests there, so they do not
+count. A `README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
 READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
 cannot tell which GitHub repo it is), `merge` refuses naming that read, with gh's own error line.
 That refusal also ends `merge cannot go ahead until the head has <base> in it, and then nothing is
@@ -922,7 +923,8 @@ No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the 
 release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
 outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`,
-`Board.base` and `.obsidian/`). It reads local refs only, since reconcile has just pulled. The lead opens a PR
+`Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no
+release due). It reads local refs only, since reconcile has just pulled. The lead opens a PR
 from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
 when `next` printed a bare `release` does it bump to the next minor version (a patch when every
 change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
