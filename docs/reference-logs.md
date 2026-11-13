@@ -929,9 +929,9 @@ still needs its FAIL line.
 
 `swarm.sh retro [--since <tag>] [--memory <dir>]` prints the report the lead works through at a release retro.
 It is read-only: it changes no file in the project, logs no event and makes no `gh` call.
-With no `--since` it fetches origin's base branch to find the newest tag.
 Its window starts on the day of the tag's commit (`git log -1 --format=%cs <tag>`).
-`--since` defaults to the newest `v<x.y.z>` tag on origin's base branch, and a tag the repo does not have stops it with an error that names the tag.
+`--since` defaults to the newest `v<x.y.z>` tag on origin's default branch (the local `origin/HEAD`), without a fetch.
+With `origin/HEAD` unset it stops and asks for `--since <tag>`, and a tag the repo does not have stops it with an error that names the tag.
 The first line names the tag and the window's first day.
 The second names the `swarm.sh` that wrote the report: its short commit when it runs from the top of a git checkout, or else the version in its `.claude-plugin/plugin.json` and that it is not a git checkout, as in the plugin cache.
 Then `bin/lib/retro_report.py` runs each `bin/lib/retro_<name>.py` in name order, under a `## <name>` heading.

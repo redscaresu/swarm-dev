@@ -528,8 +528,9 @@ flow_sections() {
 }
 
 # retro [--since <tag>] [--memory <dir>] — the release retro's report, read-only, with no gh call.
-# --since defaults to the newest v<x.y.z> tag on origin's base (newest_tag; base_for fetches that
-# branch); a tag this repo does not have dies naming it. The window starts on the day of the tag's
+# --since defaults to the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, as
+# stage_due reads it (newest_tag; no fetch, so it runs offline); with origin/HEAD unset, or a tag this
+# repo does not have, it dies naming --since or the tag. The window starts on the day of the tag's
 # commit. The first two lines name the tag and that day, then the swarm.sh that wrote it: its short
 # commit when SWARM_HOME is a git checkout's top, else plugin.json's version (the plugin cache).
 # --memory defaults to Claude Code's memory folder for this project (CLAUDE_PROJECTS, then the main
@@ -552,9 +553,10 @@ retro_report() {
     memory="${CLAUDE_PROJECTS}/${main//[^A-Za-z0-9]/-}/memory"
   fi
   if [[ -z "${tag}" ]]; then
-    base="$(base_for "${PROJECT_DIR}")"
-    v="$(newest_tag "origin/${base}")"
-    [[ -n "${v}" ]] || die "retro: origin/${base} has no v<x.y.z> tag; name one with --since <tag>"
+    base="$(git -C "${PROJECT_DIR}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
+      || die "retro: origin/HEAD is not set in ${PROJECT_DIR}, so there is no default branch to find a tag on; name one with --since <tag>"
+    v="$(newest_tag "${base}")"
+    [[ -n "${v}" ]] || die "retro: ${base} has no v<x.y.z> tag; name one with --since <tag>"
     tag="v${v}"
   fi
   git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/tags/${tag}^{commit}" >/dev/null || die "retro: no tag ${tag} in ${PROJECT_DIR}"
