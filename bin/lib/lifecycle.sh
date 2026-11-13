@@ -1993,14 +1993,17 @@ CLOSING_DIR="${PROJECT_DIR}/.swarm/closing"
 # runs there, once that command has exited and the agent's turn has ended. Closing the pane now would
 # kill the command. So it starts the waiter, swarm.sh _close-when-idle (close_idle_wait), detached as
 # review_restart starts its run: nohup, in a session of its own (setsid), so closing the pane does not
-# end it, pinned to this project, and given $$, the swarm.sh process running now. Its output goes to
+# end it, pinned to this project, and given $$, the swarm.sh process running now. It runs from
+# PROJECT_DIR, not this command's cwd: a merge run in the story's worktree removes that worktree
+# (clear_build) right after, and from a deleted directory `claude agents` fails, so every poll would
+# read unknown and the pane would never close. Its output goes to
 # CLOSING_DIR/<name>.log, never to this command's, so the agent's Bash call does not wait on it; its
 # pid goes to CLOSING_DIR/<name>.pid. What it will do is said; a CLOSING_DIR it cannot make is said,
 # and the pane stays open.
 close_when_idle() {
   mkdir -p "${CLOSING_DIR}" 2>/dev/null \
     || { echo "$1 stays open in pane $2: ${CLOSING_DIR} could not be made, so nothing waits to close it; close it with swarm.sh tidy --yes once it is done"; return 0; }
-  SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.chdir(os.environ["SWARM_PROJECT"]); os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
     "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _close-when-idle "$1" "$2" "$$" </dev/null > "${CLOSING_DIR}/$1.log" 2>&1 &
   echo "$!" > "${CLOSING_DIR}/$1.pid"
   echo "$1 closes once this command has exited and its turn has ended; if its turn has not ended ${CLOSE_IDLE_SECONDS}s after this command exits, it is left open, with a close-when-idle line in .swarm/events.tsv"

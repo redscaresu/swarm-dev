@@ -517,13 +517,13 @@ waiting() {
   pid="$(cat "$1/.swarm/closing/$2.pid" 2>/dev/null)" || { echo none; return 0; }
   if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then echo running; else echo "none (stale pid file)"; fi
 }
-# polled <project> <name> — wait up to 30 s for two `read herdr:working` lines in <name>'s waiter log: it
-# writes one on each poll after the command that retired the agent has exited, before it decides, so
-# with two its first poll has read the agent and closed nothing. yes, or no.
+# polled <project> <name> [state] — wait up to 30 s for two `read <state>` lines (herdr:working by
+# default) in <name>'s waiter log: it writes one on each poll after the command that retired the agent
+# has exited, before it decides, so with two its first poll has read the agent and closed nothing. yes, or no.
 polled() {
   local i
   for ((i = 0; i < 300; i++)); do
-    [[ "$(grep -cx 'read herdr:working' "$1/.swarm/closing/$2.log" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }
+    [[ "$(grep -cx "read ${3:-herdr:working}" "$1/.swarm/closing/$2.log" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }
     sleep 0.1
   done
   echo no
@@ -613,6 +613,26 @@ check "drop_gone_state's arm, from review-a's pane: the builder closes, and revi
 check "and once reconcile has exited with review-a idle, its waiter closes its tab, leaving no tab of a, and logs it" \
   "ended|lead@lead|tab close t1|gone|yes" \
   "$(waiter "${ROOT}/vr" review-a)|$(panes_in "${HV}")|$(closes "${HV}" w:r t1)|$(gone "${ROOT}/vr/.swarm/state/a")|$(has "review-a closed (pane w:r)" "$(awk -F'\t' '$2 == "close-when-idle" { print $3, $5 }' "${ROOT}/vr/.swarm/events.tsv" 2>/dev/null)")"
+
+# --- The same, with review-a a Claude session, and reconcile run from a worktree of the project that
+# is removed once reconcile has exited, as clear_build removes a story's worktree after a merge run
+# there. The claude here fails from a deleted directory, as the real one does ("The current directory
+# no longer exists"), so the waiter reads review-a only if it runs from the project: busy while the
+# worktree goes, then idle, when it closes the pane.
+setup vt; git -C "${ROOT}/vt" pull -q --ff-only; lay "${HV}" "${ROOT}/vt" a; : > "${HV}/h/calls"
+printf '2026-10-26\treview\treview-a\tclaude\tsonnet\thigh\tsid-a\n' > "${ROOT}/vt/.swarm/agents.tsv"
+CW="${ROOT}/cw"; mkdir -p "${CW}/bin"
+printf '#!/bin/sh\npwd -P >/dev/null 2>&1 || { echo "The current directory no longer exists" >&2; exit 1; }\nexec "%s" "$@"\n' "${HV}/bin/claude" > "${CW}/bin/claude"
+chmod +x "${CW}/bin/claude"
+echo '[{"sessionId":"sid-a","status":"busy"}]' > "${CW}/agents.json"
+"${GIT[@]}" -C "${ROOT}/vt" worktree add -q --detach "${ROOT}/vt-wt"
+rc=0; out="$(cd "${ROOT}/vt-wt" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID=w:r CLAUDE_STUB_AGENTS="${CW}/agents.json" PATH="${CW}/bin:${HV}/bin:${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile 2>&1)" || rc=$?
+seen="$(polled "${ROOT}/vt" review-a busy)"
+"${GIT[@]}" -C "${ROOT}/vt" worktree remove --force "${ROOT}/vt-wt"
+echo '[{"sessionId":"sid-a","status":"idle"}]' > "${CW}/agents.json"
+check "run from a worktree removed once it exits, review-a's waiter still reads its Claude session, and closes its tab once it is idle" \
+  "0|yes|yes|ended|lead@lead|tab close t1" \
+  "${rc}|$(has "retired review-a as review-a-done" "${out}")|${seen}|$(waiter "${ROOT}/vt" review-a)|$(panes_in "${HV}")|$(closes "${HV}" w:r t1)"
 
 # --- swarm.sh merge run from review-s's pane (merge_fixture.sh's story s, so review-s), on that
 # fixture's project, in a subshell, since its helpers share these names: the merge's reconcile closes
