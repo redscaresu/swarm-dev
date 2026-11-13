@@ -2898,7 +2898,7 @@ own_target() {
 # agent_where <agent> — agent_where_in over herdr's lists, each read once: the agent list first, so
 # an unknown agent fails with no other read, then the pane, workspace and tab lists (every workspace's
 # tabs). A list herdr does not give past the first leaves the workspace label - and the tab its record's
-# name, with its id from the agent list, which already gave the pane. Fails, printing why, when herdr gives no agent list or
+# name, with its tab id when herdr's pane or agent list gave one: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
 # lists no such agent in this project's panes.
 agent_where() {
   local agents out panes workspaces tabs
