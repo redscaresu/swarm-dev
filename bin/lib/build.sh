@@ -823,10 +823,11 @@ review_agent() {
 STARTS_PER_REVIEW=3
 
 # start_unclear <err> — true when <err>, start_agent's stderr, says the brief may have gone out:
-# deliver_prompt's sent or unread tries.
+# deliver_prompt's sent or unread tries, in sent_note's words. Something else that could not be read
+# (its pane, origin's default branch) says nothing about the brief.
 start_unclear() {
   case "$1" in
-    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) return 0 ;;
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"reply to the brief could not be read"*) return 0 ;;
   esac
   return 1
 }
