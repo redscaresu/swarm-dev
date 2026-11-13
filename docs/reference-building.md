@@ -102,13 +102,20 @@ gives one carries the project's label, joined to the rest by ` · `:
   and label in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it under
   that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
   whose they are; one relabelled is left alone, and a new one made. An agent started outside the
-  project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
-  own, so the workspace stays the project's while that pane is open. When herdr gives no list, no
-  workspace or no such pane within a few seconds, the agent opens in the lead's own workspace, and
-  swarm.sh says so. Two first agents started at once share one workspace: the record is made under a
-  lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
-  `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
-  `backlog`.
+  project, as from a board kept outside the repo, opens there only behind a first pane at the
+  project directory, so the workspace stays the project's. In a new workspace that is the
+  placeholder's pane, kept open; in a found one it may be a project agent's own pane, such as the
+  HLD co-author's. In a workspace with no pane swarm.sh reads for its directory (see below),
+  swarm.sh makes one. A new pane goes after the others, so once the first pane is outside the
+  project none can be put first. That happens when every pane at the project ahead of the outside
+  agent's has closed: the kept pane, or a project agent's own pane once that agent retires. A
+  project pane opened later goes after the outside one and does not help. Then the next agent
+  started outside the project opens in the lead's own workspace, and swarm.sh says so. It does the
+  same when, within a few seconds, herdr gives no list or no workspace, or will not open the pane
+  at the project directory. Two first agents started at once share one workspace: the record is
+  made under a lock, and the second waits for the first's. A conductor still opens in its epic's
+  workspace, and `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it
+  refuses one named `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
@@ -743,7 +750,7 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it) and leave the full suite to CI, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, before its first push and after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it), push once they pass and leave the full suite to CI, run a long test run in the background (Bash `run_in_background`) so its end wakes it and act on the result when it ends, before it pushes stop any test run of its own still going (by its PID or its background task, since the guard refuses `pkill` and `killall`), after the PR opens push what is ready and put further points in the PR body, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then swarm-dev's own rules from the plugin's
 [`rules.md`](../rules.md), then the project's own rules from
 `.claude/swarm/brief.md`, then the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
@@ -828,8 +835,9 @@ because the kept PR closed unmerged: until then the kept PR is still the one und
 After each review the agent triages its own findings. It never edits the code: a finding that is
 real and inside the story goes to the builder to fix. From round 3 the round cap narrows that: the
 round's line, in the brief or from `review-agent --next`, has the agent send only a regression the PR
-introduces or a line now false about the code, and decline the rest as `deferred`. A deferral
-carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
+introduces or a line now false about the code, and decline the rest as `deferred`. With
+`demote_kinds` set, rounds 1 and 2 do the same for the kinds it lists, and send the other kinds to the
+builder as before (reference-models.md § Settings). A deferral carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
 finding gets a reason (nit, wrong, out-of-scope, deferred, or the reason an earlier round gave), and
 the agent rebuts them all in one PR comment. It logs each declined finding at once, with
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
@@ -845,8 +853,11 @@ removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
-hands the PR over too. `review --head` refuses a head pushed since the review. So does `merge --head`,
-unless the push added only git's own clean merges of the base, which it merges with no new review
+hands the PR over too. `review --head` and `merge --head` refuse a head pushed since the review,
+unless the push added only git's own clean merges of the base. `review --head` also needs that head's
+own CI green, since the agent waited for green on the head it reviewed. It then puts the story in
+review on that head, logs `base-accepted <slug> <new head> from <reviewed head>` and prints an
+`accepted:` line. `merge --head` merges it. Neither needs a new review
 ([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On
 either refusal the agent writes `head moved:`, sends its conductor a stop note naming that line (below), and
 stops. The conductor starts a new review agent on the new head on that note (the lead does when no
@@ -1010,10 +1021,10 @@ findings section, a review agent that timed out or crashed) is not one. A review
 whose findings are all declined is a pass, never sent to the builder. Each declined finding is
 rebutted in the PR with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
 `nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply,
-`deferred` for one the round cap holds back from round 3, and a point already declined with the
+`deferred` for one the round cap holds back from round 3 or `demote_kinds` holds back before it, and a point already declined with the
 reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
-reviewed. `merge --head` also takes a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
+reviewed. Both also take a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell
