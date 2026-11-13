@@ -100,17 +100,6 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
 `swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
-Every run but `wait --lead 0` (a single read, silent when nothing is new) ends on a line, so a timed
-run that exits with no output was killed. Three of those lines are no queue item: none goes into
-`.swarm/lead/seen` or logs a `lead-woken` line.
-`timeout: nothing new in <N> min, exit: swarm.sh wait --lead` comes at the timeout (an hour by default, N its minutes rounded up) and exits 1.
-`replaced: a newer wait --lead watches now` exits 143: a newer run stopped this one with a USR1, a
-signal only that newer run sends. A run answers it at once while it sleeps between polls; one still in a
-slow read 5 s later gets a KILL and prints nothing. `wait-failed: exit <rc>, exit: swarm.sh wait --lead`
-comes on any other non-zero exit that printed nothing, and keeps that exit code: an invalid argument, a
-lock it could not take, a failed read of the queue, or a TERM from anything else, such as a tool's
-timeout (exit 143). Its stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
-left it.
 Before it prints a new line that says an agent is missing (`no-agent:`, `no-review:`, or `idle: <story>
 is ready with no build`), it reads herdr's agent list once more, at most once a poll. When that read
 shows the agent in one of the project's panes (the builder or `review-<slug>` for `no-agent:`,
