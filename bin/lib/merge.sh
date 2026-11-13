@@ -2017,21 +2017,27 @@ red_mains() {
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
 }
 
-# board_paths — the board's own files in the project's repo, one prefix a line, as the board-only CI
-# gate that swarm.sh init writes has them; nothing for a board outside the repo.
+# board_paths — the board's own files in the project's repo, one entry a line, as the board-only CI
+# gate that swarm.sh init writes has them: a folder (ending in /), a file, or retros/*.md, a glob, so a
+# retro file is the board's and a script beside it is not; nothing for a board outside the repo. Each
+# reader matches the glob as a glob: on_board_paths, ci_gate.py's on_board and git's pathspecs.
 board_paths() {
   local rel
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   rel="$(board_rel)"
-  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/" "${rel}retros/*.md"
 }
 
-# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
-# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
+# on_board_paths <file> — <file> is one of board_paths' entries, under one that ends in a slash, or
+# matched by one whose last part holds a *, as the board-only CI gate's case has it: that last * is
+# any run of characters, slashes too, and the text either side is taken as it is, so a board folder
+# named with a * stays literal. Board.base is that file alone, not Board.base.py, and retros/*.md
+# takes retros/v1.0.0.md, not retros/x.sh.
 on_board_paths() {
   local q
   while IFS= read -r q; do
     if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    elif [[ "${q##*/}" == *\** ]]; then [[ "$1" != "${q%\**}"*"${q##*\*}" ]] || return 0   # loose-match: ok the entry's glob, its text either side of the last * quoted
     else [[ "$1" != "${q}" ]] || return 0; fi
   done < <(board_paths)
   return 1
@@ -3415,7 +3421,7 @@ status_report() {
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     # Read here, after pane_check and before status_report.py's pane reads, as they only label
     # (status_report.py's pane_where); the Stacked, Waiting on you and Next reads below share the deadline
-    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name.
+    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name with its id.
     workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
     tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
