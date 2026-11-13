@@ -1,8 +1,9 @@
 ---
 kind: code
-status: ready
+status: blocked
 epic: retro-report
-depends_on: []
+depends_on: [release-upgrade-confirm]
+needs: [release-upgrade-confirm (shares docs/reference-merging.md:Releases; its PR merged per the merge-mechanics report)]
 touches: [bin/lib/merge.sh:board_paths, bin/lib/merge.sh:on_board_paths, bin/lib/ci_gate.py:board-path matcher (behind and fixed), templates/ci/board-only.sh:path case, templates/pre-commit:path case, tests/init_test.sh:gate and pre-commit retros cases, tests/merge_board_root_test.sh:--board retros paths, tests/merge_base_moved_test.sh:board-path matcher case, tests/board_pr_test.sh:board_dir = . refusal, docs/method.md:init's board-only gate sentence (§ Configuring a project; :101-102), docs/reference-merging.md:paths the --release docs check ignores (§ Merging; :198-199), docs/reference-merging.md:A base that moved (its board paths sentence; :264-268), docs/reference-merging.md:Releases board-path list]
 estimate_lines: 170
 easy: false
