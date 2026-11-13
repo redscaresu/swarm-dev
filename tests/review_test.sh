@@ -834,6 +834,9 @@ HP="${ROOT}/handover"; HD="${HP}-herdr"; mkdir -p "${HP}/.claude/swarm" "${HD}/b
 printf '#!/bin/sh\nH="%s"\n' "${HD}" > "${HD}/bin/herdr"
 cat >> "${HD}/bin/herdr" <<'STUB'
 echo "$*" >> "$H/calls"
+# HD/hang makes `agent list` hang (exec, so a time limit's KILL ends it), HD/norename makes a rename fail.
+[ -e "$H/hang" ] && [ "$1 $2" = "agent list" ] && exec sleep 60
+[ -e "$H/norename" ] && [ "$1 $2" = "agent rename" ] && exit 1
 case "$1 $2" in
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" } { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
                      END { print "]}}" }' "$H/agents" ;;
@@ -896,8 +899,26 @@ out="$(hrun w:lead wait --lead 0)" || true
 check "after that close, wait --lead names no no-review: line for a" "no" "$(grep -q '^no-review: a' <<< "${out}" && echo yes || echo no)"
 
 hlay human; rc=0; out="$(hrun w:lead review a "${U}/1")" || rc=$?
-check "review a from the lead's pane: review a goes through, and nothing is retired, closed or waited on" "0|review||none|review-a w:r working" \
-  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)|$(grep '^review-a ' "${HD}/agents")"
+# Its one `agent list` is review_note's, to find a's conductor: the close asks herdr nothing from a pane
+# whose tab record does not name review-a.
+check "review a from the lead's pane: review a goes through, nothing is retired, closed or waited on, and the close asks herdr nothing" \
+  "0|review||none|review-a w:r working|1" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)|$(grep '^review-a ' "${HD}/agents")|$(grep -cx 'agent list' "${HD}/calls")"
+# A herdr whose agent list hangs: from review-a's own pane the close's list is cut off at
+# SWARM_NOTE_HERDR_WAIT (as review_note's is), so review a still exits 0 well inside the stub's 60 s
+# hang, with the story in review, nothing retired, and a line naming the command that closes the pane.
+hlay human; touch "${HD}/hang"; rc=0; t0=${SECONDS}
+out="$(SWARM_NOTE_HERDR_WAIT=1 hrun w:r review a "${U}/1")" || rc=$?
+el=$((SECONDS - t0)); rm -f "${HD}/hang"
+check "review a from review-a's pane with herdr's agent list hanging: it exits 0 within 20 s, in review, nothing retired or waited on, and says to close review-a" \
+  "0|yes|review||none|yes" \
+  "${rc}|$([[ ${el} -lt 20 ]] && echo yes || echo "no, ${el}s")|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)|$(has "review-a was left open: herdr cannot list its agents; close it with swarm.sh close review-a once it is done" "${out}")"
+# A rename herdr refuses leaves review-a unretired, under its own name: tidy closes only retired agents'
+# panes, so the line names swarm.sh close review-a.
+hlay human; touch "${HD}/norename"; rc=0; out="$(hrun w:r review a "${U}/1")" || rc=$?; rm -f "${HD}/norename"
+check "review a from review-a's pane with herdr refusing the rename: it exits 0 in review, review-a keeps its name, no waiter, and the line says swarm.sh close review-a" \
+  "0|review|review-a w:r working|none|yes" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(grep '^review-a' "${HD}/agents")|$(hwaiter)|$(grep -qE '^review-a was left open and not retired \(exit [0-9]+\); close it with swarm.sh close review-a once it is done$' <<< "${out}" && echo yes || echo "no, got: ${out}")"
 hlay agent; rc=0; out="$(hrun w:r review a "${U}/1")" || rc=$?
 check "review a from review-a's pane, merge = agent: nothing is retired, closed or waited on" "0|review||none" \
   "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)"

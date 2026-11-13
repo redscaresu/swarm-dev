@@ -2748,16 +2748,25 @@ mark_review() {
 # exited and the agent's turn has ended. A grant the board shows makes the agent run swarm.sh merge
 # next, whose reconcile closes it instead; swarm.sh grants, which the agent asks, grants merge only
 # when the board does too, so no pane closes under a merge. From any other pane (the lead's, a
-# conductor's), outside herdr, or with herdr unable to list its agents, it closes nothing. It never
-# fails the review: a retire or close that fails is said.
+# conductor's), outside herdr, or with herdr unable to list its agents, it closes nothing. The story is
+# already in review, so it asks herdr nothing unless the pane's tab record names review-<slug>
+# (pane_review_name), and each herdr call it makes, retire_agent's too, is bounded (bound_herdr): a
+# herdr that hangs leaves the pane open, and review still exits. It never fails the review: a retire or
+# close that fails is said, with the command that closes the pane then.
 handed_review() {
-  local agents name
   [[ "${HERDR_ENV:-}" == 1 && -n "${HERDR_PANE_ID:-}" ]] || return 0
-  agents="$(herdr agent list 2>/dev/null)" || return 0
-  [[ "$(review_pane "${agents}")" == "$1" ]] || return 0
-  name="$(agent_name "review-$1")"
-  ( set -e; retire_agent "review-$1"; archive_session "review-$1"; close_when_idle "${name}" "${HERDR_PANE_ID}" ) </dev/null &
-  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh tidy --yes once it is done"
+  [[ "$(pane_review_name)" == "review-$1" ]] || return 0
+  (
+    local agents name rc
+    bound_herdr
+    agents="$(note_agents)" || { echo "review-$1 was left open: herdr cannot list its agents; close it with swarm.sh close review-$1 once it is done"; exit 0; }
+    [[ "$(review_pane "${agents}")" == "$1" ]] || exit 0
+    name="$(agent_name "review-$1")"
+    ( set -e; retire_agent "review-$1" ) </dev/null &
+    wait $! || { rc=$?; echo "review-$1 was left open and not retired (exit ${rc}); close it with swarm.sh close review-$1 once it is done"; exit 0; }
+    ( set -e; archive_session "review-$1"; close_when_idle "${name}" "${HERDR_PANE_ID}" ) </dev/null &
+    wait $! || echo "review-$1 was retired but left open (exit $?); close it with swarm.sh tidy --yes once it is done"
+  )
 }
 
 REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may take

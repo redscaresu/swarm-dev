@@ -37,7 +37,10 @@ at the merge. The review pane closes the same way after a handover. With `merge 
 `merge` grant over the story, the review agent hands the PR to you with `swarm.sh review` and merges
 nothing. When that command runs in `review-<slug>`'s own pane, it retires the agent, and the waiter
 closes the pane once the command has exited and the agent's turn has ended. Run from any other pane
-(yours, a conductor's), or under `merge = agent` or a `merge` grant, it closes nothing. A review
+(yours, a conductor's), or under `merge = agent` or a `merge` grant, it closes nothing. Each herdr
+call it makes for the close has a time limit. If herdr hangs, or cannot rename the agent, the story
+stays in review, the pane stays open, and `swarm.sh review` says which command closes it:
+`swarm.sh close review-<slug>` for an agent it did not retire, `swarm.sh tidy --yes` for one it did. A review
 agent that is working or waiting in another pane is left open, and reconcile says so: it may be
 running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
