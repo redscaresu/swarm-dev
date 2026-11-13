@@ -2898,7 +2898,7 @@ own_target() {
 # agent_where <agent> — agent_where_in over herdr's lists, each read once: the agent list first, so
 # an unknown agent fails with no other read, then the pane, workspace and tab lists (every workspace's
 # tabs). A list herdr does not give past the first leaves the workspace label - and the tab its record's
-# name: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
+# name, with its tab id when herdr's pane or agent list gave one: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
 # lists no such agent in this project's panes.
 agent_where() {
   local agents out panes workspaces tabs
@@ -2917,8 +2917,9 @@ agent_where() {
 # lists every project's agents, and another project's may hold the name. The labels are panes.py's
 # pane_where over the pane's entries in the pane list and the agent list, as status and dash print them
 # on each agent's row: a workspace herdr gives no label for, or whose list is empty or not JSON (a failed
-# read), is -; a tab is the name swarm-dev gave it, its tab record's. Fails, printing why, when the
-# agent list is not JSON or names no such agent in this project's panes.
+# read), is -; a tab herdr gives no label for is the name swarm-dev gave it, its tab record's, with the
+# tab's id when herdr gave one, `t1 (w1:t3)`. Fails, printing why, when the agent list is not JSON or
+# names no such agent in this project's panes.
 agent_where_in() {
   SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_STATE="${STATE_DIR}" SWARM_PANE_LIST="$3" SWARM_WS="$4" SWARM_TABS="$5" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
