@@ -99,20 +99,27 @@ check "with an agent still at work (only its .partial), no planned: line" test -
 # malformed), skeptic-h (not listed, its output older than the epic file), skeptic-g (its mark only: its
 # start failed and a later start pruned its pane from the record), skeptic-f (not listed, marked now:
 # its start may still be under way), skeptic-i (its mark only, older than the epic file: an earlier
-# attempt's), skeptic-j (listed working, but in a pane no record of this project has).
+# attempt's), skeptic-j (listed working, but in a pane no record of this project has), skeptic-k (a claude
+# agent listed idle whose session has a background task in flight, only a .partial).
 # missing_line <epic> <name> — the plan-missing: line for <name> of epic <epic>'s plan.
 missing_line() { echo "plan-missing: $1 $2 ended without its output, exit: /swarm-dev:plan-epic $1 (it starts that agent again)"; }
 many() {
   fresh; rm -f "${S}/e/critic.json"
   printf 'w:p1 survey-e\nw:p2 critic\nw:p3 skeptic-a\nw:p4 skeptic-b\n' > "${S}/state/scope-e"
   printf 'w:p5 skeptic-c\nw:p6 skeptic-d\nw:p7 skeptic-f\nw:p8 skeptic-h\n' > "${S}/state/scope-e-2"
-  mark survey-e critic skeptic-a skeptic-b skeptic-c skeptic-d skeptic-g skeptic-h skeptic-j
+  printf 'w:p10 skeptic-k\n' > "${S}/state/scope-e-3"
+  mark survey-e critic skeptic-a skeptic-b skeptic-c skeptic-d skeptic-g skeptic-h skeptic-j skeptic-k
+  printf '2026-11-12\tcritic\tskeptic-k\tclaude\tsonnet\thigh\ts-pl-k\n' > "${S}/agents.tsv"
+  mkdir -p "${CLAUDE_CONFIG_DIR}/projects/p"
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
+    > "${CLAUDE_CONFIG_DIR}/projects/p/s-pl-k.jsonl"
   touch "${S}/e/started/skeptic-f" "${S}/e/started/skeptic-i"; older "${S}/e/started/skeptic-i"
   echo '{"findings":[]}' > "${S}/e/skeptic-a.json.partial"; echo '{"findings":[]}' > "${S}/e/skeptic-b.json.partial"
   echo '{"findings":[' > "${S}/e/skeptic-d.json"   # vacuous-test: ok, malformed on purpose
   echo '{"findings":[]}' > "${S}/e/skeptic-h.json"; older "${S}/e/skeptic-h.json"
-  printf '%s,%s,%s,%s' '{"name":"skeptic-a","agent_status":"working","pane_id":"w:p3"}' '{"name":"skeptic-b","agent_status":"idle","pane_id":"w:p4"}' \
-    '{"name":"skeptic-c","agent_status":"done","pane_id":"w:p5"}' '{"name":"skeptic-j","agent_status":"working","pane_id":"w:p99"}' > "${ROOT}/agents"
+  printf '%s,%s,%s,%s,%s' '{"name":"skeptic-a","agent_status":"working","pane_id":"w:p3"}' '{"name":"skeptic-b","agent_status":"idle","pane_id":"w:p4"}' \
+    '{"name":"skeptic-c","agent_status":"done","pane_id":"w:p5"}' '{"name":"skeptic-j","agent_status":"working","pane_id":"w:p99"}' \
+    '{"name":"skeptic-k","agent_status":"idle","pane_id":"w:p10"}' > "${ROOT}/agents"
 }
 many; touch "${ROOT}/no-list"
 check "a poll with no herdr list prints no plan-missing: line" test -z "$(poll | grep '^plan-missing: ')"
@@ -131,6 +138,7 @@ check "a skeptic whose pane left the record still gets plan-missing: from its ma
 check "a skeptic marked within PLAN_START_GRACE (its start may still be under way) gets no line" test -z "$(grep '^plan-missing: e skeptic-f ' <<< "${out}")"
 check "a mark older than the epic file (an earlier attempt's) gets no line" test -z "$(grep '^plan-missing: e skeptic-i ' <<< "${out}")"
 check "an agent of that name in a pane no record of this project has is not the skeptic: plan-missing:" grep -qxF "$(missing_line e skeptic-j)" <<< "${out}"
+check "a skeptic listed idle whose session has a background task in flight gets no line" test -z "$(grep '^plan-missing: e skeptic-k ' <<< "${out}")"
 check "survey, its output counted, gets no line" test -z "$(grep '^plan-missing: e survey ' <<< "${out}")"
 touch "${ROOT}/no-list"
 check "a later poll with no herdr list keeps the seen lines, so it wakes no one" test -z "$(poll)"

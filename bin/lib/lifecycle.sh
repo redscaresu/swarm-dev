@@ -3099,9 +3099,10 @@ PLAN_START_GRACE=300
 # missing; for an HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing
 # reference counts nothing. planned: needs at least one agent, every one counted. plan-missing: names a
 # marked agent with no counted output whose mark is PLAN_START_GRACE seconds old and that the poll's
-# herdr list (LEAD_AGENTS) shows in no pane this project opened, or shows idle or done; a poll with no
-# herdr list keeps the plan-missing: lines LEAD_SEEN has, as stop_lines does. Board and .swarm files, one
-# python3 for a swarm's fresh outputs' JSON, one for the herdr list once an agent may have ended; no gh.
+# herdr list (LEAD_AGENTS) shows in no pane this project opened, or shows idle or done with no background
+# task in flight (bg_running, over its session log); a poll with no herdr list keeps the plan-missing: lines
+# LEAD_SEEN has, as stop_lines does. Board and .swarm files, one python3 for a swarm's fresh outputs' JSON,
+# one for the herdr list once an agent may have ended, and bg_running's per idle agent; no gh.
 plan_lines() {
   local f label kind slug item groups="" names listed name n ref out exit done_list files rows seen bad mark started fresh
   local live="" live_read="" hname age
@@ -3185,7 +3186,12 @@ for p in sys.argv[1:]:
         grep -F "plan-missing: ${slug} ${n} ended without its output, " "${LEAD_SEEN}" 2>/dev/null || true; continue
       fi
       no_agent_name hname "${name}"
-      awk -v n="${hname}" '$1 == n && $2 != "idle" && $2 != "done" { f = 1 } END { exit !f }' <<< "${live}" && continue
+      case "$(awk -v n="${hname}" '$1 == n { print $2; exit }' <<< "${live}")" in
+        "") ;;   # in no pane this project opened: its pane closed, or it never started
+        # A turn that ended with a background task in flight still waits on it.
+        idle|done) ! bg_running "${hname}" || continue ;;
+        *) continue ;;
+      esac
       out+="plan-missing: ${slug} ${n} ended without its output, exit: ${exit} (it starts that agent again)"$'\n'
     done <<< "${rows}"
     [[ "${done_list}" == -* || -z "${done_list}" ]] || echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
