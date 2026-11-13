@@ -860,7 +860,10 @@ review on that head, logs `base-accepted <slug> <new head> from <reviewed head>`
 `accepted:` line. `merge --head` merges it. Neither needs a new review
 ([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). When
 `review --head` refuses, the story is not in review yet, and the agent follows the new head in the
-same session (below, under a moved head); `review-agent --next` moves its pass of the old head aside.
+same session (below, under a moved head). It first moves its pass of the old head aside to
+`.swarm/reviews/<slug>.md.prev`, so no review file stands while it follows: a `wait` on the agent,
+or a review agent's start on `watch`'s line for the new head, would read that file as a finished
+review.
 When `merge --head` refuses, `review` has already put the story in review on a head nobody reviewed.
 The agent writes `head moved:`, sends its conductor a stop note naming that line (below), and stops,
 and its reply says first that the story is in review on an unreviewed head. The conductor starts a
@@ -933,14 +936,18 @@ How each kind of stop reaches an owner:
   or after a pass while `swarm.sh merge` runs). `watch` prints `checks finished` for that head once,
   and `review-agent` refuses the conductor's start then. So the agent follows the new head in the
   same session at three points: in the green step, when the builder
-  pushed past the start head before any findings went out; at the review's end, when the worktree
-  moved; and on `review --head`'s refusal. It writes no review file for the old head, runs the green
+  pushed past the start head before any findings went out; at the review's end, when the worktree's
+  HEAD moved; and on `review --head`'s refusal. It writes no review file for the old head, runs the green
   step on the new head (`wait-pr --head <that head>`), then `swarm.sh review-agent --next <slug>
   <PR URL>`, and does the round that prints: the same round on the new head, with its dropped-lines
   check and codex again. When `--next` refuses because the worktree is not at the PR's head or has
   uncommitted changes, the builder is still at work: the agent waits for it and follows again. A
-  second such refusal on the same head ends the agent with `head moved:` and a stop note. Besides
-  that one, only `merge`'s moved-head refusal and a step-up still end the agent with `head moved:`.
+  second such refusal on the same head ends the agent with `head moved:` and a stop note. A worktree
+  that has uncommitted changes at the review's end, with HEAD still at the head it reviewed, is no
+  moved head: the agent waits for the builder and checks again. It follows HEAD if HEAD moved by
+  then, keeps its review if the worktree is clean at that head, and otherwise ends with `head moved:`
+  and a stop note. Besides those two, only `merge`'s moved-head refusal and a step-up still end the
+  agent with `head moved:`.
   The merge one sends the conductor the stop note, its why that `head moved:` line, and the
   conductor starts the review agent again on it. A `head moved: stepped up:` stop sends none: the
   head is the same, and the new builder's push gets its review from `watch`. When

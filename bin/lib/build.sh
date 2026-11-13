@@ -1429,7 +1429,9 @@ follow_moved() {
 # reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
 # swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
 # checks the PR is still at it; otherwise the review is the handoff to the user. A head review refuses
-# as moved is followed in the same session (follow_moved), --next moving the pass aside. A head merge
+# as moved is followed in the same session (follow_moved), the pass moved aside to .prev first, so no
+# review file stands while the agent follows (a wait on it, or review-agent's start, would read one as
+# finished). A head merge
 # refuses as moved (the story already in review) turns the file into a head moved: one and sends the
 # conductor (story_conductor) a stop note naming it, on which it starts a new agent on the new head.
 # A base merged in whose CI goes red or conflicts (base merged,
@@ -1454,8 +1456,10 @@ ${3} first: a wait on you ends on it, and once the PR merges, the merge's reconc
 and removes this worktree, so a file written after would never come. Then hand the PR on: run
 \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
 When review refuses because the PR's head is no longer $4 (a push since your review), that head has
-had no review, and the story is not in review: write no review file for it, and
-$(follow_moved "$1" "$2" "$5"). --next moves your pass of $4 aside, so it is never read as one.
+had no review, and the story is not in review. First move your pass of $4 aside, with
+\`mv ${3} ${3}.prev\`, so no review file is there while you follow: a wait on you, or a review agent's
+start, would read it as a finished review. Then write no review file for the new head yet, and
+$(follow_moved "$1" "$2" "$5").
 When merge refuses because the PR's head is no longer $4, review had already put the story in
 review, and you do not review that head in this session. Write ${3} again with the Write tool,
 holding two lines, \`head: $4\` and
@@ -1514,10 +1518,13 @@ EOF
 # pass (a wait that ends other than idle, a refused tell, no fix pushed) writes <findings file> with head:
 # and stopped: lines and no ## Findings: no pass. Each stop, and each stop on a moved head (head moved:),
 # sends the story's conductor (story_conductor) a stop note. A head that moves under a round (pushed past
-# the start head before any findings, a worktree moved by the review's end, or review --head's refusal)
-# is followed instead (follow_moved): the green step on it, then review-agent --next, in the same
-# session; --next refused twice on one head for the worktree ends it with a head moved: stop. Only
-# merge's moved-head refusal, a step-up and that stop still write head moved:.
+# the start head before any findings, a worktree whose HEAD moved by the review's end, or review --head's
+# refusal) is followed instead (follow_moved): the green step on it, then review-agent --next, in the
+# same session; --next refused twice on one head for the worktree ends it with a head moved: stop. A
+# worktree with uncommitted changes at the start head is no moved head: the agent waits for the builder
+# and checks again, keeping its review when the worktree is clean at that head, following when HEAD moved,
+# and stopping with head moved: otherwise. Only merge's moved-head refusal, a step-up and those stops
+# still write head moved:.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
@@ -1681,9 +1688,14 @@ its findings as codex's, under that line, and log each with \`--reviewer fallbac
 $(review_checklist "${story}")
 
 When the review is done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
-prints nothing. If not, the worktree moved under you, so this review is of a head the PR no longer
-has: drop its findings, wait for the builder as above, and
+prints nothing. If HEAD moved, the worktree moved under you, so this review is of a head the PR no
+longer has: drop its findings, wait for the builder as above, and
 $(follow_moved "$1" "$2" "${sw}").
+If HEAD is still $5 but the worktree has uncommitted changes, the PR's head has not moved: the builder
+is at work in it. Wait for the builder as above, then check again. If HEAD moved by then, follow it as
+just said. If the worktree is clean at $5, this review of $5 stands: go on with it below. Otherwise
+write ${4} with the Write tool holding two lines, \`head: $5\` and \`head moved: <what changed>\`,
+then stop.
 
 Otherwise, fix or decline each finding. ${fix} Decline the rest, each with its reason: nit for a nit, an edge case or a
 low-value point, wrong for a mistaken one, out-of-scope for a point only a change to a file outside
