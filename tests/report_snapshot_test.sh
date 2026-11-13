@@ -31,7 +31,7 @@ mkdir -p "${TMPDIR}" "${ROOT}/bin" "${ROOT}/count"
 # GROWTH_BOUND: the basename, sed, awk and head runs one status may add per added story. Each grew by
 # tens a story: before the snapshot, as fm and get_fm ran sed, head or awk on every read; then as board
 # and the report loops ran basename on every item, in walks made once per epic or per story in review.
-GROWTH_BOUND=2
+GROWTH_BOUND=2.5
 
 # The counting wrappers: each logs its name to COUNT_LOG, then runs the real program.
 COUNTED="sed awk head basename perl cat rm mkdir mv grep tr wc"

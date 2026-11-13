@@ -539,10 +539,11 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line. basename here, unlike the
+  # loops below: next_test.sh makes it fail on a story's path, to show a failure in next_step stops next.
   while IFS= read -r f; do
     buildable_story "${f}" || continue
-    slug="${f##*/}"; buildable+="$(fm "${f}" epic) ${slug%.md}"$'\n'
+    buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
