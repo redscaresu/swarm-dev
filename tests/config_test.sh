@@ -191,6 +191,18 @@ for v in medium low max ""; do
   check "risky_effort = '${v}' is refused, naming file, line, key and value" "yes" \
     "$(fails_with "${p}/.claude/swarm/config:1: risky_effort must be xhigh or high, not '${v}'" run "${p}" config)"
 done
+# demote_kinds: finding kinds, each as log-finding takes it (kebab-case, 32 characters at most). Ships empty (off).
+check "demote_kinds ships empty (off)" "" "$(project "${p}"; run "${p}" config demote_kinds)"
+for v in duplicate-code,efficiency efficiency "$(printf 'a%.0s' {1..32})"; do
+  project "${p}" "demote_kinds = ${v}"
+  check "demote_kinds = ${v} is read back" "${v}" "$(run "${p}" config demote_kinds)"
+done
+long="$(printf 'a%.0s' {1..33})"
+for v in "Duplicate Code" -efficiency duplicate--code "${long}" duplicate-code,-efficiency "duplicate-code,${long}" "duplicate-code," ,efficiency; do
+  project "${p}" "demote_kinds = ${v}"
+  check "demote_kinds = '${v}' is refused, naming file, line and key" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: demote_kinds: '.*' is not a finding kind; .*, not '${v}'" run "${p}" config)"
+done
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
