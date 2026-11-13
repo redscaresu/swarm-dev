@@ -29,7 +29,7 @@ mkdir -p "${TMPDIR}" "${ROOT}/bin" "${ROOT}/count"
 GROWTH_BOUND=5
 
 # The counting wrappers: each logs its name to COUNT_LOG, then runs the real program.
-COUNTED="sed awk head perl cat rm mkdir mv grep tr wc"
+COUNTED="sed awk head basename perl cat rm mkdir mv grep tr wc"
 # shellcheck disable=SC2016 # the wrappers' lines are literal
 for t in ${COUNTED}; do
   printf '#!/bin/sh\necho %s >> "${COUNT_LOG:-/dev/null}"\nexec %s "$@"\n' "${t}" "$(command -v "${t}")" > "${ROOT}/count/${t}"
@@ -156,17 +156,17 @@ is "a state_set in a \$( ) subshell is seen by the parent's next fm and get_fm; 
   "|done|done|ready||3|" "$(bs after)"
 
 # --- status's sed, awk and head runs on 20 and 60 stories.
-# board <n> — a project of <n> stories, in three epics under an agreed HLD: ready, blocked on the one
+# board <n> — a project of <n> stories, in <n>/4 epics under an agreed HLD: ready, blocked on the one
 # before, in review through state, done, in turn.
 board() {
-  local P="${ROOT}/p$1" i e
+  local P="${ROOT}/p$1" i e ne=$(( $1 / 4 ))
   mkdir -p "${P}/docs/stories" "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/board-state/stories"
   git -C "${P}" init -q -b main
   it() { { echo ---; printf '%s\n' "${@:3}"; echo ---; echo; echo "# $2"; } > "${P}/docs/$1/$2.md"; }
   it hld h 'status: agreed' 'grants: [epics]'
-  for e in 1 2 3; do it epics "e${e}" 'status: active' 'hld: h'; done
+  for ((e = 1; e <= ne; e++)); do it epics "e${e}" 'status: active' 'hld: h'; done
   for ((i = 1; i <= $1; i++)); do
-    e=$(( i % 3 + 1 ))
+    e=$(( i % ne + 1 ))
     case $(( i % 4 )) in
       0) it stories "s${i}" 'kind: code' "epic: e${e}" 'status: ready' 'depends_on: []' ;;
       1) it stories "s${i}" 'kind: code' "epic: e${e}" 'status: blocked' "depends_on: [s$(( i > 1 ? i - 1 : 1 ))]" ;;
@@ -184,7 +184,7 @@ runs() {
   # shellcheck disable=SC2031 # PATH is the test's own here
   (cd "${ROOT}/p$1" && env -u HERDR_ENV -u HERDR_PANE_ID COUNT_LOG="${ROOT}/count$1" \
     PATH="${ROOT}/count:${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out$1" 2>&1) || echo "status on $1 stories failed: $(cat "${ROOT}/out$1")" >&2
-  grep -cxE 'sed|awk|head' "${ROOT}/count$1" || true
+  grep -cxE 'basename|sed|awk|head' "${ROOT}/count$1" || true
 }
 board 20; board 60
 c20="$(runs 20)"; c60="$(runs 60)"
