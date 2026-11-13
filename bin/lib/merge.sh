@@ -2017,21 +2017,27 @@ red_mains() {
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
 }
 
-# board_paths — the board's own files in the project's repo, one prefix a line, as the board-only CI
-# gate that swarm.sh init writes has them; nothing for a board outside the repo.
+# board_paths — the board's own files in the project's repo, one entry a line, as the board-only CI
+# gate that swarm.sh init writes has them: a folder (ending in /), a file, or retros/*.md, a glob, so a
+# retro file is the board's and a script beside it is not; nothing for a board outside the repo. Each
+# reader matches the glob as a glob: on_board_paths, ci_gate.py's on_board and git's pathspecs.
 board_paths() {
   local rel
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   rel="$(board_rel)"
-  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/" "${rel}retros/*.md"
 }
 
-# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
-# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
+# on_board_paths <file> — <file> is one of board_paths' entries, under one that ends in a slash, or
+# matched by one whose last part holds a *, as the board-only CI gate's case has it: that last * is
+# any run of characters, slashes too, and the text either side is taken as it is, so a board folder
+# named with a * stays literal. Board.base is that file alone, not Board.base.py, and retros/*.md
+# takes retros/v1.0.0.md, not retros/x.sh.
 on_board_paths() {
   local q
   while IFS= read -r q; do
     if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    elif [[ "${q##*/}" == *\** ]]; then [[ "$1" != "${q%\**}"*"${q##*\*}" ]] || return 0   # loose-match: ok the entry's glob, its text either side of the last * quoted
     else [[ "$1" != "${q}" ]] || return 0; fi
   done < <(board_paths)
   return 1
@@ -2222,6 +2228,25 @@ report_read() {
   (( rc != 142 )) || [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "${name}" >> "${REPORT_SKIP_FILE}"
   return "${rc}"
 }
+
+# report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads), next
+# (next_reads) and dash (dash_deadline) share, so every report names a cut read the same way. Each runs
+# its program through report_read with stdin from /dev/null, since within runs it in a process group of
+# its own, where a read of the terminal would stop it until the deadline (and a read inside a while-read
+# loop must not eat the loop's input). A read is named for the program and its first two words
+# (`herdr agent list`, `gh pr list`), claude for one (`claude agents`), and any gh api read `gh api`
+# alone: its path differs per call, and each would be named. Safe under set -u with fewer words. A caller
+# adds its own on top: status's git, next's answer to herdr agent list, whose other reads go on to
+# report_herdr. unset -f herdr gh claude removes them.
+# shellcheck disable=SC2329 # the readers status, next and dash run call these functions by name
+report_wrappers() {
+  herdr() { report_herdr "$@"; }
+  claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
+  gh() { if [[ "${1:-}" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh ${*:1:2}" gh "$@" </dev/null; fi; }
+}
+
+# report_herdr <args>... — herdr <args> through report_read, as report_wrappers' herdr runs it.
+report_herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
 
 # report_cuts — how many reads report_read has cut or skipped since report_start or the last
 # report_skipped, 0 outside a report: a count that changed between two calls means a read between
@@ -3386,7 +3411,7 @@ status_report() {
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     # Read here, after pane_check and before status_report.py's pane reads, as they only label
     # (status_report.py's pane_where); the Stacked, Waiting on you and Next reads below share the deadline
-    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name.
+    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name with its id.
     workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
     tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
@@ -3422,10 +3447,9 @@ status_report() {
 }
 
 # status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
-# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
-# these reads goes through report_read, named by its
-# command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
-# a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): herdr, gh
+# and claude are report_wrappers', and git's reads go through report_read too, named `git <subcommand>`,
+# with stdin from /dev/null, as report_wrappers' are. Of git,
 # only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
 # a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
 # base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
@@ -3435,9 +3459,7 @@ status_report() {
 # own wait.
 # shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
 status_reads() {
-  herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
-  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh $1 $2" gh "$@" </dev/null; fi; }
+  report_wrappers
   git() {
     local i=1
     # The subcommand is the first word past git's own options; -C and -c take a value.
