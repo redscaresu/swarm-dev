@@ -57,11 +57,11 @@ case "$1 $2" in
       if [ "${l}" -gt 0 ]; then echo $((l - 1)) > "${FX}/pending-left"; else mv "${FX}/pending-head" "${FX}/head"; fi; fi
     get st "${FX}/state"; get st "${FX}/state.${3##*/}" "${st}"
     get h "${FX}/head"; get b "${FX}/base"; get mc "${FX}/mergecommit"; get nf "${FX}/nfiles"; get bd "${FX}/body" null; get cm "${FX}/commits" '[{}]'
-    get mg "${FX}/mergeable" MERGEABLE
+    get mg "${FX}/mergeable" MERGEABLE; get hr "${FX}/headref" story/s   # the PR's branch: ${FX}/headref, else story/s
     # With -q (wait-pr's read), jq gives what gh would.
     q=""; prev=""; for a in "$@"; do [ "${prev}" != -q ] || q="${a}"; prev="${a}"; done
-    out="$(printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s,"mergeable":"%s","headRefName":"story/s"}\n' \
-      "${st}" "${h}" "${b}" "${mc}" "${nf}" "${bd}" "${cm}" "${mg}")"
+    out="$(printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s,"mergeable":"%s","headRefName":"%s"}\n' \
+      "${st}" "${h}" "${b}" "${mc}" "${nf}" "${bd}" "${cm}" "${mg}" "${hr}")"
     if [ -n "${q}" ]; then printf '%s\n' "${out}" | jq -r "${q}"; else printf '%s\n' "${out}"; fi ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
