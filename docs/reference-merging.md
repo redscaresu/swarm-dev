@@ -113,7 +113,8 @@ kept, or one its review agent merges next, under `merge = agent` or a `merge` gr
 money or `swarm.sh merge` has handed it to you or the lead since its last review, as `events.tsv`
 records: a hold, an unconfirmed merge, the epic guard), or a
 fix-main story it started (the `story` line in `events.tsv` names its pane), which no other conductor
-counts. A story reconcile reopened after its PR closed unmerged is the lead's. A story blocked only on
+counts. A story reconcile reopened after its PR closed unmerged is the lead's, and a story blocked only on a
+reopened one waits on you too. A story blocked only on
 a `kind: lead` story or a hand step, blocked by hand with no `depends_on`, blocked only on stories that
 wait on you that way, or in a `depends_on` cycle, waits on you: it holds nothing up, and the report lists it under
 Waits on the user. Neither does a story the brief has the conductor list for the lead: a build that
