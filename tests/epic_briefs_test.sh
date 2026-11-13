@@ -299,7 +299,7 @@ report_rules() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|%s|%s|%s|%s\n' "$(has "Never write your report while agent work is left:" "${b}")" \
     "$(has "A merge or handover note that ends \`finish: $2 has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours ${FINISH_CLOSE}" "${b}")" \
-    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
+    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, a story reconcile reopened after its PR closed unmerged, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
     "$(has "only once no agent work is left (the stop rule above): write your report" "${b}")" \
     "$(grep -qF "Write your report only when no story of this epic that is yours to start is ready and none is running" <<< "${b}" && echo there || echo gone)"
 }
