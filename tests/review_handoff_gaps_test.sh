@@ -84,6 +84,8 @@ check "1 the stop note goes to s1's epic conductor" yes "$(has 'tell conduct-e n
 rule="$(flat "$(lib review_rule)")"
 check "1 the conductor starts a new review on a head moved: note" yes \
   "$(has 'A why that starts `head moved:` names a head that review agent never reviewed: start the review agent again on the PR at once' "${rule}")"
+check "1 a story in review with several PRs is the lead's, kept or not" yes \
+  "$(has 'A story in review with more than one PR is the lead'"'"'s, kept or not: list it in your report.' "${rule}")"
 check "1 a still-working refusal on that note waits on the review agent once" yes \
   "$(has 'start it again once `swarm.sh wait review-<slug>` returns, in the background, the one wait on a review agent you run' "${rule}")"
 
