@@ -84,9 +84,9 @@ blocked story once every slug in its `depends_on` is finished. It leaves an old 
 story's findings file. The review agent runs `swarm.sh review <slug> --head <that SHA> <PR URL>`, then
 `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
-`review --head` refuses a head pushed since the review. `merge --head` refuses one too, unless all the push
-added is git's own clean merges of the base: it merges that head with no new review (Held for dropped
-base lines, below). Reconcile pulls the board the way it does for you, and finishes
+`review --head` and `merge --head` refuse a head pushed since the review, unless all the push
+added is git's own clean merges of the base: `review` puts the story in review on that head and
+`merge` merges it, with no new review (Held for dropped base lines, below). Reconcile pulls the board the way it does for you, and finishes
 the story, closing its builder. Nobody closes the builder before that, because closing
 a story that is still `ready` counts a failed build. Each review agent merges as soon as its own
 review passes, so on a base with a merge queue the queue tests the PRs together and merges them in
@@ -108,8 +108,8 @@ a `not held:` line left `ready` for the lead. If the last inbox pass before its 
 it runs `--startable` once more, and if that starts a builder, it goes back to waiting instead of
 reporting. It never writes its report while agent work is left: a story of the epic, of a kind an
 agent builds, that is ready (to start, building, or with its PR open and not yet in review), blocked
-on an agent's work, or in review with its review agent still to act on it (a story a close kept with
-one PR, or one its review agent merges next, under `merge = agent` or a `merge` grant, unless it costs
+on an agent's work, or in review with one PR and its review agent still to act on it (a story a close
+kept, or one its review agent merges next, under `merge = agent` or a `merge` grant, unless it costs
 money or `swarm.sh merge` has handed it to you or the lead since its last review, as `events.tsv`
 records: a hold, an unconfirmed merge, the epic guard), or a
 fix-main story it started (the `story` line in `events.tsv` names its pane), which no other conductor
@@ -117,7 +117,7 @@ counts. A story reconcile reopened after its PR closed unmerged is the lead's. A
 a `kind: lead` story or a hand step, blocked by hand with no `depends_on`, blocked only on stories that
 wait on you that way, or in a `depends_on` cycle, waits on you: it holds nothing up, and the report lists it under
 Waits on the user. Neither does a story the brief has the conductor list for the lead: a build that
-died, a `not held:` line, a PR closed unmerged, or a kept story with several PRs. The note after the last such story's merge or handover ends `finish: epic <epic> has no agent
+died, a `not held:` line, a PR closed unmerged, or a story in review with several PRs, kept or not. The note after the last such story's merge or handover ends `finish: epic <epic> has no agent
 work left` (§ Merging); the conductor then closes each idle `review-<slug>` of its own still open,
 with `swarm.sh close review-<slug>`, and writes its report. A working one is still handing its PR on,
 so it is left for reconcile or `tidy` to close. With no such note it judges by the same rule.
@@ -397,8 +397,9 @@ events.tsv. For a head one of them names, it prints no `checks finished on <sha>
 line, so no review starts for it, and it leaves the head out of the ladder's red heads, as a review
 pane's `wait-pr` does. It still reads the PR's mergeable state, and says when that head conflicts with
 its base. A builder's later push is a new head, and watch reports it as before. The review checks
-count a `base-merged <head> from <old head>` head as reviewed when `<old head>` passed review (each
-link followed, 10 at most): `queued:` lines, the lead's `unmerged:` line and a give-up's `kept:` note
+count a `base-merged <head> from <old head>` head as reviewed when `<old head>` passed review. They
+count a `base-accepted <slug> <head> from <old head>` head the same way: a builder's clean merge of
+the base that `review --head` took. They follow each link, 10 at most. `queued:` lines, the lead's `unmerged:` line and a give-up's `kept:` note
 all read it so. So a reviewed PR whose merge stopped on such a head still comes back to the lead as
 `unmerged:` once `queue_minutes` pass.
 
@@ -1043,8 +1044,12 @@ With `--head <sha>`, it merges a head that moved past `<sha>` only when all it a
 **`swarm.sh review <slug> [--head <sha>] <PR URL>...`**
 Put a story or epic whose PRs are green and reviewed in review, with its PRs on its `prs:` line; a story whose `depends_on` parents are still open is held instead.
 With `--head`, it refuses, changing nothing, while the item has a PR it does not name: one on its `prs:` line or, for a story, one open from its branch `story/<slug>` (one review agent passes one PR).
-It then reads each PR's head (each gh read 60 seconds at most) and refuses unless every head is still `<sha>`, the head the review passed.
-A moved head needs a review of its own: the refusal names `swarm.sh review-agent --next <slug> <PR URL>`, run from `review-<slug>`'s pane after a pass as after findings, and a new `swarm.sh review-agent <slug> <PR URL>` once `review-<slug>` is gone.
+It then reads each PR's head (each gh read 60 seconds at most) and refuses unless every head is still `<sha>`, the head the review passed, or adds to `<sha>` only git's own clean merges of the PR's base, as `merge --head` reads them.
+For that it reads the PR's base branch too, one more gh read, and fetches the PR's head and base, 120 seconds at most; a fetch that fails or runs out refuses as a moved head does.
+It takes such a head only when its own CI is green (each read 60 seconds at most), since the review waited for green on `<sha>` alone.
+A head that is red, not finished or unread is refused as a moved head, with a line on stderr naming its CI state and the `wait-pr --head <new> <PR URL>` to run before `review --head <sha>` again.
+Once the story goes to review, and not for a review held for its parents, it prints `accepted: <PR URL>'s head <new> adds only clean merges of <base> (<merges>) to <sha>, the reviewed head; its pass counts for <new>` and logs `base-accepted <slug> <new head> from <sha>`, so the lead's `unmerged:` line and `queued:` count the new head as reviewed.
+Any other moved head needs a review of its own: the refusal names `swarm.sh review-agent --next <slug> <PR URL>`, run from `review-<slug>`'s pane after a pass as after findings, and a new `swarm.sh review-agent <slug> <PR URL>` once `review-<slug>` is gone.
 A read that fails says to run it again.
 A review that succeeds is logged in events.tsv as `review <slug> ok (<PR URLs>)`, with or without `--head`.
 With `--head`, when round N sent the builder findings and the head is still the one that round started on (not one a wording recheck passed), a `decline-only <slug> ok (round N)` line goes just before it: the builder declined every finding and pushed nothing.
