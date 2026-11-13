@@ -14,7 +14,7 @@ Split out of handover-and-usage. A usage estimate: price-weighted tokens since t
 
 Add `usage_warn_percent` to CONFIG_KEYS, validated as a whole number from 1 to 100, empty (off) by default, so merging this changes no behaviour. With it set, `wait --lead` prints one `usage:` line the first time the estimate passes it in a usage week, and not again that week. Add the setting's row to docs/method.md's settings table (§ Configuring a project), and one README line. Both say this is an estimate, that it undercounts Fable when uncalibrated, and that `/usage` is the only truth. It is a warning, never a gate: nothing stops or slows on it.
 
-Read only the jsonl files' usage fields. Tests use fixture jsonl under a stand-in CLAUDE_PROJECTS_DIR and never read the real `~/.claude/projects`.
+Read only these fields of each jsonl line: `message.usage`, `message.model` and the line's timestamp. Never read conversation content. Tests use fixture jsonl under a stand-in CLAUDE_PROJECTS_DIR and never read the real `~/.claude/projects`.
 
 **Done when:**
 - tests/usage_estimate_test.sh: fixture jsonl with Fable and Opus usage gives the two calibrated shares the test pins, and Fable's weight differs from Opus's
