@@ -1294,19 +1294,22 @@ review_start_failed() {
   die "review-agent: review-$1 did not start${note}${back}${retry}"
 }
 
-# BASE_MERGED_LINKS: how many base-merged heads review_pass follows back from a head to a reviewed one.
+# BASE_MERGED_LINKS: how many base-merged or base-accepted heads review_pass follows back from a head to a reviewed one.
 BASE_MERGED_LINKS=10
 
 # review_pass <slug> <sha> [file] [links] — true when <slug>'s findings file (or <file>, as review_recheck's
 # round file) is a pass on <sha>: its head: line is <sha>, and it has a ## Findings section and no head
 # moved: line (review_rule's test). A head that merge made by merging the base into the PR (events.tsv's
-# `base-merged <sha> from <head>`, base_merged_from) passes when the head it was made from does, since
-# its only new content is the base's; <links> counts the heads followed so far, BASE_MERGED_LINKS at most.
+# `base-merged <sha> from <head>`, base_merged_from), or that review --head took as adding only clean
+# merges of the base to the head it named (`base-accepted <slug> <sha> from <head>`, base_accepted_from),
+# passes when that head does, since its only new content is the base's; <links> counts the heads
+# followed so far, BASE_MERGED_LINKS at most.
 review_pass() {
   local f="${3:-${PROJECT_DIR}/.swarm/reviews/$1.md}" from
   if grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"; then return 0; fi
   (( ${4:-0} < BASE_MERGED_LINKS )) || return 1
   from="$(base_merged_from "$1" "$2")"
+  [[ -n "${from}" ]] || from="$(base_accepted_from "$1" "$2")"
   [[ -n "${from}" && "${from}" != "$2" ]] && review_pass "$1" "${from}" "${3:-}" $(( ${4:-0} + 1 ))
 }
 
