@@ -107,6 +107,13 @@ watch_for() {
   printf '%s|%s' "${out}" "${end}${note}"
 }
 
+# in_new_group may change nothing of a watch but its process group. A launcher that left SIGPIPE ignored,
+# as an exec from python3 does, would have a watch's writer into `| head` print "Broken pipe" and end 1,
+# where a real watch's ends 141 and prints nothing. So that writer ends the same with it and without.
+# shellcheck disable=SC2016 # the inner bash's variable
+pipe_end() { "$@" bash -c 'yes | head -1 > /dev/null; echo "${PIPESTATUS[0]}"' 2>&1; }
+check "a command started through in_new_group has SIGPIPE as it was: a writer into a closed pipe ends the same" "$(pipe_end exec)" "$(pipe_end in_new_group)"
+
 check "watch --epic says its own story's PR opened, skipping another epic's, and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
 check "watch --epic reads nothing of the PR it says opened past the list" "0" "$(grep -cE 'pulls/2|commits/head2' "${ROOT}/calls" || true)"
 check "watch --epic records the PR as opened in watch-seen" "opened o/svc#2" "$(grep '^opened ' "${seen}")"

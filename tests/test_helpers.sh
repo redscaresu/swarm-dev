@@ -80,20 +80,24 @@ no_version() { sed -E 's/ ~~ version=[^[:space:]]+$//; s/ version=[^[:space:]]+$
 
 # in_new_group <command> [args...] — exec <command> as the leader of a new process group, so its pid is
 # the group's id, and every process it starts is in that group unless one makes its own. Run it as the
-# last command of a `( ... ) &` subshell; $! is then the group.
-in_new_group() { exec python3 -I -c 'import os, sys; os.setpgid(0, 0); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
+# last command of a `( ... ) &` subshell; $! is then the group. It goes through perl's setpgrp, as
+# bin/lib/merge.sh's within does, which leaves every signal as it found it: an exec from python3 would
+# leave SIGPIPE ignored in <command> and every process it starts, as no real watch runs
+# (tests/watch_opened_test.sh checks a writer into a closed pipe ends the same with it and without).
+in_new_group() { exec perl -e 'setpgrp(0, 0) or exit 126; exec { $ARGV[0] } @ARGV or exit 127' -- "$@"; }
 
-# group_record <pid> <record> — wait until <pid> leads a group of its own (in_new_group has run) or has
-# exited, then add it to <record>, one group a line. Returns 1, saying so on stderr, if neither happens
-# within 5 s; it records the pid then too.
+# group_record <pid> <record> — add <pid> to <record>, one group a line, then wait until <pid> leads a
+# group of its own (in_new_group has run) or has exited. The line goes in first, so a test stopped while
+# this waits still has it for its EXIT trap (stop_group copes with a pid that leads no group yet).
+# Returns 1, saying so on stderr, if neither happens within 5 s.
 group_record() {
   local tries=50 pause=0.1 i pgid
+  echo "$1" >> "$2"
   for ((i = 0; i < tries; i++)); do
     pgid="$(ps -o pgid= -p "$1" 2>/dev/null | tr -d ' ' || true)"
     [[ -n "${pgid}" && "${pgid}" != "$1" ]] || break
     sleep "${pause}"
   done
-  echo "$1" >> "$2"
   [[ "${pgid}" != "$1" && -n "${pgid}" ]] || return 0
   echo "group_record: pid $1 still runs in group ${pgid}, not its own" >&2; return 1
 }
