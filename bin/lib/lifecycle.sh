@@ -68,16 +68,18 @@ board_changes() (
 )
 
 # board_pr_kind <name> <board> — the kind of the board PR <name>: plan (plan-<hld>, scope-<epic>),
-# agreement (agree-<hld or epic>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else
-# story-scope edit. A plan or agreement name counts only when it names an HLD or epic in <board> (the
-# PR's worktree's), by its file name made clean (board_pr_names); a story slug such as plan-hld-gaps
-# or scope-creep is a story-scope edit.
+# agreement (agree-<hld or epic>), retro file (retro-<x>), finish (finish-<slug>, drop-<slug>), hold
+# (hold-<slug>), else story-scope edit. A plan, agreement or retro file name counts only when it names
+# an HLD, epic or retro in <board> (the PR's worktree's), by its file name made clean
+# (board_pr_names); a story slug such as plan-hld-gaps, scope-creep or retro-goals-step is a
+# story-scope edit.
 board_pr_kind() {
   local x="${1#*-}"
   case "$1" in
     plan-?*) board_pr_names "$2/hld" "${x}" && { echo plan; return; } ;;
     scope-?*) board_pr_names "$2/epics" "${x}" && { echo plan; return; } ;;
     agree-?*) { board_pr_names "$2/hld" "${x}" || board_pr_names "$2/epics" "${x}"; } && { echo agreement; return; } ;;
+    retro-?*) board_pr_names "$2/retros" "${x}" && { echo "retro file"; return; } ;;
     finish-?* | drop-?*) echo finish; return ;;
     hold-?*) echo hold; return ;;
   esac
