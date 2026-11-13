@@ -920,7 +920,7 @@ start_rung() {
 }
 
 # rung_late <slug> <model> <err> [who] — when start_agent's stderr <err> says the brief may have gone out
-# (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
+# (the tries review_start_failed reads as unclear, start_unclear's words) and the agent was not blocked on a question before
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
@@ -932,7 +932,7 @@ rung_late() {
   local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v who="${4:-step-up}"
   case "$3" in
     *agent_blocked*) return 1 ;;
-    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"reply to the brief could not be read"*) ;;
     *) return 1 ;;
   esac
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
@@ -4428,9 +4428,10 @@ try:
             sr = started.get(n) or told(n, t)
         else:
             sr = started[n] = stem(c, t)
-        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it,
+        # in the words of sent_note: another thing that could not be read (its pane) says nothing about the brief.
         o = outcome(f)
-        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "reply to the brief could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
             newest[n] = (f[0], c, alike[k]) + sr

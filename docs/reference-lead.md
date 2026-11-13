@@ -301,8 +301,8 @@ herdr list shows idle. For each one it finds the newest `events.tsv` line that g
 prompt. That is `story`, `escalate` (a ladder step-up), `step-up`, `restart` or a `tell` of any kind
 but `note` for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
 agent started by name. The line must end `ok`, or in deliver_prompt's error after herdr sent the
-prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `could not be
-read`), which is how a brief that was never taken up ends. A tell that failed before sending
+prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `herdr's reply to
+the brief could not be read`), which is how a brief that was never taken up ends. A tell that failed before sending
 delivered nothing, and the line before it counts. A start that failed before sending leaves its
 agent alone: it may have opened the pane and recorded a new session with no turn in it, so its box
 holds no older brief. A note (`tell:note`) goes to a conductor's inbox, and the prompt that wakes
