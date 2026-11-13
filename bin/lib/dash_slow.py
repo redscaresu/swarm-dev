@@ -8,10 +8,12 @@ CI_SECONDS, CI_RETRY, CI_TIMEOUT = 6 * 3600, 600, 1800
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache is text to print, not escapes
 # GH_WAIT: the most one gh call may take. DASH_READ_END is dash's report deadline (an epoch, set by
 # dash_slow); each call also stops a second short of it, so this ends, its gh calls killed on their own
-# timeout, before report_read KILLs it. A gh call stays in this process's group, so when this misses
-# that margin report_read's group KILL reaches it too; only the detached ci refresh has a session of its own. A call cut or not made for the deadline sets
-# CUT, and the run then exits 142 (report_read's cut) once the rest is printed.
-GH_WAIT, CUT = 5, False
+# timeout (kill_tree), before report_read KILLs it. A gh call stays in this process's group, so when this
+# misses that margin report_read's group KILL reaches it too; only the detached ci refresh has a session
+# of its own. A call cut or not made for the deadline sets CUT, and the run then exits 142 (report_read's
+# cut) once the rest is printed.
+# PIPE_WAIT: how long a gh call killed on its timeout (kill_tree) may take to let go of its pipe.
+GH_WAIT, PIPE_WAIT, CUT = 5, 1, False
 END = float(os.environ.get("DASH_READ_END") or "inf") - 1
 def private(path, flags):
     # os.open that never follows a symlink, as an opener for open(): a second guard, after own_dir.
@@ -39,10 +41,39 @@ def gh(args):
     try:
         out, _ = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
-        p.kill(); p.communicate()
+        kill_tree(p.pid)
+        try:
+            p.communicate(timeout=PIPE_WAIT)
+        except subprocess.TimeoutExpired:   # something kill_tree missed still holds the pipe
+            p.stdout.close(); p.wait()
         CUT = CUT or left < GH_WAIT
         return None
     return out if p.returncode == 0 else None
+
+def kill_tree(pid):
+    # KILL pid and every process under it, as ps lists them. gh is often swarm-dev's gh-shim, a shell
+    # whose real gh is its child: a KILL of the shim alone leaves that gh holding the pipe, and with no
+    # session of their own (report_read's group KILL must reach them) no group can be killed instead.
+    # The tree is read before any kill, so a child is not reparented away from it first.
+    try:
+        ps = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PIPE_WAIT).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        ps = ""
+    kids = {}
+    for line in ps.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[0].isdigit() and f[1].isdigit():
+            kids.setdefault(int(f[1]), []).append(int(f[0]))
+    tree, todo = [], [pid]
+    while todo:
+        q = todo.pop()
+        tree.append(q)
+        todo.extend(kids.get(q, []))
+    for q in tree:
+        try:
+            os.kill(q, signal.SIGKILL)
+        except OSError:
+            pass
 
 def origin_of(repo):
     # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.

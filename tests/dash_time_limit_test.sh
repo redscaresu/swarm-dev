@@ -6,7 +6,9 @@
 # herdr, claude and gh on PATH that answer at once, or with SLOW set sleep that many seconds (gh logs
 # its pid first, to show none outlives the frame); with SLOW_READ set only herdr's read of an agent's
 # pane sleeps, the read dash_render.py makes (panes.py's pane_text); with SLOW_GH only gh sleeps; with
-# SLOW_IN naming a project, the stubs sleep only under that project (SWARM_PROJECT, a --project child's).
+# SLOW_IN naming a project, the stubs sleep only under that project (SWARM_PROJECT, a --project child's);
+# with FORK_GH set, gh's PR state reads (dash_slow.py's) fork their sleep and wait on it, as gh-shim runs the
+# real gh with no watcher, so a KILL of the stub alone leaves the sleep holding dash_slow.py's pipe.
 # The limit is SWARM_REPORT_SECONDS.
 # git, python3 and awk on PATH are a shim that runs the real one, but: with MISS_MARGIN set, gives dash_slow.py
 # a DASH_READ_END a thousand seconds off, so it misses its margin and only report_read's group KILL
@@ -78,6 +80,9 @@ cat > "${ROOT}/bin/claude" <<'STUB'
 STUB
 cat > "${ROOT}/bin/gh" <<'STUB'
 #!/bin/sh
+[ -z "${FORK_GH:-}" ] || case "$*" in
+  *statusCheckRollup*) sleep "${SLOW_SECONDS}" & echo "$!" >> "${GH_PIDS}"; wait; exit 1 ;;
+esac
 [ -z "${MISS_MARGIN:-}" ] || case "$*" in
   *statusCheckRollup*) perl -MTime::HiRes=time -e 'exit($ENV{SWARM_REPORT_END} - time < 1.5 ? 0 : 1)' && : > "${LATE_FILE}" ;;
 esac
@@ -107,7 +112,7 @@ unset COLUMNS LINES DASH_COLOR DASH_W DASH_H NO_COLOR
 export CLAUDE_CONFIG_DIR="${ROOT}/config"   # under its own root, so parallel runs share no ~/.claude
 REAL_GIT="$(command -v git)"; REAL_PYTHON3="$(command -v python3)"; REAL_AWK="$(command -v awk)"
 export REAL_GIT REAL_PYTHON3 REAL_AWK PATH="${ROOT}/bin:${PATH}" TMPDIR="${ROOT}/tmp" CLAUDE_PROJECTS_DIR="${ROOT}/projects" \
-  SWARM_REPORT_SECONDS="${LIMIT}" GH_PIDS="${ROOT}/gh.pids" GH_STARTS="${ROOT}/gh.starts"
+  SWARM_REPORT_SECONDS="${LIMIT}" GH_PIDS="${ROOT}/gh.pids" GH_STARTS="${ROOT}/gh.starts" SLOW_SECONDS
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks gh again.
 fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 
@@ -284,6 +289,19 @@ done
 check "with dash_slow.py past its margin, dash_slow.py's gh call started well before the deadline" test ! -e "${LATE_FILE}"
 check "with dash_slow.py past its margin, gh was asked" test -s "${GH_PIDS}"
 is "with dash_slow.py past its margin, no gh it started is alive once dash exits" "" "${left}"
+
+# --- A gh call stopped on its own 5 s timeout lets go of dash_slow.py's pipe though its child holds it
+# (FORK_GH): dash_slow.py KILLs the call's whole tree, so its three PR reads end in about 15 s, well inside
+# gh's share of a 120 s deadline (60 s). With only the stub killed, the first read waits on its pipe until
+# report_read cuts the PR states at that share and names them.
+fresh; : > "${GH_PIDS}"
+read -r forked _ <<< "$(FORK_GH=1 SWARM_REPORT_SECONDS=120 run_dash "${ROOT}/fork.out" $((bound + 125)) "")"
+left="$(alive "${GH_PIDS}")"
+while read -r p; do kill "${p}" 2>/dev/null || true; done < "${GH_PIDS}"
+check "a gh call whose child holds the pipe: its PR state reads were made" test -s "${GH_PIDS}"
+check "a gh call whose child holds the pipe: the PR states are not cut at the deadline" lacks "gh PR states" "$(cat "${ROOT}/fork.out")"
+is "a gh call whose child holds the pipe: no child it started is alive once dash exits" "" "${left}"
+echo "     the forked-gh dash took ${forked} s"
 
 # --- A report killed (TERM) while a frame has a skip recorded leaves no swarm-report.* file. The shim
 # holds the frame at its first git, python3 or awk call after the skip (HOLD_DIR appears then), the report is
