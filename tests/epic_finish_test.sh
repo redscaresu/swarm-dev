@@ -161,6 +161,15 @@ is "merge = human, s2 handed over while s3 is kept with one PR: no finish: line"
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"
 item s3 "status: review" "kept: 2026-10-28 stalled" "prs: https://github.com/o/r/pull/9 https://github.com/o/r/pull/10" "epic: e"; review s2 "${U2}"
 is "merge = human, s2 handed over while s3 is kept with two PRs: the finish: line" finish "$(finished)"
+# Under merge = agent, a story in review that no close kept is its review agent's to merge with one PR;
+# with several PRs it is the lead's all the same, kept or not. s3's PRs stay open (state.<n>), so the
+# merge's reconcile leaves s3 in review.
+epic_pr; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"; echo OPEN > "${FX}/state.9"; merge "${URL}"
+is "merge = agent, s merges while s3 is in review, not kept, with one PR: no finish: line" hold "$(finished)"
+epic_pr; item s3 "status: review" "prs: https://github.com/o/r/pull/9 https://github.com/o/r/pull/10" "epic: e"
+echo OPEN > "${FX}/state.9"; echo OPEN > "${FX}/state.10"; merge "${URL}"
+is "merge = agent, s merges while s3 is in review, not kept, with two PRs: exits 0" 0 "${rc}"
+is "merge = agent, s merges while s3 is in review, not kept, with two PRs: the note ends with the finish: line" "${FIN}" "$(sed '/^$/d' "${INBOX}" | tail -1)"
 # merge = human under an HLD that grants merge: s3 in review is its review agent's to merge, until
 # swarm.sh merge holds it (here for a protected path), when it waits on the user. s2 costs money, so
 # once in review it is the user's under the grant too; epic_pr's s, in review at no cost, is gone.
