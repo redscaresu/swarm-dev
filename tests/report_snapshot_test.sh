@@ -10,8 +10,12 @@
 #   PATH wrapper counts.
 # - A state_set made in a $( ) subshell during the report is seen by the next fm in the parent shell; a
 #   story file made after the snapshot is read from disk; one gone since reads as gone.
-# - During one `status` (outside herdr) on fixture boards of 20 and 60 stories, the sed, awk and head runs
-#   grow per added story by at most GROWTH_BOUND, below main's growth on the same fixture.
+# - On a board of epics with an after: lead story, a story with no epic and a kind: set in state,
+#   epic_stories gives the same stories in the same order for every epic with the snapshot as without
+#   it, from its story-to-epic index (board_snap_index), starting no counted process. A state_set of
+#   kind: in a $( ) subshell during the report drops the index, and the next epic_stories reads it.
+# - During one `status` (outside herdr) on fixture boards of 20 stories in 5 epics and 60 in 15, the
+#   basename, sed, awk and head runs grow per added story by at most GROWTH_BOUND.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -24,9 +28,10 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" TMPDIR="${ROOT}/tmp"
 mkdir -p "${TMPDIR}" "${ROOT}/bin" "${ROOT}/count"
-# GROWTH_BOUND: the sed, awk and head runs one status may add per added story. Before the snapshot,
-# status added about 45 a story on this fixture, as fm and get_fm ran sed, head or awk on every read.
-GROWTH_BOUND=5
+# GROWTH_BOUND: the basename, sed, awk and head runs one status may add per added story. Each grew by
+# tens a story: before the snapshot, as fm and get_fm ran sed, head or awk on every read; then as board
+# and the report loops ran basename on every item, in walks made once per epic or per story in review.
+GROWTH_BOUND=2
 
 # The counting wrappers: each logs its name to COUNT_LOG, then runs the real program.
 COUNTED="sed awk head basename perl cat rm mkdir mv grep tr wc"
@@ -155,7 +160,78 @@ is "a board of names the snapshot leaves out: the caller's stdin is left to it, 
 is "a state_set in a \$( ) subshell is seen by the parent's next fm and get_fm; a story made after the snapshot is read; one gone reads as gone" \
   "|done|done|ready||3|" "$(bs after)"
 
-# --- status's sed, awk and head runs on 20 and 60 stories.
+# --- epic_stories from the snapshot's story-to-epic index (board_snap_index).
+# W: epics w1 and w2; in board order a code story of each, an after: lead story of w1 (waits on it, so
+# counts in none), a lead story whose after: names another epic (counts in w1), a story with no epic, a
+# story whose kind: lead is in state (after: w2, so it counts in none), and one whose epic: is only in
+# its body (fm's rule: it counts in w2).
+W="${ROOT}/w"
+mkdir -p "${W}/docs/stories" "${W}/docs/epics" "${W}/.swarm/board-state/stories"
+wput() { printf '%s\n' "${@:2}" > "${W}/docs/$1"; }
+wput epics/w1.md --- 'status: active' ---
+wput epics/w2.md --- 'status: active' ---
+wput stories/a1.md --- 'kind: code' 'epic: w1' 'status: ready' ---
+wput stories/a2.md --- 'kind: code' 'epic: w2' 'status: ready' ---
+wput stories/b-after.md --- 'kind: lead' 'epic: w1' 'after: w1' 'status: ready' ---
+wput stories/c_other.md --- 'kind: lead' 'epic: w1' 'after: [w2]' 'status: ready' ---
+wput stories/d.md --- 'kind: code' 'status: ready' ---
+wput stories/e.md --- 'kind: code' 'epic: w2' 'after: w2' 'status: ready' ---
+printf 'kind: lead\nkind@base: code\n' > "${W}/.swarm/board-state/stories/e"
+wput stories/f.md --- 'kind: code' 'status: ready' --- '' 'epic: w2'
+wput stories/README.md '# stories'
+# ws <command>... — bs on board W.
+# shellcheck source=/dev/null disable=SC2030,SC2031,SC2317,SC2329 # die is board.sh's, called from there
+ws() { (export PATH="${ROOT}/count:${ROOT}/bin:${PATH}" BOARD="${W}/docs" PROJECT_DIR="${W}"
+  die() { echo "swarm: $*" >&2; exit 1; }
+  . "${REPO}/bin/lib/board.sh"; "$@"); }
+# walks — epic_stories for every epic of W, one with none and "": "<epic>: <names>" lines.
+walks() {
+  local e
+  for e in w1 w2 none ""; do printf '%s: %s\n' "${e}" "$(epic_stories "${e}" | sed 's|.*/||' | tr '\n' ' ')"; done
+}
+# shellcheck disable=SC2329 # run through ws
+index_walks() {
+  walks > "${ROOT}/walk-plain"
+  board_snapshot "${ROOT}/wmark" || return 1
+  local e
+  # The lookups alone counted, and fm's calls in them: the index answers with no fm read (sed in walks
+  # names the files, after the count). The walk it replaced runs no counted process either, as
+  # board names its files with no basename, but it calls fm on every story.
+  eval "fm_real() $(declare -f fm | sed 1d)"
+  fm() { [[ -z "${FM_LOG:-}" ]] || echo "fm $1" >> "${FM_LOG}"; fm_real "$@"; }
+  for e in w1 w2 none; do COUNT_LOG="${ROOT}/walk-count" FM_LOG="${ROOT}/walk-fm" epic_stories "${e}" > /dev/null; done
+  walks > "${ROOT}/walk-snap"
+}
+: > "${ROOT}/walk-count"; : > "${ROOT}/walk-fm"
+ws index_walks
+is "epic_stories gives every epic's stories in board order: an after: lead story of its own epic counts in none, one naming another epic counts, kind: lead in state holds one back" \
+  "w1: a1.md c_other.md |w2: a2.md f.md |none: |: d.md |" "$(tr '\n' '|' < "${ROOT}/walk-plain")"
+is "epic_stories gives the same stories in the same order for every epic with the snapshot as without it" \
+  "$(cat "${ROOT}/walk-plain")" "$(cat "${ROOT}/walk-snap")"
+is "with the snapshot, epic_stories for each epic starts no counted process (${COUNTED})" \
+  "" "$(sort "${ROOT}/walk-count" | uniq -c | tr -s ' \n' '  ')"
+is "with the snapshot, epic_stories answers from the index: no fm read of a story" \
+  0 "$(grep -c '/stories/' "${ROOT}/walk-fm" || true)"
+
+# A state_set of kind: during the report, in a $( ) subshell as a report makes it: a1 becomes an
+# after: lead story of w1 (its after: is in the file), so it no longer counts in w1. Then a story made
+# after the snapshot is read from its file, while the snapshot holds.
+# shellcheck disable=SC2329 # run through ws
+index_write() {
+  local out
+  wput stories/a1.md --- 'kind: code' 'epic: w1' 'after: w1' 'status: ready' ---
+  board_snapshot "${ROOT}/wmark2" || return 1
+  printf '%s|' "$(epic_stories w1 | sed 's|.*/||' | tr '\n' ' ')"
+  out="$(state_set "${W}/docs/stories/a1.md" kind lead)"
+  printf '%s|%s|' "${out}" "$(epic_stories w1 | sed 's|.*/||' | tr '\n' ' ')"
+  board_snapshot "${ROOT}/wmark3" || return 1
+  wput stories/g.md --- 'kind: code' 'epic: w1' ---
+  printf '%s|%s|' "$(epic_stories w1 | sed 's|.*/||' | tr '\n' ' ')" "${BOARD_SNAP:+held}"
+}
+is "a state_set of kind: during the report drops the index, and the next epic_stories reads the new kind; a story made after the snapshot is read from its file" \
+  "a1.md c_other.md ||c_other.md |c_other.md g.md |held|" "$(ws index_write)"
+
+# --- status's basename, sed, awk and head runs on 20 and 60 stories.
 # board <n> — a project of <n> stories, in <n>/4 epics under an agreed HLD: ready, blocked on the one
 # before, in review through state, done, in turn.
 board() {
@@ -178,7 +254,7 @@ board() {
   git -C "${P}" -c user.name=t -c user.email=t@t add -A
   git -C "${P}" -c user.name=t -c user.email=t@t commit -qm init
 }
-# runs <n> — the sed, awk and head runs of one status on board <n>; its output goes to ${ROOT}/out<n>.
+# runs <n> — the basename, sed, awk and head runs of one status on board <n>; its output goes to ${ROOT}/out<n>.
 runs() {
   : > "${ROOT}/count$1"
   # shellcheck disable=SC2031 # PATH is the test's own here
@@ -188,9 +264,9 @@ runs() {
 }
 board 20; board 60
 c20="$(runs 20)"; c60="$(runs 60)"
-echo "status's sed, awk and head runs: ${c20} on 20 stories, ${c60} on 60"
+echo "status's basename, sed, awk and head runs: ${c20} on 20 stories, ${c60} on 60"
 is "status on 60 stories lists the 15 in review" 15 "$(grep -c '^  awaiting your merge: ' "${ROOT}/out60" || true)"
-holds "status's sed, awk and head runs grow per added story by at most ${GROWTH_BOUND} (about 45 before the snapshot)" \
+holds "status's basename, sed, awk and head runs grow per added story by at most ${GROWTH_BOUND} (tens before the snapshot, and before board named its files with no basename)" \
   "(b - a) / 40 <= ${GROWTH_BOUND}" "${c20}" "${c60}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
