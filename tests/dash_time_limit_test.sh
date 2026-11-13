@@ -8,7 +8,8 @@
 # pane sleeps, the read dash_render.py makes (panes.py's pane_text); with SLOW_GH only gh sleeps; with
 # SLOW_IN naming a project, the stubs sleep only under that project (SWARM_PROJECT, a --project child's);
 # with FORK_GH set, gh's PR state reads (dash_slow.py's) fork their sleep and wait on it, as gh-shim runs the
-# real gh with no watcher, so a KILL of the stub alone leaves the sleep holding dash_slow.py's pipe.
+# real gh with no watcher, so a KILL of the stub alone leaves the sleep holding dash_slow.py's pipe; with
+# FAIL_PS set, ps on PATH fails, so dash_slow.py cannot list a call's children.
 # The limit is SWARM_REPORT_SECONDS.
 # git, python3 and awk on PATH are a shim that runs the real one, but: with MISS_MARGIN set, gives dash_slow.py
 # a DASH_READ_END a thousand seconds off, so it misses its margin and only report_read's group KILL
@@ -106,6 +107,8 @@ fi
 exec "${real}" "$@"
 STUB
 cp "${ROOT}/bin/git" "${ROOT}/bin/python3"; cp "${ROOT}/bin/git" "${ROOT}/bin/awk"
+# shellcheck disable=SC2016 # the stub expands them, not this shell
+printf '#!/bin/sh\n[ -z "${FAIL_PS:-}" ] || exit 1\nexec %s "$@"\n' "$(command -v ps)" > "${ROOT}/bin/ps"
 for b in stty tput; do printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/${b}"; done
 chmod +x "${ROOT}/bin/"*
 unset COLUMNS LINES DASH_COLOR DASH_W DASH_H NO_COLOR
@@ -302,6 +305,15 @@ check "a gh call whose child holds the pipe: its PR state reads were made" test 
 check "a gh call whose child holds the pipe: the PR states are not cut at the deadline" lacks "gh PR states" "$(cat "${ROOT}/fork.out")"
 is "a gh call whose child holds the pipe: no child it started is alive once dash exits" "" "${left}"
 echo "     the forked-gh dash took ${forked} s"
+# With ps failing as well (FAIL_PS), dash_slow.py kills only the stub, and its wait on the pipe lasts until
+# report_read's group KILL at gh's share of the deadline (15 s of 30 s), which reaches the sleep in the same
+# group. Were the wait given up early, dash_slow.py would exit with the sleep still running.
+fresh; : > "${GH_PIDS}"
+FORK_GH=1 FAIL_PS=1 SWARM_REPORT_SECONDS=30 run_dash "${ROOT}/fork-ps.out" $((bound + 35)) "" > /dev/null
+left="$(alive "${GH_PIDS}")"
+while read -r p; do kill "${p}" 2>/dev/null || true; done < "${GH_PIDS}"
+check "a gh call whose child holds the pipe, with ps failing: its PR state reads were made" test -s "${GH_PIDS}"
+is "a gh call whose child holds the pipe, with ps failing: no child it started is alive once dash exits" "" "${left}"
 
 # --- A report killed (TERM) while a frame has a skip recorded leaves no swarm-report.* file. The shim
 # holds the frame at its first git, python3 or awk call after the skip (HOLD_DIR appears then), the report is

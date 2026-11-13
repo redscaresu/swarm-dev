@@ -12,8 +12,7 @@ CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache
 # misses that margin report_read's group KILL reaches it too; only the detached ci refresh has a session
 # of its own. A call cut or not made for the deadline sets CUT, and the run then exits 142 (report_read's
 # cut) once the rest is printed.
-# PIPE_WAIT: how long a gh call killed on its timeout (kill_tree) may take to let go of its pipe.
-GH_WAIT, PIPE_WAIT, CUT = 5, 1, False
+GH_WAIT, CUT = 5, False
 END = float(os.environ.get("DASH_READ_END") or "inf") - 1
 def private(path, flags):
     # os.open that never follows a symlink, as an opener for open(): a second guard, after own_dir.
@@ -41,11 +40,9 @@ def gh(args):
     try:
         out, _ = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
-        kill_tree(p.pid)
-        try:
-            p.communicate(timeout=PIPE_WAIT)
-        except subprocess.TimeoutExpired:   # something kill_tree missed still holds the pipe
-            p.stdout.close(); p.wait()
+        # A child kill_tree missed (ps failed) still holds the pipe, and this waits on it until
+        # report_read's group KILL at the deadline, which reaches it in this group: never a gh left behind.
+        kill_tree(p.pid); p.communicate()
         CUT = CUT or left < GH_WAIT
         return None
     return out if p.returncode == 0 else None
@@ -56,7 +53,7 @@ def kill_tree(pid):
     # session of their own (report_read's group KILL must reach them) no group can be killed instead.
     # The tree is read before any kill, so a child is not reparented away from it first.
     try:
-        ps = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PIPE_WAIT).stdout
+        ps = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=GH_WAIT).stdout
     except (OSError, subprocess.TimeoutExpired):
         ps = ""
     kids = {}
