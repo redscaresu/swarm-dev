@@ -3731,7 +3731,8 @@ for f in sys.argv[1:]:
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
-# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# which agents are live (no_agent_lines). line_holds reads it once more, on a poll that is about to
+# print a line that says an agent is missing. LEAD_AGENTS_OK is set when herdr answered within
 # SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
 # poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
 LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
@@ -4585,7 +4586,47 @@ lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 # comma or a space. lead_wake logs it and drops a merged story's lines by it.
 lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%,*}"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%% *}"; }
 
-# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
+# line_holds <line> — false when <line> says an agent is missing and a second read of herdr's agent list
+# shows that agent in a pane this project opened (own_panes), with each name mapped by no_agent_name as
+# its producer maps it: <slug>'s builder or review-<slug> for `no-agent: <slug>` (no_agent_lines'
+# test), review-<slug> for `no-review: <slug>` (no_review_line's), and the builder for `idle: <slug> is
+# ready with no build` (touches_rows.py --idle reads no herdr list, so this read is that line's only
+# one). Each producer reads the poll's first list (lead_agents), and an agent can start after it.
+# lead_wake asks only about a line it is about to print, so herdr is read again only on a poll with such
+# a line, and once per poll: the read lands in LEAD_RECHECK_READ, LEAD_RECHECK_OK and LEAD_RECHECK_LIVE,
+# which lead_wake makes local. True for any other line; for a `no-review:` line whose note says
+# `(started `, since this poll started that review agent (no_review_line's restart) and its line is the
+# lead's word of it; and when no second read is made, because the poll's first read failed or timed out
+# (LEAD_AGENTS_OK empty: a hung herdr would cost the poll a second wait) or the poll runs outside herdr,
+# or when the read fails, takes longer than lead_agents allows, or gives JSON that does not parse: the
+# line stands.
+LEAD_RECHECK_READ=""; LEAD_RECHECK_OK=""; LEAD_RECHECK_LIVE=""
+line_holds() {
+  local list name rname
+  case "$1" in
+    "no-review: "*" (started "*", exit: "*) return 0 ;;
+    "no-agent: "* | "no-review: "* | "idle: "*" is ready with no build, "*) ;;
+    *) return 0 ;;
+  esac
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  if [[ -z "${LEAD_RECHECK_READ}" ]]; then
+    LEAD_RECHECK_READ=1
+    if [[ "${HERDR_ENV:-}" == 1 ]] && list="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)" \
+       && LEAD_RECHECK_LIVE="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${list}" 2>/dev/null)"; then
+      LEAD_RECHECK_OK=1
+    fi
+  fi
+  [[ -n "${LEAD_RECHECK_OK}" ]] || return 0
+  lead_line_slug "$1"
+  no_agent_name name "${LEAD_LINE_SLUG}"; no_agent_name rname "review-${LEAD_LINE_SLUG}"
+  case "$1" in
+    "no-agent: "*) ! grep -qxF -e "${name}" -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    "no-review: "*) ! grep -qxF -e "${rname}" <<< "${LEAD_RECHECK_LIVE}" ;;
+    *) ! grep -qxF -e "${name}" <<< "${LEAD_RECHECK_LIVE}" ;;
+  esac
+}
+
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
 # and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
 # since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
 # open_story_prs, lead_bases), start a fix-main story's writer for each red base
@@ -4594,12 +4635,13 @@ lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
 # `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
 # whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
-# and save the queue as LEAD_SEEN. Print
+# drop a no-agent:, no-review: or `idle: ... is ready with no build` line it would print whose agent a
+# second read of herdr's list shows (line_holds), and save the rest of the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet saves the lines
 # of a kind in LEAD_QUIET without printing them, and prints every other line: each is an alert.
 lead_wake() {
-  local now line new="" u merged="" gone kept=""
+  local now line new="" u merged="" gone kept="" LEAD_RECHECK_READ="" LEAD_RECHECK_OK="" LEAD_RECHECK_LIVE=""
   lead_agents
   # A merge changes the PR state the heads pass reads: read it on this poll, not up to LEAD_HEADS_EVERY later.
   if lead_events; then merged=1; fi
@@ -4612,7 +4654,9 @@ lead_wake() {
   fi
   # A fix-main story writer for each red base head none covers, started detached here, never in lead_queue's $(...).
   main_red_fix
-  now="$(lead_queue)"
+  # A queue read that failed (a die inside it) is no empty queue: lead_poll ends the run with its status,
+  # and LEAD_SEEN keeps what the last good read saw.
+  now="$(lead_queue)" || { LEAD_QUEUE_RC=$?; return 1; }
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
   # .swarm/lead/reads, emptied at each poll's start and end, never in TMPDIR. lead_lock stops an earlier
   # run's bash, but not a $(prompt_lines) it had started: that subshell runs to its end (up to the read
@@ -4643,12 +4687,21 @@ lead_wake() {
     done <<< "${now}"
     now="${kept%$'\n'}"
   fi
+  # A line about to print that says an agent is missing goes when herdr, read once more, lists it
+  # (line_holds). It is left out of LEAD_SEEN too, so a later poll prints it if it still holds then.
+  kept=""
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || { [[ -n "${1:-}" ]] && lead_quiet "${line}"; } || new+="${line}"$'\n'
+    [[ -n "${line}" ]] || continue
+    if ! grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null && ! { [[ -n "${1:-}" ]] && lead_quiet "${line}"; }; then
+      line_holds "${line}" || continue
+      new+="${line}"$'\n'
+    fi
+    kept+="${line}"$'\n'
   done <<< "${now}"
+  now="${kept%$'\n'}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
+  LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
     echo "${line}"; lead_line_slug "${line}"
     record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
@@ -4686,20 +4739,78 @@ pid_lock() {
   rm -f "${tmp}"
 }
 
+# LEAD_ENDED: set once this wait --lead run has said why it ends (a queue line, the timeout: line or
+# the replaced: line) or ends silent by design (wait --lead 0), so lead_exit adds no wait-failed: line.
+# LEAD_SLEEP: the pid of the poll's sleep while it runs (lead_sleep). LEAD_QUEUE_RC: the status of the
+# last poll's lead_queue when it failed, else 0 (lead_wake, lead_poll).
+LEAD_ENDED=""
+LEAD_SLEEP=""
+LEAD_QUEUE_RC=0
+
+# lead_exit <status> — wait --lead's EXIT trap: kill the poll's sleep, remove the pid file while it
+# still names this run, and, for a non-zero <status> with nothing said (LEAD_ENDED), print
+# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>.
+lead_exit() {
+  trap '' USR1 TERM   # a signal now would add a second line
+  [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
+  [[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"
+  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead"
+}
+
+# lead_signal [replaced] — wait --lead's USR1 and TERM traps, set before its argument checks. USR1 comes
+# only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`. A TERM is anyone
+# else's (a tool's timeout, a kill by hand): print nothing here, so lead_exit's wait-failed: line says it.
+# Either kills the poll's sleep and exits 143, as a TERM did before. A run that has already said why it
+# ends (LEAD_ENDED) ignores both: one more line would follow its own.
+lead_signal() {
+  [[ -z "${LEAD_ENDED}" ]] || return 0
+  [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
+  LEAD_SLEEP=""
+  [[ -z "${1:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
+  exit 143
+}
+
+# lead_sleep <seconds> — sleep in the background and wait for it, so a signal runs lead_signal at once:
+# bash runs a trap only once the foreground command it cut into ends.
+lead_sleep() { sleep "$1" & LEAD_SLEEP=$!; wait "${LEAD_SLEEP}"; LEAD_SLEEP=""; }
+
+# lead_traps — wait --lead's EXIT, USR1 and TERM traps (lead_exit, lead_signal). wait_command sets them as
+# soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with --lead)
+# ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
+lead_traps() { trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM; }
+
+# lead_gone — true once LEAD_PID names no live wait --lead, within 5 s.
+lead_gone() {
+  local i
+  for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || return 0; sleep 0.1; done
+  [[ -z "$(lead_holder)" ]]
+}
+
 # lead_lock — make this run the one wait --lead (pid_lock): stop any live holder of LEAD_PID (an
-# earlier run, whose output may go unread) and take it. The pid file goes on exit, only while it
-# still names this run.
+# earlier run, whose output may go unread) and take it. The holder gets a USR1, which its lead_signal
+# answers at once while it sleeps (a run from before USR1 had a trap simply ends on it); one still there
+# 5 s later is in a slow read that holds its trap back, and gets a KILL, which ends it with nothing
+# printed. The pid file goes on exit (lead_exit, wait_lead's EXIT trap), only while it still names this run.
 lead_lock() {
-  local pid i
+  local pid
   until pid_lock "${LEAD_PID}" "$$" lead_holder; do
     pid="$(lead_holder)"
     [[ -n "${pid}" ]] || continue
     echo "swarm: wait --lead: stopping the earlier run (pid ${pid}); this one watches now" >&2
-    kill "${pid}" 2>/dev/null || true
-    for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || break; sleep 0.1; done
-    [[ -z "$(lead_holder)" ]] || die "wait --lead: the earlier run (pid ${pid}) did not stop"
+    kill -USR1 "${pid}" 2>/dev/null || true
+    lead_gone && continue
+    [[ "$(lead_holder)" != "${pid}" ]] || kill -KILL "${pid}" 2>/dev/null || true
+    lead_gone || die "wait --lead: the earlier run (pid ${pid}) did not stop"
   done
-  trap '[[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"' EXIT
+}
+
+# lead_poll [quiet] — one read of the lead's queue (lead_wake): true when it printed a line. A read
+# whose lead_queue failed ends the run with lead_queue's status, which lead_exit reports.
+lead_poll() {
+  LEAD_QUEUE_RC=0
+  ! lead_wake "$@" || return 0
+  (( LEAD_QUEUE_RC == 0 )) || exit "${LEAD_QUEUE_RC}"
+  return 1
 }
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
@@ -4709,24 +4820,40 @@ lead_lock() {
 # open_story_prs, lead_bases), on its first read, then at most once every LEAD_HEADS_EVERY seconds, and
 # on the poll after events.tsv gains a merge line (lead_events). The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
-# every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
+# every line whose kind is not in LEAD_QUIET. Every exit after the traps go on says why on stdout, in one
+# line that is no queue item (never in LEAD_SEEN, never logged as lead-woken), and keeps its exit code; a
+# die before them (no swarm project, a bad config line: exit 1, the cause on stderr) and the KILL lead_lock
+# sends a run stuck in a slow read (exit 137, nothing on stderr) print nothing:
+#   timeout: nothing new in <N> min, exit: swarm.sh wait --lead   at the timeout (default an hour), N its
+#     minutes rounded up; exit 1. wait --lead 0, a single read, prints nothing here and exits 1.
+#   replaced: a newer wait --lead watches now   a newer run stopped this one (lead_lock's USR1, lead_signal);
+#     exit 143.
+#   wait-failed: exit <rc>, exit: swarm.sh wait --lead   any other non-zero exit with nothing printed (an
+#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM), from its EXIT trap
+#     (lead_exit); exit <rc>.
+# The EXIT, USR1 and TERM traps (lead_traps) are set before the argument checks: by wait_command as soon as
+# its arguments name --lead, ahead of its own check of --past with --lead, and here again.
+# It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
 # clear_red_main) and, through a detached run, to write a red base head's fix-main story (main_red_fix), and
 # nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
+  lead_traps
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   [[ "${LEAD_HEADS_EVERY}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1, not '${LEAD_HEADS_EVERY}'"
   lead_lock
   start=${SECONDS}
-  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else ! lead_wake quiet || return 0; fi
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_poll || return 0; else ! lead_poll quiet || return 0; fi
   while (( (SECONDS - start) * 1000 < timeout )); do
     left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
-    sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
-    ! lead_wake || return 0
+    lead_sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
+    ! lead_poll || return 0
   done
+  LEAD_ENDED=1
+  (( timeout == 0 )) || echo "timeout: nothing new in $(( (timeout + 59999) / 60000 )) min, exit: swarm.sh wait --lead"
   return 1
 }
 
@@ -5566,10 +5693,12 @@ past_target() {
 # wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
 # `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over. --past <sha>,
 # on a builder only (past_target refuses the rest, with --until-report and --lead), also ends the wait
-# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed).
+# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed). A wait --lead's traps go on
+# first (lead_traps), so its refusal of --past with --lead ends with the wait-failed: line as well.
 wait_command() {
   local stall until idle n out rc a past="" sha="" other=""
   for a in "$@"; do case "${a}" in --past) past=1 ;; --lead|--until-report) other="${a}" ;; esac; done
+  [[ "${other}" != --lead ]] || lead_traps   # every exit of a wait --lead says why, the check below included (lead_exit)
   [[ -z "${past}" || -z "${other}" ]] || die "wait [--stall] --past <sha> <slug> waits on a builder; it takes no ${other}"
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""; idle=""
