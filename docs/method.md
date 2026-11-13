@@ -99,20 +99,16 @@ lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it w
 `origin/HEAD`, and asks origin only when that is missing, without prompting and for at most 15 seconds; with
 no answer it writes no CI and says so. The step fails, naming the target, when make has no `check` target.
 Its gate, `.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
-files: `stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files `retros/*.md` under
-`board_dir`. Other pages in `docs/` still get checked, and so does any other file under `retros/`, such as a
-script. A board outside the repo gets the workflow without the gate. A `ci.yml` that init wrote carries a
-marker line; init leaves it alone after that and only writes the gate again if it is missing.
+files (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and `retros/*.md` under `board_dir`, so other pages in
+`docs/` still get checked). A board outside the repo gets the workflow without the gate. A `ci.yml` that init
+wrote carries a marker line; init leaves it alone after that and only writes the gate again if it is missing.
 With other workflows already there, init leaves them, writes the gate, and prints the step to add to the job
 that runs your checks. It also writes a git pre-commit hook that runs `make check`, skipping a commit that
 changes only the board's own files. While make has no `check` target, the hook only warns; CI is the check
 that fails. When a hook exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines
 to add before any `exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook
-and no lines, since a hook there runs in every repo. Init writes the gate and the hook only when they are
-missing. A project set up before retro files joined the board's list keeps the old list in both; to get
-the new one, delete `.github/swarm-board-only.sh` and the pre-commit hook swarm-dev wrote
-(`.git/hooks/pre-commit`), then run init again. Last, init lists the files it wrote that git does not track
-yet, for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks
+and no lines, since a hook there runs in every repo. Last, init lists the files it wrote that git does not
+track yet, for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks
 once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.
