@@ -7,6 +7,8 @@
 # incident, and its escalate line with the ladder on, with bg=0 test=0 sign=0 as agent_stalled read them; a
 # live background task stops that wait from stepping up, but a step-up run by hand reads it fresh (bg=1),
 # and flow incidents lists that line and counts it as a false stall, beside a lead-hand line marking one.
+# With either ladder, a make test running in the builder's pane for 2 hours 30 minutes stops the wait from
+# stalling or stepping up: a test run has no age limit.
 # herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -87,13 +89,18 @@ esac
 EOF
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 # ps, on PATH only where a case puts PS_BIN there: the builder's pane shell (100) runs claude, whose
-# tool shell runs make test, started 10 minutes ago.
-PS_BIN="${ROOT}/ps-bin"; mkdir -p "${PS_BIN}"
+# tool shell runs make test, started 10 minutes ago. PS_LONG_BIN's ps is the same tree with the run
+# started 2 hours 30 minutes ago, past 3 x stall_minutes (90 minutes): a builder's own full suite.
+PS_BIN="${ROOT}/ps-bin" PS_LONG_BIN="${ROOT}/ps-long-bin"; mkdir -p "${PS_BIN}" "${PS_LONG_BIN}"
 cat > "${PS_BIN}/ps" <<'EOF'
 #!/bin/sh
 printf '%s\n' '100 1 2:00:00 -zsh' '200 100 2:00:00 claude' '300 200 10:00 /bin/zsh -c make test' '310 300 10:00 make test'
 EOF
-chmod +x "${PS_BIN}/ps"
+cat > "${PS_LONG_BIN}/ps" <<'EOF'
+#!/bin/sh
+printf '%s\n' '100 1 3:00:00 -zsh' '200 100 3:00:00 claude' '300 200 2:30:00 /bin/zsh -c make test' '310 300 2:30:00 make test'
+EOF
+chmod +x "${PS_BIN}/ps" "${PS_LONG_BIN}/ps"
 
 P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
@@ -220,6 +227,13 @@ for ladder in sonnet,opus,fable ""; do
     check "ladder '${ladder}': the stall's incident carries bg=0 test=0 sign=0, as agent_stalled read them" \
       "bg=0 test=0 sign=0" "$(inputs incident)"
   fi
+  # A make test that started 2 hours 30 minutes ago and is still running is work, whatever its age: the
+  # wait says busy, logs no stalled incident, and no escalate line is logged or step-up refused.
+  fresh "${ladder}" busy; echo '{"result":{"process_info":{"pane_id":"w:1","shell_pid":100}}}' > "${ROOT}/pi"
+  out="$(SWARM_WAIT_STARTED="${OLD}" PATH="${PS_LONG_BIN}:${PATH}" run wait --stall s1 3000)" || true
+  rm -f "${ROOT}/pi"
+  check "ladder '${ladder}': a builder whose make test started 2:30:00 ago, past 3 x stall_minutes, is busy, with no stall or escalate line" \
+    "busy||" "${out}|$(stepped)|$(inputs incident)"
 
   fresh "${ladder}" idle; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
   if [[ -n "${ladder}" ]]; then

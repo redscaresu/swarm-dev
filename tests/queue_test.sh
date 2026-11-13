@@ -228,7 +228,9 @@ check "a head with no check runs is not green, so not queued, even with a green 
 green 31
 printf -- '---\nstatus: ready\nkind: code\nepic: e1\nrepo: proj\n---\n' > "${p}/docs/stories/s4.md"
 : > "${ROOT}/gh.log"
-check "a story naming the project's own repo prints each queued line once, from one PR list" "${QN}|1" "$(nextq)|$(calls 'pr list')"
+# next's own unlisted: read (--author @me) is a PR list of its own, not the queued lines'.
+check "a story naming the project's own repo prints each queued line once, from one PR list" "${QN}|1" \
+  "$(nextq)|$(grep 'pr list' "${ROOT}/gh.log" | grep -vc -- '--author @me' || true)"
 rm "${p}/docs/stories/s4.md"
 
 # Two more repos: gone, which next cannot resolve, and zsvc after it, with a green PR #9 (head h9). The

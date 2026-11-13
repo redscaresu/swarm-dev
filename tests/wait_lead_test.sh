@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # wait_lead_test.sh — swarm.sh wait --lead: it returns once the lead's queue gains a held or escalated
 # story, or with merge = human a review item whose PR head is green, printing one line per new item and
-# logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
-# across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
+# logging one lead-woken line each; at its timeout it prints one timeout: line and exits 1 (wait --lead 0, a
+# single read, prints nothing), and any other failure prints one wait-failed: line. None of those is a queue
+# item. What it last saw is kept across runs, and a new run takes over from an earlier one, which prints one
+# replaced: line. gh is a stub on PATH answering the PR's
 # head and its check runs from ${FX}; herdr is a stub listing a running conductor, or the agents in
-# ${FX}/agents, read once per poll for its agent list (no-agent: lines, no_agent_test.sh). Both log each
-# call. A review agent whose start was cut short is started again by the poll alone, within its three
-# tries, through a real swarm.sh review-agent. A live builder whose newest signer incident is
+# ${FX}/agents, read once per poll for its agent list (no-agent: lines, no_agent_test.sh), and once more
+# before a poll prints a line that says an agent is missing. Both log each call. A review agent whose
+# start was cut short is started again by the poll alone, within its three tries, through a real
+# swarm.sh review-agent. A live builder whose newest signer incident is
 # sign-blocked and whose worktree is dirty gets a sign-blocked: line, with the signers stubbed to show
 # the poll calls none.
 # ln is a stub that fails while ${FX}/ln.fail exists and waits as many seconds as ${FX}/ln.slow holds.
@@ -71,12 +74,16 @@ case "$1 $2" in
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-# herdr: conduct-e is running, busy, or the agents ${FX}/agents lists. An agent start (the review agent
-# wait --lead starts again) gets a pane, and its brief reads as taken. A pane's process info is ${FX}/pi.
+# herdr: conduct-e is running, busy, or the agents ${FX}/agents lists; its list fails while that file
+# holds FAIL, and ${FX}/agents.then, once there, replaces it after the next list (a list that changes
+# between two reads). An agent start (the review agent wait --lead starts again) gets a pane, and its
+# brief reads as taken. A pane's process info is ${FX}/pi.
 printf '#!/bin/sh\necho "$*" >> "%s"\nFX="%s"\n' "${ROOT}/herdr.log" "${FX}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") cat "${FX}/agents" 2>/dev/null || echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}' ;;
+  "agent list") [ "$(cat "${FX}/agents" 2>/dev/null)" != FAIL ] || exit 1
+                cat "${FX}/agents" 2>/dev/null || echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}'
+                [ ! -e "${FX}/agents.then" ] || mv "${FX}/agents.then" "${FX}/agents" ;;
   "pane process-info") cat "${FX}/pi" 2>/dev/null || echo '{"result":{}}' ;;
   "--version ") echo "herdr 0.9.5" ;;
   "tab create") echo '{"result":{"root_pane":{"pane_id":"w:r1"}}}' ;;
@@ -138,14 +145,14 @@ fresh() {
 }
 # again — forget the last run's output and exit code, keeping what it saw.
 again() { rm -f "${ROOT}/out" "${ROOT}/rc"; }
-# lead [VAR=value]... <timeout-ms> — swarm.sh wait --lead in the foreground, polling every second, inside
-# herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
+# lead [VAR=value]... <timeout-ms> [arg]... — swarm.sh wait --lead in the foreground, polling every second, inside
+# herdr, any further args passed on; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
 # so the gh counts below are a pass's, unless a case sets it longer.
 lead() {
   local envs=()
   while [[ "$1" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
-    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$@" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
 # must <what> <command>... — count a FAIL when the command is false, and say nothing when it is true.
 must() { local what="$1"; shift; "$@" || { echo "FAIL ${what}"; fails=$((fails + 1)); }; }
@@ -224,6 +231,19 @@ events() { awk -F'\t' '{ print $2 " " $3 }' "${P}/.swarm/events.tsv" 2>/dev/null
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
 nothing_yet() { [[ ! -e "${ROOT}/rc" && -z "$(out)" && -z "$(events)" ]]; }
+# timed_out <minutes> — the line a run with no change prints at its timeout.
+timed_out() { echo "timeout: nothing new in $1 min, exit: swarm.sh wait --lead"; }
+# failed_with <rc> — the run printed exactly one wait-failed: line, for <rc>, no timeout: line, and exited <rc>.
+failed_with() {
+  [[ "$(grep -c '^wait-failed: ' "${ROOT}/out")|$(grep -c '^timeout: ' "${ROOT}/out")|$(rc)" == "1|0|$1" ]] \
+    && grep -qxF "wait-failed: exit $1, exit: swarm.sh wait --lead" "${ROOT}/out"
+}
+# no_exit_lines — no timeout:, replaced: or wait-failed: line is in .swarm/lead/seen or logged as lead-woken.
+no_exit_lines() {
+  ! grep -qE '^(timeout|replaced|wait-failed): ' "${P}/.swarm/lead/seen" 2>/dev/null \
+    && ! awk -F'\t' '$2 == "lead-woken" && $5 ~ /^ok \((timeout|replaced|wait-failed)\)/ { f = 1 } END { exit !f }' \
+      "${P}/.swarm/events.tsv" 2>/dev/null
+}
 
 # --- held and escalated stories.
 # The run takes its lock 2.5 s late, so its first read is later than a fixed wait after start would be.
@@ -252,9 +272,10 @@ lead 20000 &
 lpid=$!
 saw() { local i; for ((i = 0; i < 600; i++)); do grep -q "$1" "${ROOT}/out" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 must "the new run took over" saw 'stopping the earlier run'
-for ((i = 0; i < 30; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
-check "a new wait --lead stops the earlier one" test -e "${ROOT}/rc.a"
-check "the earlier one ends with nothing printed" test ! -s "${ROOT}/out.a"
+for ((i = 0; i < 50; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
+check "a new wait --lead stops the earlier one within 5 s" test -e "${ROOT}/rc.a"
+check "the earlier one prints one replaced: line and exits 143, as a TERM would" \
+  test "$(cat "${ROOT}/out.a")|$(cat "${ROOT}/rc.a")" == "replaced: a newer wait --lead watches now|143"
 wait "${apid}" 2>/dev/null || true
 must "the new run read the board once" first_read "$(seen_id)"
 check "the new one says it took over" grep -q 'stopping the earlier run' "${ROOT}/out"
@@ -264,12 +285,25 @@ held z paused
 check "the new one watches" returned 25
 check "the new one prints what landed" test "$(grep -v '^swarm:' "${ROOT}/out")" == "held: z (paused)"
 check "its pid file is gone once it returns" test ! -e "${P}/.swarm/lead/pid"
+check "the replaced: line is no queue item: not in seen, not logged" no_exit_lines
+# A TERM from anything but a newer run (a tool's timeout, a kill by hand) is no replacement: nothing else
+# watches, so the run says it failed, and the lead starts it again.
+fresh
+start 20000
+# A run that never took its lock has no pid file: that is one FAIL below, not an abort of the whole file.
+held_pid="$(cat "${P}/.swarm/lead/pid" 2>/dev/null)" || held_pid=""
+check "the run holds the pid file" test -n "${held_pid}"
+[[ -z "${held_pid}" ]] || kill -TERM "${held_pid}" 2>/dev/null || true
+check "a TERM from outside ends the run within 5 s" returned 50
+check "it prints one wait-failed: exit 143 line, no replaced: line, and exits 143" failed_with 143
+check "it prints no replaced: line" test "$(grep -c '^replaced: ' "${ROOT}/out")" == 0
 
 fresh; touch "${FX}/ln.fail"
 lead 20000 &
 lpid=$!
 check "when the pid file cannot be made, it stops instead of spinning" returned 30
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
+check "a lock it cannot take prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 stop; rm -f "${FX}/ln.fail"
 
 # --- a run's first read with no .swarm/lead/seen: a LEAD_QUIET kind is saved unprinted, any other line prints.
@@ -295,15 +329,27 @@ check "a no-agent: line prints on a run's first read, alone" test "$(out)|$(rc)"
 rm -rf "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${ROOT}/proj-wt"
 
 fresh; lead 0900
-check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" == "|1"
+check "a timeout with a leading zero is decimal, not octal; 900 ms rounds up to 1 min" test "$(out)|$(rc)" == "$(timed_out 1)|1"
+fresh; lead 0; again; lead 0
+check "wait --lead 0 with no change prints nothing and exits 1" test "$(out)|$(rc)" == "|1"
 
 # --- SWARM_LEAD_POLL and the timeout.
 fresh; lead SWARM_LEAD_POLL=0 1000
 check "SWARM_LEAD_POLL=0 is refused" grep -q 'SWARM_LEAD_POLL is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_POLL=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+fresh; lead 12s
+check "a timeout that is no number is refused" grep -q "the timeout is in milliseconds, not '12s'" "${ROOT}/out"
+check "it prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+# The wait command refuses --past with --lead before wait_lead runs: its traps go on first (lead_traps).
+fresh; lead 0 --past abc
+check "--past with --lead is refused by the wait command" grep -q 'it takes no --lead' "${ROOT}/out"
+check "a refusal before wait_lead prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; lead SWARM_LEAD_HEADS_EVERY=0 1000
 check "SWARM_LEAD_HEADS_EVERY=0 is refused" grep -q 'SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_HEADS_EVERY=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; t0=${SECONDS}; lead SWARM_LEAD_POLL=30 2000
 check "the last sleep stops at the timeout, not a full poll later" test $((SECONDS - t0)) -le 4 -a "$(rc)" == 1
+check "it prints the timeout: line" test "$(out)" == "$(timed_out 1)"
 
 fresh; item c "kind: code" "status: ready"
 start 20000
@@ -407,7 +453,7 @@ fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"
 check "with merge = agent, a green review story does not wake it, and it times out" returned 60
-check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
+check "with merge = agent it times out non-zero with one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
 
 fresh "merge = agent"
@@ -705,8 +751,24 @@ rm -rf "${P}/.swarm/briefs" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv" "${P}
 fresh
 start 3000
 check "with no change it returns at its timeout" returned 50
-check "at its timeout it exits non-zero and prints nothing" test "$(out)|$(rc)" == "|1"
+check "at its timeout it exits 1 and prints exactly one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "events.tsv gains no line while it waits" test -z "$(events)"
+check "the timeout: line is no queue item: not in seen, not logged" no_exit_lines
+
+# --- a failed queue read: a copy of the plugin whose lead_queue prints a line, then fails with 7. The run
+# ends on that poll with lead_queue's own status and one wait-failed: line on stdout, never as a timeout,
+# and seen keeps the last good read, not the failed read's line.
+QF="${ROOT}/plugin-qf"; mkdir -p "${QF}"
+cp -R "${SWARM%/bin/swarm.sh}/bin" "${SWARM%/bin/swarm.sh}/.claude-plugin" "${QF}/"
+printf '\nlead_queue() { echo "held: qf (a partial read)"; return 7; }\n' >> "${QF}/bin/lib/lifecycle.sh"
+fresh; lead 0; cp "${P}/.swarm/lead/seen" "${ROOT}/seen.before"; again
+t0=${SECONDS}
+(cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
+  bash "${QF}/bin/swarm.sh" wait --lead 20000 > "${ROOT}/out" 2> "${ROOT}/err") && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+check "a poll whose lead_queue fails ends the run on that poll, with lead_queue's status" test "$(rc)" == 7 -a $((SECONDS - t0)) -le 10
+check "it prints one wait-failed: line on stdout, and nothing else there" test "$(out)" == "wait-failed: exit 7, exit: swarm.sh wait --lead"
+check "seen keeps the last good read, without the failed read's line" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
+check "the wait-failed: line is no queue item: not in seen, not logged" no_exit_lines
 
 # --- a running conductor does not hide a new held story, and a poll asks herdr only for its agent list.
 fresh
@@ -1175,6 +1237,153 @@ check "nor name the lead's check" bash -c "! grep -q '^main-red: .*, exit: read 
 stop
 git -C "${P}" remote remove origin; rm -f "${FX}"/base.* "${FX}/default" "${FX}"/*.status
 
+# --- a merge reads at once (#755). A merge line new in events.tsv runs the heads pass on the next poll, however
+# long until the next one is due, and a story whose every PR merged since its build last started names no line,
+# whatever the line, while its file waits for reconcile. ev <command> <target> [outcome] appends an events.tsv
+# line now; prs_calls counts the heads pass's reads of the open PRs; unseen <slug> is true when the queue the
+# last poll saved names no line for <slug>.
+ev() { printf '%s\t%s\t%s\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-ok}" >> "${P}/.swarm/events.tsv"; }
+prs_calls() { grep -c '^pr list ' "${ROOT}/gh.log" 2>/dev/null || true; }
+unseen() { ! awk -v s="$1" '{ sub(/^[^:]*: /, ""); sub(/[, ].*/, "") } $0 == s { f = 1 } END { exit !f }' "${P}/.swarm/lead/seen"; }
+fresh "merge = agent"
+git -C "${P}" remote add origin https://github.com/o/r.git
+item wlm-c "kind: code" "status: review" "prs: ${URL}"
+CLINE="conflict: wlm-c ${URL}, exit: tell its builder to merge the base in"
+printf '[{"url":"%s","headRefName":"story/wlm-c","headRefOid":"%s","mergeable":"CONFLICTING","createdAt":"2026-10-01T00:00:00Z","statusCheckRollup":[]}]\n' \
+  "${URL}" "${H}" > "${FX}/prs.json"
+lead 0
+check "a story PR that conflicts with its base prints its conflict: line" test "$(out)|$(rc)" == "${CLINE}|0"
+again; start SWARM_LEAD_HEADS_EVERY=300 900000   # long: stop ends it, and a loaded runner polls slowly
+n=$(prs_calls); g=$(grep -c '' "${ROOT}/gh.log")
+s="$(seen_id)"; must "a poll ended" first_read "${s}"; s="$(seen_id)"; must "a poll ended" first_read "${s}"
+check "with no merge event, the polls after the heads pass make no gh call" test "$(grep -c '' "${ROOT}/gh.log")" == "${g}"
+# GitHub lists the PR no more: it merged.
+echo '[]' > "${FX}/prs.json"; ev merge "${URL}"
+s="$(seen_id)"; must "a poll ended" first_read "${s}"; s="$(seen_id)"; must "a poll ended" first_read "${s}"
+check "a merge <PR URL> ok event runs one heads pass on the next poll, not 300 s later" test "$(prs_calls)" == "$((n + 1))"
+check "and the queue drops the PR's conflict: line" unseen wlm-c
+check "a line that goes wakes no one" test ! -e "${ROOT}/rc"
+stop
+git -C "${P}" remote remove origin; rm -f "${FX}/prs.json"
+
+# The #755 case: a story in review under merge = agent, its review passed, its builder and review panes gone.
+U2=https://github.com/wlm-owner/wlm-repo/pull/51; U3=https://github.com/wlm-owner/wlm-repo/pull/52
+fresh "merge = agent"
+item wlm-r "kind: code" "status: review" "prs: ${U2}"
+mkdir -p "${ROOT}/proj-wt/wlm-r" "${P}/.swarm/reviews"
+printf '2026-10-01\tcode\twlm-r\tclaude\tsonnet\thigh\ts-wlm-r\n' > "${P}/.swarm/agents.tsv"
+printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${P}/.swarm/reviews/wlm-r.md"
+ev story wlm-r; ev review-agent wlm-r; ev close review-wlm-r
+RLINE="no-agent: wlm-r, exit: swarm.sh merge --head ${H} ${U2}"
+lead 0
+check "with no merge event, a merged story's no-agent: line still prints" test "$(out)|$(rc)" == "${RLINE}|0"
+# Exact slug match: a merge of another slug that starts or contains this one is not this story's.
+ev merge wlm; ev merge wlm-r-2; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a merge of a slug that only shares a prefix hides nothing" test "$(out)|$(rc)" == "${RLINE}|0"
+ev merge wlm-r; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "with a merge <slug> ok event, it prints no no-agent: line" test "$(out)|$(rc)" == "|1"
+check "and the queue it saves names no line for the story" unseen wlm-r
+ev story wlm-r; ev close wlm-r; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a build started after the merge brings the line back" test "$(out)|$(rc)" == "${RLINE}|0"
+ev merge wlm-r "merged elsewhere"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a merge <slug> merged elsewhere event drops it as ok does" test "$(out)|$(rc)" == "|1"
+
+# Two PRs: one merged, one still open. The open one keeps the story's line, until it merges too. swarm.sh merge
+# logs a story PR's merge under the slug, which does not say which PR merged; a URL names the PR.
+item wlm-p "kind: code" "status: review" "prs: [${U2},${U3}]"; rm -f "${B}/wlm-r.md"
+mkdir -p "${ROOT}/proj-wt/wlm-p"; printf '2026-10-01\tcode\twlm-p\tclaude\tsonnet\thigh\ts-wlm-p\n' >> "${P}/.swarm/agents.tsv"
+ev story wlm-p; ev review-agent wlm-p; ev close review-wlm-p; ev merge wlm-p
+PLINE="no-agent: wlm-p, exit: swarm.sh review-agent wlm-p ${U2}, then swarm.sh review-agent wlm-p ${U3}"
+rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "one PR of two merged, logged under the slug: the story keeps its line for the open one" test "$(out)|$(rc)" == "${PLINE}|0"
+ev merge "${U2}"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "one PR of two merged, logged under its URL: the story keeps its line too" test "$(out)|$(rc)" == "${PLINE}|0"
+ev merge "${U3}" "merged elsewhere"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "the other merged elsewhere, under its URL: the story names no line" test "$(out)|$(rc)" == "|1"
+rm -rf "${ROOT}/proj-wt" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv"
+
+# A merge the user made on GitHub, with no event: the heads pass reads the PR as MERGED.
+fresh "merge = human"; item wlm-h "kind: code" "status: review" "prs: ${URL}"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+lead 0
+check "a story in review with a green head prints its merge: line" test "$(out)|$(rc)" == "merge: wlm-h ${URL}|0"
+echo "${H} MERGED" > "${FX}/head.7"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"; again; lead 0
+check "a PR the heads pass reads as MERGED, with no merge event, drops it" test "$(out)|$(rc)" == "|1"
+check "and the queue it saves names no line for the story" unseen wlm-h
+rm -f "${FX}/head.7"
+
+
+# --- a line that says an agent is missing is read against herdr once more before it prints (line_holds).
+# Each producer reads the poll's first list, and the agent can start after it: a builder working while
+# idle: said it had no build, a review agent reviewing while no-review: said it was gone. Each kind gets
+# a second list that shows its agent, then a later poll whose two lists both lack it; then two lists that
+# both lack it from the start; then a second read that fails. lists counts herdr's agent lists in the
+# run's log.
+lists() { grep -c '^agent list$' "${ROOT}/herdr.log" 2>/dev/null || true; }
+# firstlist — herdr's list shows conduct-e alone, with no second list queued.
+firstlist() { rm -f "${FX}/agents.then"; live; }
+# relist <name>... — the poll's first list shows conduct-e alone, its second also each <name> (live).
+relist() { live "$@"; mv "${FX}/agents" "${FX}/agents.then"; firstagents; }
+# firstagents — herdr's next list shows conduct-e alone, leaving the panes .swarm/state records.
+firstagents() { echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}' > "${FX}/agents"; }
+# recheck_case <kind> — a fresh board whose poll makes one line of <kind> (RC_LINE), with a seen file that
+# holds h, so the line prints whatever its kind: review (no-review: wl-granted), agent (no-agent:
+# wl-quiet), idle (idle: wl-idle is ready with no build).
+recheck_case() {
+  case "$1" in
+    review) fresh "merge = human"; granted "[merge]"
+            RC_LINE="no-review: wl-granted ${GURL}, exit: swarm.sh review-agent wl-granted ${GURL}, or the fallback reviewer" ;;
+    agent) fresh
+           item wl-quiet "kind: code" "status: ready" "touches: [c.sh]"
+           mkdir -p "${ROOT}/proj-wt/wl-quiet"; printf '2026-10-01\tcode\twl-quiet\tclaude\tsonnet\thigh\ts-wl-quiet\n' > "${P}/.swarm/agents.tsv"
+           printf '%s\tstory\twl-quiet\t-\tok\n%s\tclose\twl-quiet\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
+           RC_LINE="no-agent: wl-quiet, exit: swarm.sh restart wl-quiet, or swarm.sh hold wl-quiet <reason>" ;;
+    idle) fresh
+          item wl-idle "kind: code" "status: ready" "touches: [wl-idle.sh]"; touch -t 202001010000 "${B}/wl-idle.md"
+          RC_LINE="idle: wl-idle is ready with no build, exit: swarm.sh story --strict wl-idle" ;;
+  esac
+  mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+}
+# recheck_end — remove what recheck_case made beyond fresh's board.
+recheck_end() { rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" "${P}/.swarm/agents.tsv"; }
+# saved — true when the seen file the poll wrote holds RC_LINE.
+saved() { grep -qxF "${RC_LINE}" "${P}/.swarm/lead/seen"; }
+# kind | the agent the second read lists | what that agent is to the line
+for rc in "review review-wl-granted its-review-agent" "agent wl-quiet its-builder" "agent review-wl-quiet its-review-agent-alone" "idle wl-idle its-builder"; do
+  read -r kind who what <<< "${rc}"
+  recheck_case "${kind}"; relist "${who}"; lead 0
+  check "${kind}: a second list that shows ${what} (${who}) prints no line" test "$(out)|$(rc)" == "|1"
+  check "${kind}: and seen does not hold the line" test "$(saved && echo held || echo not)" == not
+  check "${kind}: herdr's list is read twice on that poll" test "$(lists)" == 2
+  firstagents; again; lead 0
+  check "${kind}: a later poll whose two lists both lack ${who} prints the line then" test "$(out)|$(rc)" == "${RC_LINE}|0"
+  recheck_end
+done
+for kind in review agent idle; do
+  recheck_case "${kind}"; firstlist; lead 0
+  check "${kind}: with both lists lacking the agent, the line prints as before" test "$(out)|$(rc)" == "${RC_LINE}|0"
+  check "${kind}: and is saved as seen" saved
+  recheck_case "${kind}"; firstagents; echo FAIL > "${FX}/agents.then"; lead 0
+  check "${kind}: with a second read that fails, the line prints" test "$(out)|$(rc)" == "${RC_LINE}|0"
+  check "${kind}: herdr's list was asked twice there" test "$(lists)" == 2
+  recheck_end
+done
+# A no-review: line for a review agent this poll started again (no_review_line's restart) stays, though the
+# second list shows the agent it started: wl-rs, ready, its builder listed, its review's try 1 ran nothing,
+# its brief naming its PR. It has no **Done when**, so the review-agent the poll starts stops before any
+# herdr call; restarted waits for that command to end.
+fresh; mkdir -p "${P}/.swarm/briefs"
+item wl-rs "kind: code" "status: ready" "touches: [wl-rs.sh]"
+printf 'Review %s, the PR of story wl-rs, at its head x, in this worktree.\n' "$(rurl wl-rs)" > "${P}/.swarm/briefs/review-wl-rs.md"
+printf '2026-10-29T00:00:00Z\tstory\twl-rs\t-\tok\n' >> "${P}/.swarm/events.tsv"
+printf '2026-10-29T00:01:00Z\t%s\twl-rs\t-\t%s\n' review-agent:try "$(began 1)" review-agent "$(ran wl-rs 1)" >> "${P}/.swarm/events.tsv"
+live wl-rs; cp "${FX}/agents" "${FX}/agents.first"; live wl-rs review-wl-rs; mv "${FX}/agents" "${FX}/agents.then"; mv "${FX}/agents.first" "${FX}/agents"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+lead 0; restarted wl-rs > /dev/null || true
+check "restart: a second list that shows the review agent the poll started keeps its (started 2 of 3) line" \
+  test "$(out)|$(rc)" == "$(again_at wl-rs 2)|0"
+recheck_end
+firstlist
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
