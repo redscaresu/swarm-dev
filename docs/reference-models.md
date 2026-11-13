@@ -196,6 +196,15 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   Rounds 2 and later read the diff and trust CI, as `ci` does, and so does a review agent started on round 2 or later; their line names `full` and the round.
   The brief and `review-agent --next` each print the line for their round.
   Any other value stops `swarm.sh` with the file and line
+- `demote_kinds` (default empty): finding kinds, separated by commas, such as `demote_kinds = duplicate-code,efficiency`.
+  On review rounds 1 and 2, the review agent sends the builder a real finding of one of these kinds only when it is a regression the PR introduces or a line now false about the code.
+  It declines the rest as `deferred`, rebuts them in the PR with its other declines and logs each with `--declined deferred` and no `--because`, as the round cap does from round 3.
+  From round 3 the round cap covers every kind, so the setting adds nothing there.
+  The brief and `review-agent --next` each print the line for their round.
+  Each kind is short kebab-case, at most 32 characters, as a logged finding's kind is.
+  Set it per board, from the kinds that board's builders nearly always decline (`flow reviewers` shows the decline rate per kind).
+  Empty is off and leaves the brief unchanged.
+  Any other value stops `swarm.sh` with the file and line
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
 - `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
