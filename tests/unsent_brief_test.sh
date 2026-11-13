@@ -223,6 +223,16 @@ fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; sess
 ev tell:findings ubr-s1 "$(ago 120)" "ubr-s1: herdr's reply to the brief could not be read once, then could not send it again (timeout); see herdr agent read ubr-s1"
 poll
 check "a tell whose herdr reply could not be read, the paste maybe in the box, is resent" test "$(enters)|$(resends)" == "1|1"
+# Only herdr's reply to the brief, in sent_note's words, says it may have gone: another thing that could not
+# be read does not.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1
+ev story ubr-s1 "$(ago 120)" "ubr-s1: its pane could not be read"
+poll
+check "a newer start whose pane could not be read is not sent, so an older ok one gets no Enter" test "$(enters)|$(resends)" == "0|0"
+fresh; listed ubr-s1:idle; pane w:p1 finished; ev story ubr-s1 "$(ago 3600)"; session ubr-s1 "$(ago 3600)"
+ev tell:findings ubr-s1 "$(ago 120)" "ubr-s1: herdr did not send it the brief (agent_blocked); its pane could not be read"
+poll
+check "a tell whose pane could not be read makes no unrelated paste a brief" test "$(enters)|$(resends)" == "0|0"
 
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; echo "${ROOT}/fake/swarm.sh" > "${FX}/read.spawn"
 poll
