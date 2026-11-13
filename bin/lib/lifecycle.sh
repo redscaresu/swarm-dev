@@ -5590,12 +5590,17 @@ upgrade_flags() {
 }
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
-# on its own: Claude Code's own state (upgrade_session) for the session herdr has in <pane> now, or
-# the one a /clear moved agents.tsv's session to when herdr lists none (upgrade_sid; the one
-# upgrade_one resumes), else for agents.tsv's session, else read_state's (herdr's status); a turn stopped on
+# on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
+# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else, with herdr listing
+# none (herdr 0.9.5) and a /clear having moved agents.tsv's session, the one it moved to
+# (recorded_current), as upgrade_one resumes it, else read_state's, over agents.tsv's session; a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
+# upgrade_sid finds that session and upgrade_session reads its state, both shared with the closed check
+# (upgrade_skip_closed): for agents.tsv's session it is session_state's word, the one read_state gives,
+# over upgrade_claude's list, and read_state itself is called only when no session is recorded, for
+# herdr's status.
 upgrade_state() {
   local s sid
   sid="$(upgrade_sid "$1" "$2")"
@@ -5615,7 +5620,7 @@ upgrade_state() {
 upgrade_sid() {
   local sid cur
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
-  if [[ -z "${sid}" ]]; then
+  if [[ -z "${sid}" ]]; then   # herdr lists none (0.9.5): agents.tsv's, followed to where a /clear moved it, as upgrade_one resumes
     cur="$(recorded_current "$1")"
     [[ "${cur}" == "$(recorded_session "$1")" ]] || sid="${cur}"
   fi
