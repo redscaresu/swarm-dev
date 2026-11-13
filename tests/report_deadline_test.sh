@@ -5,6 +5,8 @@
 # the time left is cut at the report's deadline, not REPORT_SECONDS from its own start; a read after
 # the deadline is skipped at once. Each read runs in a $( ) subshell, as a report runs it, so a skipped
 # name has to outlive the subshell. And a HUP, INT or TERM to within ends the read under it too.
+# status, next and dash install one set of herdr, gh and claude wrappers (report_wrappers), so each
+# names a cut read the same way.
 # The timing checks hold on a loaded machine: a cut is never early (an alarm cannot fire before its
 # time), and the first read takes 8 of the report's 20 s, so a read cut at the deadline can be up to
 # 8 s late and still end before a per-read limit would have cut it.
@@ -108,6 +110,55 @@ signalled() {
 signalled INT 130
 signalled TERM 143
 signalled HUP 129
+
+# --- status, next and dash name a cut read the same way: each installs report_wrappers' herdr, gh and
+# claude. A slow gh api read is cut at the deadline and named `gh api` alone, and the reads after it are
+# skipped, each named for its first words, with fewer words than a name takes under set -u. Each runs in
+# a subshell of its own, as each report is a run of its own, with stubs on PATH; next with HERDR_ENV
+# unset, so its herdr reads go on to report_herdr rather than LEAD_AGENTS.
+mkdir -p "${ROOT}/bin"
+printf '#!/bin/sh\nexec sleep 30\n' > "${ROOT}/bin/gh"
+printf '#!/bin/sh\nexit 0\n' > "${ROOT}/bin/herdr"
+cp "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
+# shellcheck disable=SC2317,SC2329 # board.sh's and dash.sh's die
+die() { echo "swarm: $*" >&2; exit 1; }
+# An empty board, as swarm.sh sets BOARD: report_start's board_snapshot (board.sh) reads it.
+BOARD="${ROOT}/board"
+mkdir -p "${BOARD}/stories" "${BOARD}/epics" "${BOARD}/hld"
+# shellcheck source=/dev/null
+. "${REPO}/bin/lib/board.sh"
+# shellcheck source=/dev/null
+. "${REPO}/bin/lib/dash.sh"
+# reads — the same reads, through whichever herdr, gh and claude the caller installed.
+reads() {
+  gh api repos/o/r/pulls/1 >/dev/null 2>&1 || true
+  gh pr list >/dev/null 2>&1 || true
+  herdr agent >/dev/null 2>&1 || true
+  claude agents --json >/dev/null 2>&1 || true
+}
+# as <caller> — start a report and install its wrappers as that caller does, run the reads, name the cuts.
+as() {
+  PATH="${ROOT}/bin:${PATH}"; unset HERDR_ENV
+  case "$1" in
+    status) report_start; status_reads ;;
+    next) report_start; next_reads on ;;
+    dash) dash_deadline ;;
+  esac
+  reads; report_skipped
+}
+want="skipped (over 1 s): gh api, gh pr list, herdr agent, claude agents"
+REPORT_SECONDS=1
+for caller in status next dash; do
+  out="$(as "${caller}")" || out="exit $?"
+  is "${caller}: a slow gh api read and the reads after it are named as report_wrappers names them" "${want}" "${out}"
+done
+# And the functions each installs are report_wrappers' own, not a copy that names alike today: next's
+# herdr is its own (it answers herdr agent list), so its gh and claude only.
+shared() { (report_wrappers; declare -f "$@"); }
+is "status installs report_wrappers' herdr, gh and claude" "$(shared herdr gh claude)" "$(status_reads; declare -f herdr gh claude)"
+is "next installs report_wrappers' gh and claude" "$(shared gh claude)" "$(next_reads on; declare -f gh claude)"
+is "dash installs report_wrappers' herdr, gh and claude" "$(shared herdr gh claude)" "$(dash_deadline; declare -f herdr gh claude)"
 
 if (( fails )); then echo "${fails} failed"; exit 1; fi
 echo "all passed"
