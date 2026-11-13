@@ -15,7 +15,7 @@ fm() {
 # a report starts reads the board for itself.
 BOARD_SNAP=""
 # BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
-# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+# shell that took the snapshot drops it, a write in a $( ) subshell included; report_cleanup removes it on exit.
 BOARD_SNAP_MARK=""
 # BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
 # before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
