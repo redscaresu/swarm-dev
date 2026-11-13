@@ -35,8 +35,11 @@ wording recheck passed is not that one. The line means the builder declined ever
 nothing. It has `round=N verdict=decline-only`, and so does the `review` line after it. A
 `review --head` that succeeds also writes `review-finished <slug>`, outcome `ok`, just before its own
 line and with the same fields; a review refused `held:` writes none. A hold on the ladder's top rung
-writes `review-finished` with `verdict=held` and the round whose findings it held. Neither
-`decline-only` nor `review-finished` is a command of its own. `status`, `next` and `dash` log
+writes `review-finished` with `verdict=held` and the round whose findings it held. A `review --head`
+that takes a green head adding only git's own clean merges of the base to the reviewed one, and is
+not held, writes
+`base-accepted <slug>`, outcome `<new head> from <reviewed head>`, once per such PR, before its own
+line. Neither `decline-only`, `review-finished` nor `base-accepted` is a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
@@ -885,7 +888,7 @@ Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage or rate limit), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. A finding declined as `deferred` that a later round or fix finds real, and fixes, is logged the same way, against the PR it was deferred on, with its line copied exactly from the deferred row's text, so the two rows match. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
-reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
+reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, or one of the kinds `demote_kinds` lists held back before it, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
 and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
