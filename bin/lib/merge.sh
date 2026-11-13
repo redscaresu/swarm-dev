@@ -762,6 +762,15 @@ base_merged_from() {
     END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
+# base_accepted_from <slug> <sha> — the reviewed head review --head took <sha> in place of, as adding
+# to it only git's own clean merges of the base (mark_review's `base-accepted <slug> <sha> from <head>`,
+# read without its key=value tail), or nothing.
+base_accepted_from() {
+  awk -F'\t' -v t="$1" -v o="$2 from " "${EVENT_OUTCOME_AWK}"'
+    $2 == "base-accepted" && $3 == t { oc = outcome($5); if (index(oc, o) == 1) h = substr(oc, length(o) + 1) }
+    END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
 # only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
 # among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
@@ -2186,10 +2195,16 @@ within() {
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
 # has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+# Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
+# the rest of the report, so an edit made to a board file during it shows on the next report, and so
+# does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
+# $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the next read sees it.
+# A snapshot that fails leaves every read to the files, as before.
 report_start() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
   REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+  board_snapshot "${REPORT_SKIP_FILE}.written" || true
 }
 
 # report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
@@ -3314,8 +3329,26 @@ stacked_lines() {
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
 # to them the same way. A read cut there, or due after it, fails as it would on an error, and
 # report_skipped's line, printed last, names it.
+# status_time [<section>|total] — with SWARM_REPORT_TIMES=1 (for diagnosis, like SWARM_REPORT_SECONDS;
+# no config key), write `time: <section> <s.mmm>` to stderr: the seconds since the last mark, or with
+# total since the first, by now_ms, run_time_start's clock. No argument only sets the first mark. Any
+# other value, or none, reads no clock and prints nothing. status_report marks its sections in order:
+# no-agent, agents, stacked, waiting, next, idle, then total.
+STATUS_TIME_START=""; STATUS_TIME_AT=""
+status_time() {
+  [[ "${SWARM_REPORT_TIMES:-}" == 1 ]] || return 0
+  local now since
+  now="$(now_ms 2>/dev/null)" || return 0
+  if [[ -z "${1:-}" ]]; then STATUS_TIME_START="${now}"; STATUS_TIME_AT="${now}"; return 0; fi
+  [[ -n "${STATUS_TIME_AT}" ]] || return 0
+  if [[ "$1" == total ]]; then since="${STATUS_TIME_START}"; else since="${STATUS_TIME_AT}"; fi
+  STATUS_TIME_AT="${now}"
+  printf 'time: %s %d.%03d\n' "$1" $(((now - since) / 1000)) $(((now - since) % 1000)) >&2
+}
+
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent workspaces tabs
+  status_time
   report_start || die "status: cannot start the report deadline"
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
@@ -3336,6 +3369,7 @@ status_report() {
   # next_step, at the end, takes these lines rather than asking herdr and ps again.
   # shellcheck disable=SC2034 # next_step (board.sh) reads it
   NO_AGENT_SET=1
+  status_time no-agent
   if [[ -z "${agents}" ]]; then
     if [[ "${HERDR_ENV:-}" == 1 ]]; then echo "Agents: herdr gave no agent list, so their states are not available"
     else echo "Agents: not inside herdr, so their states are not available"; fi
@@ -3360,8 +3394,10 @@ status_report() {
       SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
+  status_time agents
   local stacked; stacked="$(stacked_lines)" || true
   [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
+  status_time stacked
   echo; echo "Waiting on you"
   waiting="$(waiting_on_user)"
   if [[ "${all}" != --all ]]; then
@@ -3371,14 +3407,18 @@ status_report() {
     [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
   fi
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  status_time waiting
   local nx; nx="$(next_lines)"
   echo; echo "Next"
   [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
+  status_time next
   # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
   # next would take goes with it, so the epic that step names gets no idle: line.
   idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  status_time idle
   local skipped; skipped="$(report_skipped)"
   [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
+  status_time total
 }
 
 # status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status

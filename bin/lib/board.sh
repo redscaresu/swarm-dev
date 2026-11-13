@@ -2,10 +2,129 @@
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
 # <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
-# (item_gone); one that is there but cannot be read fails, with sed's error.
+# (item_gone); one that is there but cannot be read fails, with sed's error. During a report it answers
+# from the board's snapshot when it can (board_snap_read), starting no process.
 fm() {
+  board_snap_read F "$1" "$2" && return 0
   state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
     || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
+
+# BOARD_SNAP: while a report's snapshot of the board stands (board_snapshot), the BOARD and
+# BOARD_STATE_DIR it was taken of, joined by a tab; empty when there is none. Not exported: a swarm.sh
+# a report starts reads the board for itself.
+BOARD_SNAP=""
+# BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
+# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+BOARD_SNAP_MARK=""
+# BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
+# before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
+# value) or __G_<key> (get_fm's) after it for a key's value.
+BOARD_SNAP_RE='^_BS_[seh]_[A-Za-z0-9_]+$'
+
+# board_snapshot <mark-file> — report_start's one read of the board: every story, epic and HLD file
+# and its state file (BOARD_STATE_DIR), in one awk, into shell variables that fm and get_fm_or_gone
+# answer from (board_snap_read) until the report ends or a board-state write drops them. Per file it
+# keeps each key's first line anywhere (fm's rule) and its front-matter value (get_fm's), with a
+# SET_FM_KEYS value from the state file over both where state_read would take it (its @base rule).
+# bash 3.2 has no associative arrays, so each value is a variable of its own, named for the file and
+# key (BOARD_SNAP_RE): _ - and . in a file's name are encoded as _5f, _2d and _2e. A file whose name
+# has any other character, or that cannot be read, and an item whose state file cannot be read, are
+# left out, so they are read as before (and fail as before). <mark-file> becomes BOARD_SNAP_MARK.
+# Fails, with no snapshot, when awk does; every read then goes to the files.
+board_snapshot() {
+  local d f s line out files=()
+  board_snap_drop
+  [[ -z "${BOARD_SNAP_MARK}" || ! -e "${BOARD_SNAP_MARK}" ]] || rm -f "${BOARD_SNAP_MARK}"
+  BOARD_SNAP_MARK="$1"
+  # awk takes an operand like k=v for an assignment; one that starts with / never is.
+  [[ "${BOARD}" == /* && "${BOARD_STATE_DIR}" == /* ]] || return 1
+  for d in stories epics hld; do
+    for f in "${BOARD}/${d}"/*.md; do
+      [[ -f "${f}" && -r "${f}" && "${f##*/}" =~ ^[A-Za-z0-9._-]+\.md$ ]] || continue
+      s="${BOARD_STATE_DIR}/${d}/${f##*/}"; s="${s%.md}"
+      if [[ "${d}" == hld || ! -f "${s}" ]]; then files+=("${f}")
+      elif [[ -r "${s}" ]]; then files+=("${f}" "${s}"); fi
+    done
+  done
+  # With no file, awk would read stdin: a report's caller's input, or the terminal.
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  # shellcheck disable=SC2016 # $0 is awk's
+  out="$(SNAP_BOARD="${BOARD}" SNAP_STATE="${BOARD_STATE_DIR}" SNAP_KEYS="${SET_FM_KEYS}" awk '
+    function val(l, p) { l = substr(l, p + 1); sub(/^ +/, "", l); return l }
+    function put(k, v) { print k0 "__" k "=" v }
+    BEGIN { split(ENVIRON["SNAP_KEYS"], K, " "); for (j in K) setk[K[j]] = 1
+      B = ENVIRON["SNAP_BOARD"]; S = ENVIRON["SNAP_STATE"]
+      t["stories"] = "s"; t["epics"] = "e"; t["hld"] = "h"
+      for (j = 1; j < ARGC; j++) { f = ARGV[j]; d = f; sub(/\/[^\/]*$/, "", d); n = substr(f, length(d) + 2)
+        x = d; sub(/^.*\//, "", x); r = substr(d, 1, length(d) - length(x) - 1)
+        if (r == B && n ~ /^[A-Za-z0-9._-]+\.md$/) { sub(/\.md$/, "", n); st[f] = 0 }
+        else if (r == S && n ~ /^[A-Za-z0-9._-]+$/) st[f] = 1
+        else { ARGV[j] = ""; continue }
+        gsub(/_/, "_5f", n); gsub(/-/, "_2d", n); gsub(/\./, "_2e", n); key[f] = "_BS_" t[x] "_" n
+        if (!st[f]) { items[++ni] = key[f]; print key[f] "=1" } } }
+    FNR == 1 { m = 0; k0 = key[FILENAME] }
+    st[FILENAME] { if ((p = index($0, ":")) > 1) { k = substr($0, 1, p - 1)
+        if (k ~ /@base$/) { k = substr(k, 1, length(k) - 5); if (!((k0, k) in b)) b[k0, k] = val($0, p) }
+        else if (!((k0, k) in sv)) { sv[k0, k] = val($0, p); hs[k0] = hs[k0] " " k } }
+      next }
+    $0 ~ /^---$/ { m++; next }
+    match($0, /^[A-Za-z_][A-Za-z0-9_]*:/) { k = substr($0, 1, RLENGTH - 1)
+      if (!((k0, k) in fa)) { fa[k0, k] = val($0, RLENGTH); ks[k0] = ks[k0] " " k }
+      if (m == 1 && !((k0, k) in fv)) fv[k0, k] = val($0, RLENGTH) }
+    END { for (i = 1; i <= ni; i++) { k0 = items[i]; delete used; n = split(ks[k0] hs[k0], L, " ")
+        for (j = 1; j <= n; j++) { k = L[j]; if (k in used) continue; used[k] = 1
+          if ((k0, k) in sv && k in setk && k0 !~ /^_BS_h_/ && !((k0, k) in b && b[k0, k] != fv[k0, k])) {
+            if (sv[k0, k] != "") { put("F_" k, sv[k0, k]); put("G_" k, sv[k0, k]) } }
+          else { if ((k0, k) in fa) put("F_" k, fa[k0, k]); if ((k0, k) in fv) put("G_" k, fv[k0, k]) } } } }' \
+    "${files[@]}" < /dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "${line%%=*}" =~ ${BOARD_SNAP_RE} ]] || { board_snap_drop; return 1; }  # loose-match: ok BOARD_SNAP_RE is a fixed regex, meant to be read as one
+    printf -v "${line%%=*}" '%s' "${line#*=}"
+  done <<< "${out}"
+  BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"
+}
+
+# board_snap_read <F|G> <file> <key> — print <key>'s value for <file> from the report's snapshot (F:
+# fm's rule, G: get_fm's) and succeed, starting no process: only builtins and parameter expansion.
+# Fails, so the caller reads <file> itself, with no snapshot (or one of another board), for a <file>
+# not in it (made after it, or not a story, epic or HLD file named as board_snapshot lists them), a
+# <file> now gone (its caller reads that as no value), or a <key> that is not a plain name. When a
+# board-state write made the mark (board_snap_written), in this shell or a subshell, it drops the
+# snapshot first, so every read after the write sees it.
+board_snap_read() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 1
+  if [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]]; then board_snap_drop; return 1; fi
+  local n="${2##*/}" t
+  case "${2%/*}" in
+    "${BOARD}/stories") t=s ;;
+    "${BOARD}/epics") t=e ;;
+    "${BOARD}/hld") t=h ;;
+    *) return 1 ;;
+  esac
+  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${n}" =~ ^[A-Za-z0-9._-]+\.md$ && -e "$2" ]] || return 1
+  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; n="_BS_${t}_${n//./_2e}"
+  [[ -n "${!n:-}" ]] || return 1
+  n+="__$1_$3"
+  [[ -z "${!n+x}" ]] || printf '%s\n' "${!n}"
+}
+
+# board_snap_drop — end the snapshot in this shell: its variables go, and every read goes to the files.
+board_snap_drop() {
+  BOARD_SNAP=""
+  # shellcheck disable=SC2046 # the names split on purpose; BOARD_SNAP_RE allows no space
+  unset $(compgen -v _BS_ || true)
+}
+
+# board_snap_written — after a board-state write (state_set, state_drop) during a report: make the mark,
+# so every shell that holds the snapshot drops it at its next read, and drop it here. A mark that cannot
+# be made is said on stderr: a shell that took the snapshot before this one could then still read the
+# value from before the write.
+board_snap_written() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 0
+  : 2>/dev/null > "${BOARD_SNAP_MARK}" \
+    || echo "warning: board state written, but ${BOARD_SNAP_MARK} could not be made: reads later in this run may show the value from before" >&2
+  board_snap_drop
 }
 
 # ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
@@ -51,8 +170,10 @@ state_name() {
 }
 
 # state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
-# escalated block (escalated_file), so a later item with its slug starts with no state.
+# escalated block (escalated_file), so a later item with its slug starts with no state. During a report
+# it ends the board's snapshot first (board_snap_written), as state_set does.
 state_drop() {
+  board_snap_written
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
   [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
@@ -758,7 +879,7 @@ next_report() {
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
   # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}' '${BOARD_SNAP_MARK}'" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).
@@ -946,15 +1067,18 @@ lead_held() {
   done
 }
 
-# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:) with one PR (story_prs), which waits for its review agent (one
-# with several is the lead's, as review_rule says), or one its review agent merges next, under merge =
-# agent or an HLD merge grant (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge
-# has handed it to the user or the lead since its last review (merge_refused).
+# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on.
+# A story with several PRs (story_prs) is the lead's, kept or not, as review_rule says: no review agent
+# acts on it. Otherwise: one a close kept unreviewed (kept:) with one PR, which waits for its review
+# agent, or one its review agent merges next, under merge = agent or an HLD merge grant
+# (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge has handed it to the user or
+# the lead since its last review (merge_refused).
 review_agent_owns() {
-  local slug
+  local slug n
   slug="$(basename "$1" .md)"
-  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(story_prs "$1" | wc -w)" -eq 1 ]]; return; fi
+  n="$(story_prs "$1" | wc -w)"
+  [[ ${n} -le 1 ]] || return 1
+  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ ${n} -eq 1 ]]; return; fi
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   [[ "${CFG_merge}" == agent ]] || no_agent_granted "${slug}" || return 1
   [[ -z "$(costs_tag "$1")" ]] || return 1
@@ -2478,11 +2602,14 @@ set_fm() {
 # value now, which state_value compares. A value <file> already has needs no line, so its lines go and
 # the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
 # left with no line goes. It holds the item's lock (state_lock) from its read to its write, so two
-# writers to one item keep each other's keys. Dies naming the state file when any step fails.
+# writers to one item keep each other's keys. Dies naming the state file when any step fails. During a
+# report it first ends the board's snapshot (board_snap_written), in every shell that holds it, so the
+# next read of the item sees the write.
 state_set() {
   local f="$1" s pairs="" rc=0
   state_path "${f}"; s="${STATE_PATH}"
   [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
+  board_snap_written
   shift
   while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
   # Checked first, or the lock's mkdir would fail as if it were held.
@@ -2542,16 +2669,21 @@ state_write() {
 get_fm() { get_fm_or_gone "$1" "$2" || gone_ok $?; }
 
 # get_fm_or_gone <file> <key> — get_fm, but failing with ITEM_GONE for a <file> that is gone
-# (item_read), so pr_stories can list the board again.
+# (item_read), so pr_stories can list the board again. During a report it answers from the board's
+# snapshot when it can (board_snap_read), starting no process.
 get_fm_or_gone() {
+  board_snap_read G "$1" "$2" && return 0
   # shellcheck disable=SC2016 # $0 is awk's
   state_value "$1" "$2" || item_read "$1" awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 
 # review <slug> [--head <sha>] <pr-url>... — the item's PRs are green and reviewed and wait on a human
-# merge. With --head, each PR's head must still be <sha>, the head its review passed, and the item's
-# prs: line may list no PR it does not name (review_heads), else it changes nothing. A story whose
+# merge. With --head, each PR's head must still be <sha>, the head its review passed, or a head that
+# adds to <sha> only git's own clean merges of the base and is green, and the item's prs: line may list no PR it does
+# not name (review_heads), else it changes nothing. Each head taken that way, once the review is not
+# held, writes base-accepted <slug> <head> from <sha>, which review_pass follows, and prints an
+# accepted: line. A story whose
 # depends_on parents are still open is held instead: back to
 # blocked with held_by: <parents> and its prs: line, its builder, worktree and branch kept, so no merge
 # reaches a child before its parents.
@@ -2564,7 +2696,8 @@ get_fm_or_gone() {
 # review-finished <slug> ok with the review line's fields; a review held writes none. A failed read of
 # decline_only_round is a pass, never a failed review.
 mark_review() {
-  local f url held want="" slug round="" verdict=pass n=""
+  local f url held want="" slug round="" verdict=pass n="" head base merges
+  REVIEW_ACCEPTED=""
   f="$(item_file "${1:?slug}")"; shift
   if [[ "${1:-}" == --head ]]; then
     want="${2:-}"; shift; [[ $# -eq 0 ]] || shift
@@ -2584,6 +2717,12 @@ mark_review() {
     event_fields ${round:+"round=${round}"} verdict=held
     die "held: ${slug} waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
+  # A head past <sha> that adds only clean merges of the base carries the pass on <sha> (review_pass).
+  while read -r url head base merges; do
+    [[ -n "${url}" ]] || continue
+    record_event base-accepted "${slug}" "${head} from ${want}"
+    echo "accepted: ${url}'s head ${head:0:7} adds only clean merges of ${base} (${merges}) to ${want:0:7}, the reviewed head; its pass counts for ${head:0:7}"
+  done <<< "${REVIEW_ACCEPTED}"
   if [[ -n "${want}" ]] && n="$(decline_only_round "${slug}" "${want}")" && [[ -n "${n}" ]]; then
     round="${n}"; verdict=decline-only
     record_event decline-only "${slug}" "ok (round ${n})" "round=${n}" verdict=decline-only
@@ -2603,10 +2742,18 @@ REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may ta
 # one named here: each its prs: line lists, and, for a story, each open PR from its branch story/<slug>
 # in each named PR's repo (one review agent passes one PR, and prs: is often empty until review: a
 # review naming one of two would let the story finish without the other). Then gh must read each named
-# PR's head as <sha>: a head pushed since the review passed has had no review. Each gh read stops after
-# REVIEW_HEAD_SECONDS; one that fails or runs out says to run review again.
+# PR's head as <sha>: a head pushed since the review passed has had no review. One exception: a head
+# that adds to <sha> only git's own clean merges of the PR's base (base_merges_only, as merge --head
+# reads it) brings no code the review did not read, so it is taken, with a line `<pr-url> <head> <base>
+# <merges, short>` added to REVIEW_ACCEPTED for mark_review, once ci_gate head finds it green (the review
+# waited for green on <sha> only). Any other head, one whose merges cannot be read, and one whose CI is red,
+# not finished or unread (within REVIEW_HEAD_SECONDS), dies as a moved head does, after a line on stderr
+# saying why it was not taken. Only a moved
+# head's PR has its base branch read, a second gh read. Each gh read stops after REVIEW_HEAD_SECONDS;
+# one that fails or runs out says to run review again.
+REVIEW_ACCEPTED=""
 review_heads() {
-  local f="$1" want="$2" slug url head others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head base why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
   pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
   if [[ "${f}" == "${BOARD}/stories/"* ]]; then
@@ -2628,12 +2775,30 @@ review_heads() {
     || die "review: ${slug} also has ${others}, which this review did not cover; ${slug} is unchanged: once each has passed its own review, run swarm.sh review ${slug} with every PR URL"
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]]
-    head="$(within "${secs}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid < /dev/null \
+    repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+    head="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null \
       | json "d['headRefOid']" 2>/dev/null)" || head=""
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
-    [[ "${head}" == "${want}" ]] \
-      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
+    [[ "${head}" != "${want}" ]] || continue
+    # Only a moved head needs the PR's base, for base_merges_only's read of its merges.
+    base="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName < /dev/null \
+      | json "d['baseRefName']" 2>/dev/null)" || base=""
+    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+      || die "review: gh could not read the base branch of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
+    if why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)"; then
+      merges="$(short_shas "${why##*$'\n'}")"
+      # The review waited for green on <sha> only: a merge of the base can still break a check.
+      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" < /dev/null 2>&1)" || rc=$?
+      if [[ ${rc} -eq 0 ]]; then REVIEW_ACCEPTED+="${url} ${head} ${base} ${merges}"$'\n'; continue; fi
+      case ${rc} in 1) ci="red" ;; 2) ci="not finished" ;; *) ci="unread" ;; esac
+      why="$(tr -d '\000-\037\177' <<< "${why%%$'\n'*}")"
+      echo "review: ${url}'s head ${head:0:7} adds only clean merges of ${base} (${merges}) to ${want:0:7}, but CI on it is ${ci}: ${why:-no answer within ${secs}s}; once swarm.sh wait-pr --head ${head} ${url} exits 0, review --head ${want} takes it" >&2
+    else
+      why="$(tr -d '\000-\037\177' <<< "${why##*$'\n'}")"; why="${why#swarm: }"
+      echo "review: ${url}'s head ${head:0:7} is not ${want:0:7} plus clean merges of ${base}: ${why:-the read of its merges said nothing}" >&2
+    fi
+    die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
   done
 }
 
