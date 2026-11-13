@@ -15,6 +15,6 @@ escalate_ladder = sonnet,opus,fable
 # (2026-10-26): at the default 30, green PRs sat up to 30 minutes before anyone noticed.
 queue_minutes = 10
 # Bedrock (2026-11-12): its bearer key and model pins reach agents only by name, unlike Foundry's.
-# A session on a subscription or Foundry warns once per agent start that these are not set; that is harmless.
+# A session without one of these names prints one harmless warning per missing name at each agent start.
 # Drop this line once the bedrock-env-passthrough story merges.
 agent_env = AWS_BEARER_TOKEN_BEDROCK ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
