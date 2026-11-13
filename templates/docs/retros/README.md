@@ -1,7 +1,7 @@
 # Retros
 
-A retro closes a release: it takes each item of the retro report's lists and decides what becomes of it.
-Its file is `docs/retros/v<version>.md`, named for the release it ends.
+A retro goes through the retro report's lists and decides what becomes of each item.
+Its file is `docs/retros/v<version>.md`, named for the version being released.
 
 ```
 ---
@@ -9,28 +9,27 @@ covers: v<from>..v<to>
 done: YYYY-MM-DD
 ---
 
-# Retro v<to>
+# Retro v<version>
 
-Report: written at commit <sha> by swarm.sh.
+Report: written at <commit or version> by swarm.sh.
 
-## <the report's list>
+## <one of the report's lists>
 
 - <item>: story <slug>
-- <item>: check <test or check that now catches it>
+- <item>: check <the test or check that now catches it>
 - <item>: rule in <rules.md, the project's brief or AGENTS.md>
 - <item>: dropped, <the reason>
 ```
 
-`covers:` names the two tags the retro spans, and `done:` the day it finished.
-Write each on one line, with no quotes, so a check in bash 3.2 can read them.
-The body lists every item of the report's lists with what became of it: a story, a check, a rule (in rules.md, the project's brief or AGENTS.md), or a drop with its reason.
-It also names the commit of the swarm.sh that wrote the report.
+`covers:` is the window the retro covers, from one tag to another, and `done:` is the day it was finished.
+Write each on one line with no quotes, so that a check running in bash 3.2 can read them.
+The body takes every item on the report's lists and says what became of it: a story, a check, a rule (in rules.md, the project's brief or AGENTS.md), or a drop with its reason.
+It also says which swarm.sh wrote the report, by its commit or its version.
 
-The retro itself is a `kind: lead` story named `retro-<version>` with each dot a `-`, such as `retro-v0-31-0`.
-Its **You:** steps are the decisions on each item.
+The retro is a `kind: lead` story named `retro-<version>`, with each dot written as `-`, such as `retro-v0-31-0`.
+It marks each step that is yours with **You:**.
 The retro file lands by board PR.
-A rule the retro places lands in its own PR first, so the file can point at it.
+A rule the retro places lands in its own PR, before the retro file's.
 
-A file here that lacks `covers:` or `done:` is a note.
-No check reads a note as a retro.
-The Retros view in `Board.base` lists every file with a `covers:` value, so a retro still under way shows there before its `done:` is set.
+A file here that lacks `covers:` or `done:` is a note, and no check reads it as a retro.
+The Retros view in `Board.base` lists every file whose `covers:` is set, so this README and the notes with no `covers:` stay out of it.

@@ -280,8 +280,7 @@ check "with core.sshCommand set, init leaves the user's ssh as it is" "yes|no" \
 q="${ROOT}/hooked"; "${GIT[@]}" init -q "${q}"
 run "${q}" init >/dev/null || true
 printf 'check:\n\t@echo checked; false\n' > "${q}/Makefile"
-# init's retros/README.md is not among the hook's board paths, so it goes in with the Makefile.
-(cd "${q}" && "${GIT[@]}" add Makefile docs/retros && "${GIT[@]}" commit -qm make --no-verify)
+(cd "${q}" && "${GIT[@]}" add Makefile && "${GIT[@]}" commit -qm make --no-verify)
 echo s > "${q}/docs/stories/s.md"
 check "the hook lets a board-only commit through without make check" "ok" \
   "$(cd "${q}" && "${GIT[@]}" add -A docs && "${GIT[@]}" commit -qm board >/dev/null 2>&1 && echo ok || echo refused)"
