@@ -3411,7 +3411,7 @@ status_report() {
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     # Read here, after pane_check and before status_report.py's pane reads, as they only label
     # (status_report.py's pane_where); the Stacked, Waiting on you and Next reads below share the deadline
-    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name.
+    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name with its id.
     workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
     tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
