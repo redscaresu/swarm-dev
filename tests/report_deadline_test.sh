@@ -123,6 +123,9 @@ cp "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
 # shellcheck disable=SC2317,SC2329 # board.sh's and dash.sh's die
 die() { echo "swarm: $*" >&2; exit 1; }
+# An empty board, as swarm.sh sets BOARD: report_start's board_snapshot (board.sh) reads it.
+BOARD="${ROOT}/board"
+mkdir -p "${BOARD}/stories" "${BOARD}/epics" "${BOARD}/hld"
 # shellcheck source=/dev/null
 . "${REPO}/bin/lib/board.sh"
 # shellcheck source=/dev/null
