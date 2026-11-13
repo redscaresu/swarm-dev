@@ -418,8 +418,8 @@ Repeat until a step below says stop:
      the conductor and deletes its report, so the collect would never run. Then read the report.
      `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
      `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
-     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
-     does not count. Handle all of these first: a build that died as
+     The report may also list a PR closed unmerged or a story in review with several PRs, kept or
+     not, which `<n>` does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
      report says for each (docs/reference-merging.md § Merging lists them). Clear any other cause the report
