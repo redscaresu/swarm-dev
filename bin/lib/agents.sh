@@ -31,8 +31,9 @@
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none. With
 #     stall_minutes, only a task whose launch entry is logged less than TEST_RUN_STALLS times that
-#     before <now> (epoch; default the clock) counts, as test_running's runs: a server left running
-#     in the background is no work. A launch entry with no UTC timestamp is too old to count.
+#     before <now> (epoch; default the clock) counts: a server left running in the background is no
+#     work. A launch entry with no UTC timestamp is too old to count. A test run has no such limit
+#     (test_running).
 #   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
 #     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
 #     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
@@ -47,12 +48,12 @@
 #     (never opened; nor is the one beside a .pub, only checked to exist), an agent ssh-add cannot reach,
 #     anything else it cannot read, and a call past SIGN_SECONDS (killed).
 #     It never signs or prompts, never runs gpg.ssh.program, and prints no key.
-#   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
-#     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
-#     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
-#     or the script itself) and started less than TEST_RUN_STALLS times stall_minutes ago: the agent
-#     is working, however quiet. An older run may be hung, and is none. Never prints a command. Info
-#     or ps that cannot be read is no run.
+#   test_running(info) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read, a process
+#     under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk) runs a test
+#     suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh, or the
+#     script itself): the agent is working, however quiet, and however long ago the run started (no
+#     TEST_RUN_STALLS limit: a builder's own full suite can run for hours). Never prints a command.
+#     Info or ps that cannot be read is no run.
 #   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
 #     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
 #     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
@@ -214,7 +215,7 @@ prune_dead_panes() {
 LEAD_AGENTS_LABEL=lead-agents
 # LEAD_AGENTS_RECORD: the file under .swarm/lead (LEAD_DIR) that holds that workspace's "<id>\t<label>" (lead_agents_workspace).
 LEAD_AGENTS_RECORD="agents-workspace"
-# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes or trims that workspace may take (within), as lead_label's.
+# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes, reads or trims that workspace may take (within), as lead_label's.
 LEAD_AGENTS_HERDR_WAIT=5
 # LEAD_AGENTS_LOCK_WAIT: seconds a start waits for the record's lock (lead_agents_lock): the three bounded herdr calls of the start holding it, and some.
 LEAD_AGENTS_LOCK_WAIT=20
@@ -275,17 +276,13 @@ lead_agents_lookup() {
 # the project dir, or a story worktree of it (<project>-wt/<slug>).
 project_pane() { local d="${1%/}"; [[ "${d}" == "${PROJECT_DIR}" || "$(dirname "${d}")" == "${PROJECT_DIR}-wt" ]]; }
 
-# has_project_pane <workspace> — true when herdr lists a pane in <workspace> that project_pane takes;
-# false when it gives no pane list.
-has_project_pane() {
-  herdr pane list 2>/dev/null | python3 -I -c '
-import json, os, sys
-w, proj = sys.argv[1], sys.argv[2]
-for p in json.load(sys.stdin)["result"]["panes"]:
-    d = (p.get("cwd") or "").rstrip("/")
-    if (p.get("workspace_id") or p["pane_id"].split(":")[0]) == w and (d == proj or os.path.dirname(d) == proj + "-wt"):
-        sys.exit(0)
-sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
+# workspace_dir <workspace> — <workspace>'s directory as herdr_workspaces reads it: the cwd of its first
+# pane herdr_workspaces does not skip (another repo's story worktree, or no cwd), PROJECT_DIR for one in
+# this project's own story worktree, empty with no such pane. Fails when herdr gives no list.
+workspace_dir() {
+  local list
+  list="$(herdr_workspaces)" || return 1
+  W="$1" awk -F'\t' '$1 == ENVIRON["W"] { print $3; exit }' <<< "${list}"
 }
 
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
@@ -295,28 +292,38 @@ sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
 # a stale record in a workspace an older swarm.sh shared between projects is never split. A new
 # lead-agents workspace's placeholder tab is closed once the pane is open, or once herdr has refused it,
 # unless the pane's <cwd> is outside the project (project_pane): the workspace's directory is its first
-# pane's (herdr_workspaces), and a pane outside the project ahead of every other would make it another
-# project's and hash this project's labels, so then a pane at PROJECT_DIR stays ahead of it, the
-# placeholder (relabelled lead-agents) or one made. Each herdr call that finds, makes or trims the
-# lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the lookup, or the pane that
-# must be made at PROJECT_DIR, fails, the pane opens in HERDR_WORKSPACE_ID as before, with the reason
-# on stderr: a hung or failing herdr stops no start, and never leaves the workspace's first pane outside
-# the project.
+# pane's (herdr_workspaces, workspace_dir), and a pane outside the project ahead of every other would make
+# it another project's and hash this project's labels, so then the workspace's first pane must be at the
+# project: the placeholder (relabelled lead-agents), one already first, or, in a workspace with no pane
+# herdr_workspaces reads, one made at PROJECT_DIR. A pane made now goes after the others, so in a
+# workspace whose first pane is outside the project none can be put first, and the agent opens in
+# HERDR_WORKSPACE_ID. That happens once the panes at the project ahead of an outside one have all closed:
+# the kept pane, or a project agent's own pane that an earlier outside start found first (an HLD
+# co-author, a builder) and that closed when the agent retired. A project pane opened after the outside
+# one does not help, since it goes after it. Each herdr call that
+# finds, makes, reads or trims the lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the
+# lookup, the read of its first pane or the pane that must be made at PROJECT_DIR fails, the pane opens in
+# HERDR_WORKSPACE_ID as before, with the reason on stderr: a hung or failing herdr stops no start, and
+# never leaves the workspace's first pane outside the project.
 next_pane() {
-  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out
+  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out dir
   if [[ -z "${PANE_WORKSPACE}" ]] && lead_starts_pane; then
-    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and has_project_pane
+    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and workspace_dir
     if out="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; lead_agents_workspace)"; then
       IFS=$'\t' read -r ws _ placeholder <<< "${out}"
       if ! project_pane "${cwd}"; then
         keep=1
         if [[ -n "${placeholder}" ]]; then
           within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab rename "${placeholder}" "${LEAD_AGENTS_LABEL}" >/dev/null 2>&1 </dev/null || true
-        elif ! ( herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; has_project_pane "${ws}" ); then
-          if ! within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null; then
-            echo "swarm: herdr would not open a pane at ${PROJECT_DIR} in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead" >&2
-            ws="${HERDR_WORKSPACE_ID:-}"; keep=""
-          fi
+        elif ! dir="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; workspace_dir "${ws}")"; then
+          echo "swarm: herdr gave no workspace or pane list, so the lead-agents workspace's first pane could not be read ahead of this one, outside the project; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
+        elif [[ -n "${dir}" && "${dir}" != "${PROJECT_DIR}" ]]; then
+          echo "swarm: the lead-agents workspace's first pane is at ${dir}, outside the project, and a pane made at ${PROJECT_DIR} would go after it; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
+        elif [[ -z "${dir}" ]] && ! within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null; then
+          echo "swarm: herdr would not open a pane at ${PROJECT_DIR} in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
         fi
       fi
     else
@@ -1376,15 +1383,13 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import sign_blocked
 s = sign_blocked(sys.argv[1]); print(s); sys.exit(0 if s == "blocked" else 1)' "$1"
 }
 
-# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
-# less than TEST_RUN_STALLS times stall_minutes ago (panes.py's test_running, over herdr's process
-# info for the pane and one ps read).
+# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite, however
+# long ago it started (panes.py's test_running, over herdr's process info for the pane and one ps read).
 test_running() {
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)"
 }
 
 # usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
@@ -1413,8 +1418,9 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running),
-# setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
+# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running, at
+# any age), setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says
+# nothing.
 pane_quiet() {
   local min
   [[ -n "${pane_at}" ]] || return 1
@@ -1502,12 +1508,13 @@ longest_child() {
 # life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
 # commit or edit (story_work_time) and its newest own work across its session log and its subagents'
 # logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
-# looks stalled is pane <target> asked whether it runs a test suite (test_running), and its transcript
-# whether it waits on a background task of its own (bg_running), each younger than TEST_RUN_STALLS
-# times stall_minutes: either is work, so no stall. Only then are its PRs asked for their updatedAt,
-# so gh is rarely called. Last, with no PR update either, its worktree is asked whether its signer can
-# sign its uncommitted work (sign_held): a builder that cannot, whose own last sign of life (the wait's
-# start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
+# looks stalled is pane <target> asked whether it runs a test suite (test_running, at any age), and its
+# transcript whether it waits on a background task of its own (bg_running, one launched less than
+# TEST_RUN_STALLS times stall_minutes ago): either is work, so no stall. Only then are its PRs asked
+# for their updatedAt, so gh is rarely called. Last, with no PR update either, its worktree is asked
+# whether its signer can sign its uncommitted work (sign_held): a builder that cannot, whose own last
+# sign of life (the wait's start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits
+# on a person, so no stall.
 # After the minutes it prints those three reads as stall_reads words them, `bg=0 test=0 sign=0`: each
 # read 0 to get there, and none is read again after the verdict.
 agent_stalled() {
@@ -1535,8 +1542,8 @@ agent_stalled() {
 # stall_reads <name> <target> — print `bg=0|1 test=0|1 sign=0|1`, read fresh with the checks
 # agent_stalled makes once the rest looks stalled: <name>'s session waits on a background task
 # (bg_running, within TEST_RUN_STALLS times stall_minutes), pane <target> runs a test suite
-# (test_running), and its story's worktree holds work its signer cannot sign (sign_held, which logs a
-# change of state as agent_stalled's read does). sign is read only for an agent with a story
+# (test_running, at any age), and its story's worktree holds work its signer cannot sign (sign_held,
+# which logs a change of state as agent_stalled's read does). sign is read only for an agent with a story
 # (stall_py story), at the builder's own age from its worktree and session log; its PRs are not asked,
 # so no gh call.
 stall_reads() {
@@ -1666,20 +1673,59 @@ stalled_state() {
   [[ "$1" != *" "* ]] || echo "${1#* }"
 }
 
+# PAST_SHA, PAST_WT, PAST_BRANCH, PAST_ORIGIN: what `wait --past <sha> <slug>` set (past_target): the
+# commit the wait looks past, and the story's worktree, branch and repo origin. Empty on any other wait.
+PAST_SHA=""; PAST_WT=""; PAST_BRANCH=""; PAST_ORIGIN=""
+# PAST_GH_WAIT: the most seconds past_pushed's gh read of the PR's head may take before that poll counts as
+# not pushed; less when the wait has less left, but never under PAST_GH_MIN, the time a gh call needs to
+# answer on a busy machine.
+PAST_GH_WAIT=30
+PAST_GH_MIN=5
+
+# past_pushed <end-ms> — on a wait --past, print the worktree's HEAD and succeed once the builder has
+# pushed past PAST_SHA: HEAD is another commit, the worktree is clean (git status --porcelain prints
+# nothing, as review_at_head requires) and the PR's head (gh pr view --json headRefOid) is HEAD, with
+# HEAD and the clean worktree read again once gh has answered. git reads the worktree on every call;
+# gh is asked only once HEAD has moved and the worktree is clean, so a poll with nothing new costs no
+# GitHub call. That call may take PAST_GH_WAIT, or what is left until <end-ms> (the wait's deadline, as
+# now_ms) when that is less, but never under PAST_GH_MIN, so a slow GitHub cannot hold the wait long
+# past its timeout and a read at the deadline still asks. Fails, printing nothing, otherwise, and on
+# any other wait.
+past_pushed() {
+  local at st pr secs
+  [[ -n "${PAST_SHA}" ]] || return 1
+  at="$(git -C "${PAST_WT}" rev-parse HEAD 2>/dev/null)" || return 1
+  [[ "${at}" =~ ^[0-9a-f]{40}$ && "${at}" != "${PAST_SHA}" ]] || return 1
+  st="$(git -C "${PAST_WT}" status --porcelain 2>/dev/null)" || return 1
+  [[ -z "${st}" ]] || return 1
+  secs=$((($1 - $(now_ms) + 999) / 1000))
+  [[ ${secs} -le ${PAST_GH_WAIT} ]] || secs=${PAST_GH_WAIT}
+  [[ ${secs} -ge ${PAST_GH_MIN} ]] || secs=${PAST_GH_MIN}
+  pr="$(within "${secs}" gh pr view "${PAST_BRANCH}" -R "${PAST_ORIGIN}" --json headRefOid --jq .headRefOid \
+    </dev/null 2>/dev/null)" || return 1
+  [[ "${pr}" == "${at}" ]] || return 1
+  # The builder may have committed or edited while gh answered: HEAD and a clean worktree are read again.
+  [[ "$(git -C "${PAST_WT}" rev-parse HEAD 2>/dev/null)" == "${at}" ]] || return 1
+  st="$(git -C "${PAST_WT}" status --porcelain 2>/dev/null)" && [[ -z "${st}" ]] || return 1
+  echo "${at}"
+}
+
 # herdr_wait <target> <name> <timeout-ms> [<since>] — the wait for an agent with no Claude session to
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr_step
 # in STALL_POLL_MS steps. With <since>, between steps an agent stalled since then (agent_stalled)
 # ends the wait with "stalled: ..." (stalled_state), and so does a pane quiet for stall_minutes (pane_check, then
 # pane_quiet). A step that fails other than by timing out ends the stepping, and the last step, for
 # what is left of <timeout-ms>, then fails as one unbroken wait does: 1, with herdr's stderr from the
-# step that failed (why) and the last.
+# step that failed (why) and the last. On a wait --past, after every step, the last too, a builder that
+# pushed past PAST_SHA (past_pushed) ends it first, with "pushed <sha>".
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end why="" pane_kind="" pane_at=""
+  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end why="" pane_kind="" pane_at="" out pushed
   end=$(($(now_ms) + left))
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
-    rc=0; herdr_step "${target}" "${STALL_POLL_MS}" "${err}" || rc=$?
-    [[ ${rc} -ne 0 ]] || { rm -f "${err}"; return 0; }
+    rc=0; out="$(herdr_step "${target}" "${STALL_POLL_MS}" "${err}")" || rc=$?
+    if [[ -n "${PAST_SHA}" ]] && pushed="$(past_pushed "${end}")"; then rm -f "${err}"; echo "pushed ${pushed}"; return 0; fi
+    [[ ${rc} -ne 0 ]] || { rm -f "${err}"; echo "${out}"; return 0; }
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
@@ -1688,7 +1734,10 @@ herdr_wait() {
     pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
-  rc=0; herdr_step "${target}" "${left}" "${err}" || { rc=1; [[ -z "${why}" ]] || echo "${why}" >&2; cat "${err}" >&2; }
+  rc=0; out="$(herdr_step "${target}" "${left}" "${err}")" || rc=1
+  if [[ -n "${PAST_SHA}" ]] && pushed="$(past_pushed "${end}")"; then rm -f "${err}"; echo "pushed ${pushed}"; return 0; fi
+  [[ -z "${out}" ]] || echo "${out}"
+  [[ ${rc} -eq 0 ]] || { [[ -z "${why}" ]] || echo "${why}" >&2; cat "${err}" >&2; }
   rm -f "${err}"; return "${rc}"
 }
 
@@ -1730,10 +1779,13 @@ poll_while() {
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
 # wake (after a nudge), an idle read ends the wait only once a whole slice has passed, unless the
 # session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
+# On a wait --past, every read, the first and the last too, first asks past_pushed: a builder that pushed
+# past PAST_SHA ends the wait with "pushed <sha>", whatever its session says. herdr_wait asks it after each step.
 settle() {
-  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0 lim
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0 lim pushed
   local pane_kind="" pane_at=""
   state="$(session_state "${name}")"
+  if [[ -n "${PAST_SHA}" ]] && pushed="$(past_pushed "$(($(now_ms) + $3))")"; then echo "pushed ${pushed}"; return 0; fi
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
@@ -1743,6 +1795,7 @@ settle() {
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
+    if [[ -n "${PAST_SHA}" ]] && pushed="$(past_pushed "${deadline}")"; then state="pushed ${pushed}"; rc=0; break; fi
     [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
     if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi   # loose-match: ok SETTLED is a fixed regex
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
@@ -1764,7 +1817,8 @@ settle() {
 }
 
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
-# state; at the timeout, print the last one and fail. A builder whose session is idle before its
+# state; at the timeout, print the last one and fail. On a wait --past (PAST_SHA set), settle's
+# `pushed <sha>` (past_pushed) ends it at once with 0, before any stall, nudge or resume. A builder whose session is idle before its
 # story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
 # to IDLE_NUDGES times. An idle agent whose transcript ends on an expired login (login_expired) is
 # never nudged: wait prints `auth`, with a line on stderr naming it. With goal on, no builder is
@@ -1811,6 +1865,8 @@ wait_agent() {
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
+    # wait --past: the builder pushed past PAST_SHA (settle's past_pushed), so there is nothing more to wait on.
+    if [[ "${status}" == "pushed "* ]]; then echo "${status}"; return 0; fi
     if [[ "${status}" == stalled:* ]]; then
       # stalled_state's second line: agent_stalled's reads, passed on as read.
       [[ "${status}" != *$'\n'* ]] || { read -r -a reads <<< "${status#*$'\n'}"; status="${status%%$'\n'*}"; }
@@ -2842,7 +2898,7 @@ own_target() {
 # agent_where <agent> — agent_where_in over herdr's lists, each read once: the agent list first, so
 # an unknown agent fails with no other read, then the pane, workspace and tab lists (every workspace's
 # tabs). A list herdr does not give past the first leaves the workspace label - and the tab its record's
-# name: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
+# name, with its tab id when herdr's pane or agent list gave one: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
 # lists no such agent in this project's panes.
 agent_where() {
   local agents out panes workspaces tabs
@@ -2861,8 +2917,9 @@ agent_where() {
 # lists every project's agents, and another project's may hold the name. The labels are panes.py's
 # pane_where over the pane's entries in the pane list and the agent list, as status and dash print them
 # on each agent's row: a workspace herdr gives no label for, or whose list is empty or not JSON (a failed
-# read), is -; a tab is the name swarm-dev gave it, its tab record's. Fails, printing why, when the
-# agent list is not JSON or names no such agent in this project's panes.
+# read), is -; a tab herdr gives no label for is the name swarm-dev gave it, its tab record's, with the
+# tab's id when herdr gave one, `t1 (w1:t3)`. Fails, printing why, when the agent list is not JSON or
+# names no such agent in this project's panes.
 agent_where_in() {
   SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_STATE="${STATE_DIR}" SWARM_PANE_LIST="$3" SWARM_WS="$4" SWARM_TABS="$5" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys

@@ -45,6 +45,9 @@ dash() {
     [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
     DASH_DIRS[i]="${d}"
   done
+  # Every way out removes the frame's skip file, a kill (TERM, HUP, INT) included; dash_watch's own EXIT
+  # trap on a terminal does it too.
+  trap report_cleanup EXIT
   if [[ ${check} == 1 ]]; then
     [[ -z "${every}" && ${DASH_LADDER} == 0 && ${DASH_TREE} == 0 ]] || die "dash --check draws nothing: --watch, --tree and --ladder do not go with it"
     dash_check; return
@@ -90,7 +93,7 @@ dash_size() {
 
 # dash_deadline — start one frame's report deadline (report_start): REPORT_SECONDS (merge.sh:
 # SWARM_REPORT_SECONDS when it is whole seconds above 0, else 30). From here on every herdr, claude and
-# gh call in this process goes through report_read, named by its subcommand: those reads sit deep in
+# gh call in this process goes through report_read (report_wrappers): those reads sit deep in
 # helpers dash shares with next and status (next_lines, test_running), and dash only reads, so no write
 # or agent start is cut. The deadline and the skip file go to the python dash runs too (SWARM_REPORT_END
 # and SWARM_REPORT_SKIP_FILE, as status sets them): panes.py's pane_text, dash_render.py's read of an
@@ -100,12 +103,8 @@ dash_size() {
 dash_deadline() {
   report_start || die "dash: could not start the report deadline"
   export SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}"
-  # </dev/null, as status_reads (merge.sh) has: a read inside a while-read loop must not eat the loop's input.
-  herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
-  # shellcheck disable=SC2329 # claude_agents (agents.sh) calls it
-  claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
-  # shellcheck disable=SC2329 # for any gh call a helper dash shares with status makes; dash_slow's own are python's
-  gh() { if [[ "${1:-}" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh ${*:1:2}" gh "$@" </dev/null; fi; }
+  # The herdr, claude and gh that status and next use too (merge.sh); dash_slow's own gh calls are python's.
+  report_wrappers
 }
 
 # bin/lib/dash_legend.py — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
@@ -181,8 +180,8 @@ dash_base_ref() {
 # dash_slow.py's reads run under the report deadline (report_read, as gh PR states), with at most half
 # of it (DASH_GH_SHARE): they come first in the frame, and a slow GitHub with many PRs must leave
 # dash_render's herdr reads their own time. It stops each gh call a second short of that end
-# (DASH_READ_END), so no gh outlives the frame in a session of its own, and exits 142, report_read's
-# cut. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
+# (DASH_READ_END) and exits 142, report_read's cut. Each gh call runs in dash_slow.py's process group, so
+# report_read's KILL of that group at the report deadline (REPORT_END) reaches it if dash_slow.py misses its margin. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
 # the last cache's lines it did not reach (dash_cache_merge), so a PR state, a story's head or the ci
 # line, a local 6-hour cache, stands until a later run reads it again; a PR no run has answered shows
 # as its URL, as a PR gh cannot answer in 5 seconds does.
@@ -486,7 +485,7 @@ dash_watch() {
   # dev checkout matches no entry, so it never jumps to the installed copy.
   IFS=$'\t' read -r inst path ver <<< "$(dash_installed)"
   if [[ ${tty} == 1 ]]; then
-    trap 'printf "\033[?25h\033[?1049l"' EXIT
+    trap 'printf "\033[?25h\033[?1049l"; report_cleanup' EXIT
     printf '\033[?1049h\033[?25l'
   fi
   trap 'exit 0' INT TERM HUP
@@ -556,12 +555,13 @@ dash_installed() {
 
 # dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
 # on this project (the cwd may be gone), with the tree and ladder as they stand now and every --project. exec keeps the
-# PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
+# PID and skips the EXIT trap, so the skip file is removed and a terminal restored first, in case the new script dies before
 # it enters the alternate screen again. A script that is not an executable file is ignored.
 dash_reexec() {
   [[ -f "$1" && -x "$1" ]] || return 0
   local script="$1" d
   [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
+  report_cleanup   # exec skips the EXIT trap
   set -- dash --watch "$2"
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
@@ -730,10 +730,10 @@ for a in agents:
   fi
   # The working agents past stall_minutes (dash_age's stalled_panes, the rows' own rule), each its pane
   # and name: a test suite running under one's pane (test_running: herdr's process info, read here and
-  # never in the render, and one ps read) or a background task its session waits on (bg_running, over
-  # its transcript), each younger than 3 times stall_minutes, is work, as for wait --stall, and the
-  # render shows it working (DASH_TESTING). An agent under stall_minutes is never read; a read that
-  # fails leaves the agent stalled.
+  # never in the render, and one ps read), however long it has run, or a background task its session
+  # waits on (bg_running, over its transcript) launched less than 3 times stall_minutes ago, is work, as
+  # for wait --stall, and the render shows it working (DASH_TESTING). An agent under stall_minutes is
+  # never read; a read that fails leaves the agent stalled.
   # shellcheck disable=SC2154 # assigned in another file
   while IFS=$'\t' read -r p n; do
     [[ -n "${p}" ]] || continue

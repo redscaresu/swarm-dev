@@ -4,7 +4,7 @@
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
-#   swarm.sh wait [--stall] [--idle] <name> [timeout-ms]    block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls; --idle, on a builder's wait (not a conductor's or a review agent's): exit 5 when it ends on anything but idle or done (auth, waiting, gone, stepped up:, stepping up:)
+#   swarm.sh wait [--stall] [--idle] [--past <sha>] <name> [timeout-ms]  block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls; --idle, on a builder's wait (not a conductor's or a review agent's): exit 5 when it ends on anything but idle or done (auth, waiting, gone, stepped up:, stepping up:); --past <sha>, on a builder (<name> its story's slug): also exit 0 with "pushed <new sha>" on the first poll its story worktree is clean at another commit that is the PR's head (gh is asked only once the worktree has moved); a short <sha>, a conductor, a review agent, --until-report, --lead or a name with no story or worktree is refused
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them, a reviewed green story PR left unmerged past queue_minutes (unmerged: <slug> <PR URL>, ...), a story PR that conflicts with its base (conflict: <slug> <PR URL>, ...), or any other line § The lead in docs/reference-lead.md lists; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
@@ -17,13 +17,14 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
+#   swarm.sh retro [--since <tag>] [--memory <dir>]        the release retro's report, read-only, with no gh call: the tag (default the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, with no fetch) and its commit's day, the swarm.sh that wrote it (its commit, or its version when not a git checkout), then one section per bin/lib/retro_<name>.py: memories (the lead's memory notes in --memory <dir>, by default Claude Code's memory folder for this project, each with its name and description)
 #   swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred, with --because the builder's own reason in one line; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
 #   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
-#   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
+#   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it with the tab's id, t1 (w1:t3) (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
 #   swarm.sh swarms                                         every swarm herdr runs on this machine: each `swarm-lead · <project>` workspace as a project, with its dir, then its workspaces (the lead's first) with their agents; a workspace is a project's by its label and its dir, never by a prefix of another project's label or a dir name two projects share
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's), a builder not while its Claude review agent is busy on the old version; one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
@@ -37,7 +38,7 @@
 #   swarm.sh plan-unasked [--declined] <epic>               record that a later epic next offered has had its unasked plan, so next offers it no more; --declined: that the user declined it
 #   swarm.sh review <slug> [--head <sha>] <pr-url>...       a story or epic whose PRs are green and reviewed now waits on a human merge; --head: only while each PR's head is still <sha>, the head its review passed, and its prs: lists no other PR, else nothing changes (a moved head's refusal names review-agent --next)
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
-#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none), and a story PR held for the user when it changes .claude/, .github/, hooks/ or a root Makefile (the user merges it by hand); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; a story or --board PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on), or above the stage origin's base allows (its newest v-tag below the minor before the stage, and no epic of that stage active there), is refused (a story PR's epics are read only with lead_epics = off); under either merge mode, a story or --board PR whose own merge of the base dropped a line of the base (dropped-lines, on the pinned head) is held for the user, as is one whose merges cannot be checked, and one whose head moved on GitHub meanwhile is refused for a new review
+#   swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none), and a story PR held for the user when it changes .claude/, .github/, hooks/ or a root Makefile (the user merges it by hand); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; a story or --board PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on), or above the stage origin's base allows (its newest v-tag below the minor before the stage, and no epic of that stage active there), is refused (a story PR's epics are read only with lead_epics = off); under either merge mode, a story or --board PR whose own merge of the base dropped a line of the base (dropped-lines, on the pinned head) is held for the user, as is one whose merges cannot be checked, and one whose head moved on GitHub meanwhile is refused for a new review
 #   swarm.sh dropped-lines <owner/repo> <n> <head> <base>  read-only: fetch PR <n>'s head (refs/pull/<n>/head) into the clone of <owner/repo>, check it is <head>, and print each base line a merge on its first-parent chain dropped (`<sha7> <file>: <text>`), skipping only GitHub's merges of the base that merge recorded as base-merged; exit 0 none, 1 lines dropped, 2 when it cannot check (a moved or stale head, another origin, git below 2.36)
 #   swarm.sh wait-pr [--timeout <seconds>] --head <sha> <pr-url>  wait for a PR's checks on <sha>, read again each poll until the PR's head is <sha> (a prefix of 7 or more; still another after 5 minutes exits 2); with no --head, on the head of its first read, which right after a push can be the old one: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs (or no run of a workflow its pull_request triggers) within 5 minutes, or still pending after <seconds> (default 1800); from the story's review pane with escalate_ladder set, a red head counts toward the ladder's ci-red step-up, which it runs itself (stepped up: <slug>)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
@@ -50,7 +51,7 @@
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when, and with SWARM_PR=<its PR URL> also shown the findings declined on that PR before
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, an agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once; it never edits the code, and on a pass it runs review --head on the head it reviewed, then merges the PR (merge = agent, or an HLD that grants merge) or leaves it for the user
-#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
+#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session, or the same round again when the PR's head moved with no findings sent since that round started: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
@@ -97,10 +98,11 @@ event_fields() {
 EV_FIELDS_FILE=""
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
-# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
+# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP, its .expected memo and its .age
+# note) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
-  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 # dropped-lines' exit 1 means base lines were dropped (DROPPED_FOUND), so any other stop, a die or a set
 # -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way. A stop before merge.sh is
@@ -126,7 +128,8 @@ LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swa
 PLUGIN=swarm-dev@swarm-dev
 MARKETPLACE=swarm-dev
 
-plugin_version() { python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"; }
+# -I: no json.py in the cwd (a project's) is imported in the standard library's place.
+plugin_version() { python3 -I -c "import json,sys; print(json.load(sys.stdin)['version'])"; }
 
 # show_version — the installed version; when a newer one is published, a warning and how to update.
 # A failed lookup (offline) is not an error: /swarm-dev:swarm must still run.
@@ -237,6 +240,7 @@ CFG_merge=human         # human: a PR that is ready waits on the board for you, 
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
 CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next); a ready story with no build this long gets next's idle: line; a reviewed story PR left unmerged this long gets wait --lead's unmerged: line
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_risky_effort=xhigh  # the effort a risk: high code story is built at (code-risky): xhigh, or high to trial it
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_escalate_ladder=""  # empty: off; else models low to high, such as sonnet,opus,fable: step-up hands a build to the next one
 CFG_step_up_findings=3  # with escalate_ladder set, the findings round of a build that steps it up instead of being sent
@@ -244,18 +248,23 @@ CFG_top_rung_rounds=2   # with escalate_ladder set, the findings round on its to
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
-CFG_fallback_reviewer="" # empty: a codex usage limit skips codex's review; else a review agent on this model reviews in its place
+CFG_fallback_reviewer="" # empty: a codex usage or rate limit skips codex's review; else a review agent on this model reviews in its place
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_review_verify=ci    # full: a review agent's round 1 may run the selected tests and check mutation proofs; ci: every round trusts CI
+CFG_demote_kinds=""      # empty: off; else finding kinds, comma-separated, that rounds before the round cap send only as a regression or a now-false line
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
 CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify lead_epics commit_trailers agent_env"
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify demote_kinds lead_epics commit_trailers agent_env"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
+
+# A finding kind, as log-finding takes it (record_finding) and demote_kinds lists them: short kebab-case.
+FINDING_KIND_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
+FINDING_KIND_MAX=32
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
@@ -295,6 +304,8 @@ load_config() {
           || die "${where}: top_rung_rounds must be a whole number of 2 or more, not '${value}': at 1, every findings round after the lead lifts a top-rung hold would hold it again" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
+      risky_effort)
+        [[ "${value}" == xhigh || "${value}" == high ]] || die "${where}: risky_effort must be xhigh or high, not '${value}'" ;;
       escalate_ladder)
         # Its models are checked once LADDER_MODELS is defined (model_rank).
         [[ "${value}" =~ ^([a-z0-9.-]+(,[a-z0-9.-]+)*)?$ ]] || die "${where}: escalate_ladder must be models separated by commas, such as sonnet,opus,fable, not '${value}'" ;;
@@ -308,6 +319,15 @@ load_config() {
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: merge_admin must be off or on, not '${value}'" ;;
       review_verify)
         [[ "${value}" == ci || "${value}" == full ]] || die "${where}: review_verify must be ci or full, not '${value}'" ;;
+      demote_kinds)
+        # Each kind as log-finding takes it, so a kind the review agent logs can match the list.
+        # read drops a trailing empty field, so a value ending in a comma gets one back to refuse.
+        IFS=, read -r -a words <<< "${value}"
+        [[ "${value}" != *, ]] || words+=("")
+        for w in ${words[@]+"${words[@]}"}; do
+          [[ "${w}" =~ ${FINDING_KIND_RE} && ${#w} -le ${FINDING_KIND_MAX} ]] \
+            || die "${where}: demote_kinds: '${w}' is not a finding kind; name kinds separated by commas, each short kebab-case (${FINDING_KIND_MAX} characters at most), such as duplicate-code,efficiency, not '${value}'"   # loose-match: ok FINDING_KIND_RE is a fixed regex
+        done ;;
       lead_epics)
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
       commit_trailers)
@@ -431,14 +451,14 @@ policy() {
     critic)     echo "claude opus high" ;;
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
-    code-risky) echo "claude opus xhigh" ;;    # Layer 3, teardown, safety or hygiene paths
+    code-risky) echo "claude opus ${CFG_risky_effort}" ;;  # Layer 3, teardown, safety or hygiene paths; risky_effort, xhigh by default
     code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     review)     echo "claude opus high" ;;     # one story's PR review, the model the conductor reviewed with
-    review-fallback) echo "claude ${CFG_fallback_reviewer:-sonnet} high" ;;  # codex's review when codex hit its usage limit; started only with fallback_reviewer set
+    review-fallback) echo "claude ${CFG_fallback_reviewer:-sonnet} high" ;;  # codex's review when codex hit its usage or rate limit; started only with fallback_reviewer set
     *) die "unknown role '$1' ($(roles))" ;;
   esac
 }
@@ -632,6 +652,7 @@ dispatch() {
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
     dataset) dataset_report "$@" ;;
+    retro)  retro_report "$@" ;;
     review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
@@ -680,6 +701,7 @@ dispatch() {
             next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds; --dash: dash --check's, its no-agent lines read as dash reads them
     _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
+    _review-brief) review_brief "${1:?slug}" "${2:?PR URL}" "${3:?base}" "${4:?findings file}" "${5:?head}" "${6:-1}" ;;   # test hook: a story's review agent brief
     _board-rel) board_rel ;;                                      # test hook: the board's path from the project root
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
@@ -704,7 +726,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
+READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
@@ -842,10 +864,13 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so, and it writes a reap line, target codex-<story or base>, its tail agent_fields' slug= (SWARM_STORY, none without it) and role= (SWARM_AGENT's); otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
-# child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
-# limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
-# codex-limit incident with the same tail, and with fallback_reviewer set, codex_fallback reviews in its place, in what
-# is left of codex_minutes.
+# child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex
+# keeps its last CODEX_TAIL_LINES lines in .swarm/codex/<story or base>.tail (codex_keep_tail), so a limit message
+# no pattern matches can still be read. One whose last lines hold its own limit message (codex_limit: CODEX_LIMIT_RE
+# or CODEX_RATE_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a codex-limit incident,
+# `codex-limit: usage limit` or `codex-limit: rate limit`, with the reap line's slug= and role= fields (the
+# incident line holds none of codex's lines), and with fallback_reviewer set,
+# codex_fallback reviews in its place, in what is left of codex_minutes.
 codex_review() {
   local pid tpid left t0 rc=0 m i args story prompt="" dir log files fields=() kv=() f
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
@@ -907,10 +932,12 @@ codex_review() {
     # shellcheck disable=SC2064
     trap "codex_cleanup - ${files}" EXIT
     trap "exit 143" TERM HUP
-    if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then   # loose-match: ok CODEX_LIMIT_RE is a regex
+    [[ ${rc} -eq 0 ]] || codex_keep_tail "$1" "${log}" "${rc}"
+    [[ ${rc} -eq 0 ]] || CODEX_LIMIT_KIND="$(codex_limit "${log}")"
+    if [[ -n "${CODEX_LIMIT_KIND}" ]]; then
       # Not the slug alone, which is also its builder's agent name: login_incident would take this
       # line for the end of that builder's login episode.
-      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: usage limit" "${fields[@]+"${fields[@]}"}"
+      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
       # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
       # does not review exits there, as codex did.
       [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
@@ -935,20 +962,57 @@ codex_cleanup() {
 # CODEX_LIMIT_RE: codex's own usage-limit line, as `codex exec` prints it (ERROR: or ■ before it,
 # and a curly apostrophe: "ERROR: You’ve hit your usage limit. Upgrade to Pro ...").
 CODEX_LIMIT_RE="^(ERROR: |■ )?You(’ve|'ve| have) hit your usage limit"
+# CODEX_RATE_LIMIT_RE: codex's own rate-limit lines (codex-rs/protocol/src/error.rs, codex 0.164.0): a
+# provider's rate limit inside the response stream ("rate limit exceeded: {0}", which on Azure Foundry reads
+# "ERROR: rate limit exceeded: Your requests to <model> for <model> in <region> have exceeded token rate
+# limit."), and its retries spent on a 429 ("exceeded retry limit, last status: 429 Too Many Requests").
+CODEX_RATE_LIMIT_RE="^(ERROR: |■ )?(rate limit exceeded: |exceeded retry limit, last status: 429 Too Many Requests)"
+# CODEX_LIMIT_KIND: the limit codex_review found codex stopped on, usage or rate (codex_limit), for the
+# lines codex_fallback, fallback_skip and fallback_brief print; empty until it finds one.
+CODEX_LIMIT_KIND=""
+# CODEX_TAIL_LINES: how many of a failed codex's last lines codex_keep_tail keeps.
+CODEX_TAIL_LINES=20
+
+# codex_limit <log> — usage or rate when the last 5 lines of codex's output <log> hold codex's own
+# usage-limit or rate-limit line; nothing otherwise.
+codex_limit() {
+  local last
+  last="$(tail -n 5 "$1")"
+  if grep -Eq "${CODEX_LIMIT_RE}" <<< "${last}"; then echo usage   # loose-match: ok CODEX_LIMIT_RE is a regex
+  elif grep -Eq "${CODEX_RATE_LIMIT_RE}" <<< "${last}"; then echo rate   # loose-match: ok CODEX_RATE_LIMIT_RE is a regex
+  fi
+}
+
+# codex_keep_tail <base> <log> <codex's exit> — keep a failed codex's last CODEX_TAIL_LINES lines in
+# .swarm/codex/<SWARM_STORY, or base>.tail, under a line with the time and the exit, replacing the
+# story's last one. Each run writes a temp file of its own (<file>.<pid>.tmp) and moves it into place,
+# so two runs that fail together on one story each replace the file whole, and the last to finish
+# wins. Under umask 077, as the run's own log in its mode-700 directory: codex's output can hold command
+# output or source, so the directory, temp file and file are the owner's alone. A file it cannot write
+# gets a warning, never a failed review.
+codex_keep_tail() {
+  local unsafe='[^A-Za-z0-9.-]' f t
+  f="${PROJECT_DIR}/.swarm/codex/${SWARM_STORY:-${1//${unsafe}/-}}.tail"; t="${f}.$$.tmp"
+  ( umask 077 && mkdir -p "${f%/*}" \
+    && { printf '# %s codex exited %s; its last %s lines:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$3" "${CODEX_TAIL_LINES}"
+         tail -n "${CODEX_TAIL_LINES}" "$2"; } > "${t}" \
+    && mv "${t}" "${f}" ) 2>/dev/null || { rm -f "${t}"; echo "swarm: could not keep codex's last lines in ${f}" >&2; }
+}
 
 # FALLBACK_MIN_SECONDS: the least of codex_minutes that must be left for a fallback reviewer to be
 # worth starting (SWARM_FALLBACK_MIN_SECONDS overrides it, for tests).
 FALLBACK_MIN_SECONDS="${SWARM_FALLBACK_MIN_SECONDS:-120}"
 
-# fallback_skip <codex's exit> <why> — codex was skipped after all: say why, and exit as codex did.
-fallback_skip() { echo "codex skipped: usage limit ($2)" >&2; exit "$1"; }
+# fallback_skip <codex's exit> <why> — codex was skipped after all: say which limit (CODEX_LIMIT_KIND)
+# and why, and exit as codex did.
+fallback_skip() { echo "codex skipped: ${CODEX_LIMIT_KIND} limit ($2)" >&2; exit "$1"; }
 
 # codex_fallback <base> <prompt> <seconds left> <scratch file> <codex's exit> — codex hit its usage
-# limit and fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that
+# or rate limit (CODEX_LIMIT_KIND) and fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that
 # model) in the cwd with codex's prompt, wait what is left of codex's time (<seconds left>, its start
 # bounded by it and counted against it) for its
 # findings file (.swarm/reviews/fallback/<story>.md) as `wait review-<slug>` does, print it in codex's
-# place under the line the PR body takes, and close the agent, findings or not; an interrupt closes
+# place under the line the PR body takes (naming the limit), and close the agent, findings or not; an interrupt closes
 # it too. Every other way out is fallback_skip: outside herdr, under FALLBACK_MIN_SECONDS left, its
 # 32-character name held by another story's fallback or by a fallback still reviewing, a brief it
 # could not write, a start that failed,
@@ -968,7 +1032,7 @@ codex_fallback() {
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
   [[ ! -s "${err}" ]] || cat "${err}" >&2   # a brief written with a warning (project_rules: no rules.md)
-  # A tab of its own, fallback-<story>: a usage limit hits every builder at once, and fallbacks
+  # A tab of its own, fallback-<story>: a usage or rate limit hits every builder at once, and fallbacks
   # sharing one tab record would race on it.
   (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
   # shellcheck disable=SC2064 # this start and agent, fixed now
@@ -999,7 +1063,7 @@ codex_fallback() {
   trap "fallback_close ${full}; exit 143" TERM HUP
   fallback_close "${full}"
   [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
-  echo "reviewed by fallback ${CFG_fallback_reviewer}: codex usage limit"
+  echo "reviewed by fallback ${CFG_fallback_reviewer}: codex ${CODEX_LIMIT_KIND} limit"
   cat "${out}"
 }
 
@@ -1038,7 +1102,7 @@ fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
   cat <<EOF
-codex hit its usage limit, so you review in its place. You are read-only: never edit, commit or push
+codex hit its ${CODEX_LIMIT_KIND} limit, so you review in its place. You are read-only: never edit, commit or push
 here, and never merge, by any route. The one file you write is $3.
 
 ${2:-${diff}}

@@ -75,22 +75,29 @@ fresh; gained 1 docs/stories/README.md; updates; merge "${URL}"
 merged_in "a board README counts as code: a test may check it"
 fresh; gained 1 docs/stories.md; updates; merge "${URL}"
 merged_in "a file beside the board's folders is not on it"
+# retros/*.md is a glob: a retro file is on the board, a script beside it is code.
+fresh; gained 1 docs/retros/v1.0.0.md; merge "${URL}"
+is "the base gained only a retro file: exits 0" 0 "${rc}"
+check "the base gained only a retro file: merges" merged
+fresh; gained 1 docs/retros/x.sh; updates; merge "${URL}"
+merged_in "a script beside the retro files is code"
 OTHER=https://github.com/o/other/pull/7
 fresh; item s "status: review" "prs: ${OTHER}"; gained 1 docs/stories/t.md; updates; merge "${OTHER}"
 merged_in "a PR in another repo: its stories/ file is code" "base merged: ${OTHER} is now 3333333 (1111111 with main merged in)"
 check "a PR in another repo: compares in that repo" compared o/other "${H1}"
 check "a PR in another repo: merges main in in that repo" updated o/other
 # The board's repo cannot be read: the failed read is named, with gh's own line, not called code on the
-# base, and the refusal says to merge the base in, which clears it.
+# base, and the refusal says to merge the base in, and why: merge cannot go ahead without it.
+NEED="merge cannot go ahead until the head has main in it, and then nothing is left to check"
 NOREPO="GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
 fresh; gained 1 docs/stories/t.md; echo "${NOREPO}" > "${FX}/origin.fail"; merge "${URL}"
 refused "board files only, gh cannot read the board's repo" \
-  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh repo view failed (${NOREPO}): merge origin/main in, push, and merge the new head"
+  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh repo view failed (${NOREPO}): ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1 docs/stories/t.md; echo 'not json' > "${FX}/origin"; merge "${URL}"
-refused "board files only, gh names no repo" "and gh repo view named no GitHub repo: merge origin/main in, push, and merge the new head"
+refused "board files only, gh names no repo" "and gh repo view named no GitHub repo: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1 docs/stories/t.md; git -C "${P}" remote remove origin; merge "${URL}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
 refused "board files only, the board's repo has no origin" \
-  "its 1 commits change only board paths, and ${P}, the board's repo, has no origin: merge origin/main in, push, and merge the new head"
+  "its 1 commits change only board paths, and ${P}, the board's repo, has no origin: ${NEED}: merge origin/main in, push, and merge the new head"
 
 # --- A head up to date with the base merges.
 fresh; merge "${URL}"
@@ -116,16 +123,16 @@ is "a 404 on the compare: read once" 1 "$(reads)"
 fresh; touch "${FX}/behind.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
 refused "a compare that hangs" "cannot tell whether main moved past 1111111's CI: the compare took over 2s"
 fresh; gained 1 docs/stories/t.md; touch "${FX}/origin.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
-refused "board files only, a board repo read that hangs" "and gh did not say within 2s which GitHub repo the board's origin is: merge origin/main in, push, and merge the new head"
+refused "board files only, a board repo read that hangs" "and gh did not say within 2s which GitHub repo the board's origin is: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; echo '{"status":"ahead"}' > "${FX}/behind"; merge "${URL}"
 refused "a compare with no ahead_by" "cannot tell whether main moved past 1111111's CI: unreadable compare"
 # many <n> <prefix> — <n> paths, <prefix>1.md to <prefix><n>.md.
 many() { local i; for ((i = 1; i <= $1; i++)); do echo "$2${i}.md"; done; }
 # 300 board files: GitHub may have cut the list short, so a file off the board may be missing from it.
 fresh; read -ra fs <<< "$(many 300 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
-refused "a compare listing 300 board files" "lists 300 files, so it may be cut short: merge origin/main in, push, and merge the new head"
+refused "a compare listing 300 board files" "lists 300 files, so it may be cut short: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1; merge "${URL}"
-refused "a compare listing no file for its commits" "the compare of 1111111 with main lists no file for 1 commit(s): merge origin/main in, push, and merge the new head"
+refused "a compare listing no file for its commits" "the compare of 1111111 with main lists no file for 1 commit(s): ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; read -ra fs <<< "$(many 299 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
 is "a compare listing 299 board files: exits 0" 0 "${rc}"
 
@@ -158,5 +165,32 @@ check "v0.28.0: B compared its head with the base" compared o/r "${H2}"
 check "v0.28.0: B's branch had main merged in at its head" grep -qxF "api -X PUT -f expected_head_sha=${H2} repos/o/r/pulls/8/update-branch" "${ROOT}/gh.log"
 is "v0.28.0: B's new head, with main merged in, merges, and B's old head does not" "0|8 ${H3}|no" \
   "${rc}|$(sed -n 's/^pr merge \([0-9]*\) .*--match-head-commit \([0-9a-f]*\)$/\1 \2/p' "${ROOT}/gh.log")|$(grep -qF -- "--match-head-commit ${H2}" "${ROOT}/gh.log" && echo yes || echo no)"
+
+# --- ci_gate.py's on_board, the one matcher behind and fixed judge a path by, called directly, and
+# merge.sh's on_board_paths, both on merge.sh's own board_paths (board_rel saying where the board is):
+# retros/*.md is a glob, so a retro file is on the board's paths and a script beside it is not;
+# Board.base is that file alone, not Board.base.py; and a board folder named with a * stays literal.
+# py_on <board rel> <path>... — <path>=True or <path>=False for each, as on_board judges it.
+py_on() {
+  local paths
+  paths="$(BOARD_IN_REPO=1 REL="$1" bash -c 'board_rel() { printf %s "${REL}"; }; . "$1/bin/lib/merge.sh" && board_paths' _ "${REPO}")"
+  shift
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import ci_gate
+board = [b for b in sys.argv[2].split("\n") if b]
+print(" ".join("%s=%s" % (p, ci_gate.on_board(p, board)) for p in sys.argv[3:]))' "${REPO}/bin/lib" "${paths}" "$@"
+}
+# sh_on <board rel> <path>... — the same, as on_board_paths judges it.
+sh_on() {
+  BOARD_IN_REPO=1 REL="$1" bash -c 'board_rel() { printf %s "${REL}"; }; . "$1/bin/lib/merge.sh"; shift; out=()
+    for p in "$@"; do if on_board_paths "${p}"; then out+=("${p}=True"); else out+=("${p}=False"); fi; done; echo "${out[*]}"' _ "${REPO}" "${@:2}"
+}
+WANT="retros/v1.0.0.md=True retros/x.sh=False Board.base.py=False Board.base=True stories/a.md=True"
+for m in py_on sh_on; do
+  is "${m}, a board at the root: a retro file is on the board's paths; a script beside it and Board.base.py are not" \
+    "${WANT}" "$("${m}" "" retros/v1.0.0.md retros/x.sh Board.base.py Board.base stories/a.md)"
+  is "${m}, a board folder named notes*: its * is literal, and only the retro glob's * matches" \
+    "notes*/retros/v1.0.0.md=True notes-x/retros/v1.0.0.md=False notes-other/Board.base=False notes*/Board.base=True notes*/retros/x.sh=False" \
+    "$("${m}" 'notes*/' 'notes*/retros/v1.0.0.md' notes-x/retros/v1.0.0.md notes-other/Board.base 'notes*/Board.base' 'notes*/retros/x.sh')"
+done
 
 finish "merge base-moved"

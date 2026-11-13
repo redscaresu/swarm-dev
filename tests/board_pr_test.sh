@@ -596,7 +596,7 @@ reset_log; bpr open y "Root board edit" "${ROOT}/body.md"
 is "board_dir = .: open exits 0" 0 "${rc}"
 is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
 bpr start yb; echo changed > "${ROOT}/proj-wt/_board-yb/bin/tool"
-guard_refused yb "board_dir = .: a file off the board's paths" "board-pr: bin/tool is outside the board's paths (stories/, epics/, hld/, Board.base, .obsidian/)"
+guard_refused yb "board_dir = .: a file off the board's paths" "board-pr: bin/tool is outside the board's paths (stories/, epics/, hld/, Board.base, .obsidian/, retros/*.md)"
 # git C-quotes a path with a " in it ("epics/a\"b.md"), which would miss the epics/ prefix: refused.
 bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
 guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'

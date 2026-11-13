@@ -100,7 +100,8 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json.new" && mv "${ROOT}/claude.json.new" "${ROOT}/claude.json"
 EOF
-# With ghhang its api reads hang for 300s, and with ghfail they fail.
+# With ghhang its api reads hang for 300s, and with ghfail they fail. A PR head in headonce is read once,
+# in place of head's, then gone.
 cat > "${STUB_BIN}/gh" <<EOF
 #!/bin/sh
 if [ "\$1" = api ]; then
@@ -110,7 +111,7 @@ fi
 case "\$1 \$3" in
   "api "*/check-runs*) cat "${ROOT}/checks" ;;
   "api "*/status*) echo '{"total_count":0,"statuses":[]}' ;;
-  *) cat "${ROOT}/head" ;;
+  *) if [ -e "${ROOT}/headonce" ]; then cat "${ROOT}/headonce"; rm -f "${ROOT}/headonce"; else cat "${ROOT}/head"; fi ;;
 esac
 EOF
 GREEN='{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
@@ -255,6 +256,11 @@ check "a stop tells the story's conductor in a note, the lead takes it when that
 # the PR sits with nobody on it, and this goes red.
 check "the handoff sends the conductor the stop note after a base-merged nudge and on a merge hold" "yes|yes" \
   "$(has "Then send the conductor the stop note, as for any other refusal below, naming that line, and stop:" "${flat}")|$(has "When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the conductor the stop note, as for any other refusal below, naming that line, so it closes the builder." "${flat}")"
+# GitHub's request to merge the base in failed with no conflict known: merge brings the base in on its
+# next run, so the agent runs it once more and nudges nobody. If the handoff sent the builder to merge
+# the base in instead, each such blip would cost a merge-in and a CI run, and this goes red.
+check "the handoff runs merge once more, nudging nobody, on a refusal that says merge brings the base in itself" "yes" \
+  "$(has "When it refuses with a line that ends \`merge brings <base> in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not merge the base in and nothing is known to conflict: nudge nobody, and run \`${sw} merge --head <sha> ${PR}\`, with the <sha> it names, once more, in the background as before. A second such refusal is one of the other refusals below." "${flat}")"
 check "the handoff sends the conductor the stop note on any other refusal or failure, keeping the pass file" "yes|yes" \
   "$(has "On any other refusal or failure (a merge \`dequeued\` or \`unconfirmed\`, CI on the base red or timed out after the merge, a story held until its parents merge, a story with a PR you did not review), first send the conductor the stop note, leaving ${p}/.swarm/reviews/s1.md as it is" "${flat}")|$(has "\`review-s1 stopped on <the PR's head>: <the line that command printed>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`. Then reply the same way." "${flat}")"
 check "the handoff nudges the builder on a red or conflicting base-merged head and a moved base, and names the conductor's restart on the new head" "yes|yes|yes|yes|no" \
@@ -548,10 +554,33 @@ check "review-agent n1 starts review-n1 for round 1" "0" "$(set +e; run review-a
 NP="$(awk '$1 == "review-n1" { p = $2 } END { print p }' "${ROOT}/agents")"
 check "review-n1 has a pane on record" "yes" "$([[ -n "${NP}" ]] && echo yes || echo no)"
 echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"; done_agent review-n1
-echo STALE > "${p}/.swarm/reviews/n1.head"
 echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
+check "review-n1's start left the PR's head in n1.head, so the refusals below see an unmoved head" "${HEAD_SHA}" "$(cat "${p}/.swarm/reviews/n1.head")"
 check "--next before any findings tell refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# --- A push during round 1, with no findings tell since: --next follows the new head as round 1 again,
+# once the worktree is at it with nothing uncommitted (review_at_head's refusals, changing nothing, until then).
+NWT="${ROOT}/svc-wt/n1"; H2="$("${GIT[@]}" -C "${NWT}" commit-tree "HEAD^{tree}" -p HEAD -m h2)"; echo "${H2}" > "${ROOT}/head"
+check "a moved head with the worktree behind it is refused as review_at_head refuses it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "n1's worktree is at ${HEAD_SHA}, not the PR's head ${H2}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${H2}"; echo wip > "${NWT}/wip.txt"
+check "a moved head with uncommitted changes in the worktree is refused as review_at_head refuses it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "n1's worktree has uncommitted changes, so it is not the PR's head ${H2}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${NWT}/wip.txt"
+check "a moved head during round 1, with no findings tell since: --next exits 0 and prints round 1 again, naming both heads, the round-1 line and dropped-lines on the new head" "0|yes|yes|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 1 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(has "review ${PR} at its new head ${H2}" "${o}")|$(has "This is review round 1 of the story." "${o}")|$(has "dropped-lines o/svc 1 ${H2} main" "${o}")")"
+check "and it leaves the new head in n1.head and the old findings at n1.md.prev, and starts no agent" "${H2}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
+  "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
+check "events.tsv logs the follow as review-agent:next n1 ok (round 1), with round=1" "review-agent:next	n1	ok (round 1) ~~ round=1" \
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
+# Back to round 1's head and files for the checks below: the follow is a round-1 start, as the start was.
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${HEAD_SHA}"; echo "${HEAD_SHA}" > "${ROOT}/head"
+echo "${HEAD_SHA}" > "${p}/.swarm/reviews/n1.head"; echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"
+rm -f "${p}/.swarm/reviews/n1.md.prev"; echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
+# A head that reads as moved once, then is back at n1.head's when review_at_head reads it: nothing to follow.
+echo "${H2}" > "${ROOT}/headonce"
+check "a head back at n1.head's by review_at_head's read is refused, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "${PR}'s head is back at ${HEAD_SHA}, the head round 1 of n1 started on" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T11:30:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
 check "--next from another pane refuses, naming review-n1's pane, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID=w:999 run review-agent --next n1 "${PR}")"; echo "$?|$(has "only review-n1, in its pane ${NP}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
@@ -570,10 +599,10 @@ check "--next when herdr cannot list its agents says to run --next again, not to
 rm "${ROOT}/listfail"; echo wip > "${ROOT}/svc-wt/n1/wip.txt"
 check "--next with uncommitted work refuses and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "has uncommitted changes" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
-rm "${ROOT}/svc-wt/n1/wip.txt"
+rm "${ROOT}/svc-wt/n1/wip.txt"; echo STALE > "${p}/.swarm/reviews/n1.head"
 o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")" || echo "FAIL review-agent --next n1 exited non-zero: ${o}"
-check "after one ok findings tell, --next from review-n1's pane prints round 2 and the codex-alone instruction" "yes|yes" \
-  "$(has "Review round 2 of story n1" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
+check "after one ok findings tell, --next from review-n1's pane prints round 2 as a plain next round, not a follow, and the codex-alone instruction" "yes|yes" \
+  "$(has "Review round 2 of story n1: review ${PR} at its new head" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
 check "and it writes the PR's head, moves n1.md to n1.md.prev, and starts no agent" "${HEAD_SHA}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
   "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
 check "events.tsv gets review-agent:next n1 ok (round 2), with round=2 to match, and no review-agent line for it" "review-agent:next	n1	ok (round 2) ~~ round=2|1" \
@@ -584,6 +613,12 @@ check "with review-n1 live and no findings file, a plain review-agent n1 still r
 echo "head: ${HEAD_SHA} ROUND-TWO" > "${p}/.swarm/reviews/n1.md"; was="$(reviews_now)"
 check "a second --next with no findings tell since refuses and keeps round 2's review" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "round 2 of n1 has started already" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# A push during round 2, with no findings tell since: round 2 again, not round 3, logged as round 2.
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${H2}"; echo "${H2}" > "${ROOT}/head"
+check "a head that moves during round 2 gets round 2 again, not round 3, and the old findings go aside" "0|yes|no|${H2}|head: ${HEAD_SHA} ROUND-TWO" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 2 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(grep -qF "round 3" <<< "${o}" && echo yes || echo no)")|$(cat "${p}/.swarm/reviews/n1.head")|$(cat "${p}/.swarm/reviews/n1.md.prev")"
+check "events.tsv's new review-agent:next line for it is ok (round 2), with round=2, the second such line" "review-agent:next	n1	ok (round 2) ~~ round=2|2" \
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(awk -F'\t' '$2 == "review-agent:next" && $3 == "n1" && $5 ~ /^ok \(round 2\)/' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 # A findings tell herdr sent but did not see taken up is a round, as the ladder counts it.
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T12:00:00Z tell:findings n1 - "review-n1: the brief was not taken up: herdr sent it the brief twice" >> "${p}/.swarm/events.tsv"
 check "after a findings tell logged 'herdr sent it the brief', --next prints round 3, not round 2 again" "yes" \
@@ -603,6 +638,7 @@ check "after a new build's story event, --next refuses, as round 1 is a plain re
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:10:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
 check "after findings to a new build with no review-agent start in it, --next refuses the earlier build's review-n1 and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "review-n1 is from an earlier build" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${HEAD_SHA}" > "${ROOT}/head"   # gh's head back to the one every later story's worktree starts at
 
 # --- A findings round run as the brief writes it: review-f1's wait, tell and --next commands, taken
 # from its brief and run from its pane, in f1's worktree. f1's builder, in pane w:900 of f1's tab, has
@@ -869,9 +905,11 @@ check "both briefs' first line is still the one review_brief_url reads, and neit
   "$(has "Review ${PRA}, the PR of story h1, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h1.md")")|$(has "Review ${PRB}, the PR of story h2, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h2.md")")|$(grep -ci 'never merge' <<< "${abrief}" || true)|$(grep -ci 'never merge' <<< "${hbrief}" || true)"
 a_review="$(cmd_in "${abrief}" "swarm.sh review h1 --head ")"; a_merge="$(cmd_in "${abrief}" "swarm.sh merge --head ")"
 h_review="$(cmd_in "${hbrief}" "swarm.sh review h2 --head ")"; h_grants="$(cmd_in "${hbrief}" "swarm.sh grants ")"; h_merge="$(cmd_in "${hbrief}" "swarm.sh merge --head ${HEAD_SHA} ")"
+# Besides the head it reviews, the merge = agent brief names merge --head only with a placeholder: the
+# <new head> it never merges itself, and the <sha> a run-merge-again refusal names.
 check "the merge = agent brief has one review --head and one merge --head command on the head it reviews; the merge = human one adds a grants command and none to merge outside it" \
   "SWARM_PROJECT=${p} ${SWARM} review h1 --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} merge --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} review h2 --head ${HEAD_SHA} ${PRB}|SWARM_PROJECT=${p} ${SWARM} grants ${PRB}|0" \
-  "${a_review}|$(grep -v '<new head>' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
+  "${a_review}|$(grep -v -e '<new head>' -e 'merge --head <sha> ' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
 # A head pushed since the review is not reviewed in this session: it ends the agent with head moved:
@@ -898,7 +936,7 @@ fm_of() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh";
 : > "${p}/.claude/swarm/config"
 echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "${FXH}/head"
 check "merge = human: the brief's review --head on a PR whose head moved exits non-zero, names review-agent --next, and leaves h2 ready" "1|yes|ready" \
-  "$(set +e; o="$(from_pane h2 "${h_review}")"; echo "$?|$(has "swarm.sh review-agent --next h2 ${PRB} once this round sent the builder findings; after a pass, a new swarm.sh review-agent h2 ${PRB}" "${o}")")|$(fm_of h2 status)"
+  "$(set +e; o="$(from_pane h2 "${h_review}")"; echo "$?|$(has "swarm.sh review-agent --next h2 ${PRB}, after a pass as after findings; with review-h2 gone, a new swarm.sh review-agent h2 ${PRB}" "${o}")")|$(fm_of h2 status)"
 echo "${HEAD_SHA}" > "${FXH}/head"
 # One review agent passes one PR, and prs: is empty until review: a second open PR from story/h2 would be
 # left behind when the first merged and the story finished.
@@ -948,6 +986,81 @@ check "the lead's kept arm starts review-agent once, waits on it (again while bu
 # there), and a multi-PR line's heads may have moved since each agent passed its PR.
 check "the kept arm reads head moved: and stopped: before taking a story in review as a pass, and re-reads each PR's head before a multi-PR review" "yes|yes" \
   "$(python3 -c 'import sys; t = sys.argv[1]; a = t.find(sys.argv[2]); b = t.find(sys.argv[3]); c = t.find(sys.argv[4]); print("yes" if 0 <= a < b < c else "no")' "${kept}" "If it has a \`head moved:\` line" "If the file has a \`stopped:\` line" "Otherwise the file is a pass. If the story is in review with no \`kept:\` line")|$(has "Once every PR has passed, read each PR's head again (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`) and compare it with the head noted for it: a PR whose head moved since has had no review, so start the review agent on it again. Only when every PR's head is still the one that passed, run \`swarm.sh review <slug>\` with every PR URL on the line" "${kept}")"
+
+# --- review --head on a head past the reviewed one (review_heads, base_merges_only): a head that adds only
+# git's own clean merges of the base takes the pass, with a base-accepted line review_pass follows; a
+# merge with an edit of its own, or a commit of the PR's own, is refused as a moved head, as before.
+# The svc clone's origin moves to ${ROOT}/o/svc.git, so its URL ends in o/svc, the PR's repo; W pushes
+# main there and each case's head to refs/pull/15/head, the ref base_merges_only fetches.
+"${GIT[@]}" clone -q --bare "${ROOT}/svc.git" "${ROOT}/o/svc.git"
+"${GIT[@]}" -C "${ROOT}/svc" remote set-url origin "${ROOT}/o/svc.git"
+W="${ROOT}/w3"; "${GIT[@]}" clone -q "${ROOT}/o/svc.git" "${W}"
+PRC=https://github.com/o/svc/pull/15
+# wc3 <file> <text> — a commit on W's branch writing <file>; prints it.
+wc3() { echo "$2" > "${W}/$1"; "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -qm "$1"; "${GIT[@]}" -C "${W}" rev-parse HEAD; }
+# merge_main <branch> [<file> <text>] — on <branch>, git's own merge of main, or with <file> then written
+# as <text> in the merge (an edit of its own, so its remerge-diff is not empty); prints the merge.
+merge_main() {
+  "${GIT[@]}" -C "${W}" checkout -q "$1"; "${GIT[@]}" -C "${W}" merge -q --no-ff --no-commit main > /dev/null 2>&1 || true
+  [[ $# -lt 2 ]] || echo "$3" > "${W}/$2"
+  "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -q --no-edit; "${GIT[@]}" -C "${W}" rev-parse HEAD
+}
+# The PR's one workflow, ci.yml, runs on every pull_request, so ci_gate head, given the PR's base, number
+# and file count as wait-pr gives them, waits for a pull_request run of it on the head.
+echo '[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]' > "${FXH}/workflows"
+printf 'name: ci\non:\n  pull_request:\n' > "${FXH}/wf.ci.yml"
+# h3_at <head> [<status> <conclusion>] — PR 15's head is <head> (gh and refs/pull/15/head), its one check
+# run test is <status> <conclusion> (completed success, green, by default), and so is the one
+# pull_request run of ci.yml on it; h3 is ready with no prs:, and its review file is a pass on REV, the
+# head the review read.
+h3_at() {
+  "${GIT[@]}" -C "${W}" push -q -f "${ROOT}/o/svc.git" "$1:refs/pull/15/head"; echo "$1" > "${FXH}/head"
+  local c=null; [[ "${3-success}" == null ]] || c="\"${3-success}\""
+  printf '{"total_count":1,"check_runs":[{"name":"test","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/runs/1","path":".github/workflows/test.yml","head_sha":"%s"}]}\n' \
+    "${2:-completed}" "${c}" "$1" > "${FXH}/$1.checks"
+  echo '{"total_count":0,"statuses":[]}' > "${FXH}/$1.status"
+  printf '{"total_count":1,"workflow_runs":[{"id":1,"name":"ci","path":".github/workflows/ci.yml","event":"pull_request","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/actions/runs/1","head_sha":"%s"}]}\n' \
+    "${2:-completed}" "${c}" "$1" > "${FXH}/$1.runs"
+  printf '%s\n' --- "status: ready" "kind: code" "epic: e" "repo: svc" "touches: [bin/h3.sh:fn_h3]" --- "" "# h3" > "${b}/stories/h3.md"
+  rm -f "${p}/.swarm/state/h3"*; mkdir -p "${p}/.swarm/reviews"
+  printf '%s\n' "head: ${REV}" "## Findings" "none" > "${p}/.swarm/reviews/h3.md"
+}
+# review_h3 — review h3 --head REV PRC, as a review agent runs it: output, then rc:<exit>.
+review_h3() { (cd "${ROOT}/svc" && env -u SWARM_PROJECT SWARM_PROJECT="${p}" PATH="${MGH}:${STUB_BIN}:${PATH}" bash "${SWARM}" review h3 --head "${REV}" "${PRC}" 2>&1; echo "rc:$?"); }
+# h3_pass <sha> — whether review_pass counts <sha> as reviewed for h3, as the lead's unmerged: line reads it.
+# shellcheck source=/dev/null
+h3_pass() { (PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/agents.sh"; . "${SWARM%/*}/lib/merge.sh"; . "${SWARM%/*}/lib/build.sh"
+  if review_pass h3 "$1"; then echo pass; else echo none; fi); }
+accepted_lines() { awk -F'\t' '$2 == "base-accepted" && $3 == "h3" { sub(/ ~~ .*/, "", $5); print $5 }' "${p}/.swarm/events.tsv"; }
+"${GIT[@]}" -C "${W}" checkout -q -b story/h3; REV="$(wc3 h3.txt one)"
+"${GIT[@]}" -C "${W}" checkout -q main; wc3 g.txt g1 > /dev/null; "${GIT[@]}" -C "${W}" push -q origin main
+"${GIT[@]}" -C "${W}" checkout -q -b own "${REV}"; OWN="$(wc3 h3.txt two)"
+"${GIT[@]}" -C "${W}" checkout -q -b edit "${REV}"; EDIT="$(merge_main edit extra.txt mine)"
+CLEAN="$(merge_main story/h3)"
+moved="the head of ${PRC} is"
+for c in "a commit of the PR's own:${OWN}:${OWN:0:7}, after ${REV:0:7}, is a commit of its own, not a merge of main" \
+         "a merge of the base with an edit of its own:${EDIT}:merge ${EDIT:0:7} is not git's own merge of its parents"; do
+  name="${c%%:*}"; rest="${c#*:}"; sha="${rest%%:*}"; why="${rest#*:}"
+  h3_at "${sha}"; o="$(review_h3)"
+  check "review --head on ${name} refuses as a moved head, saying why, and leaves h3 ready with no pass on it" "rc:1|yes|yes|ready||none" \
+    "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${sha:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged: the new head needs a review of its own" "${o}")|$(has "review: ${PRC}'s head ${sha:0:7} is not ${REV:0:7} plus clean merges of main: ${why}" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${sha}")"
+done
+# A clean merge whose CI has not finished: the review waited for green on REV only, so the head is not taken.
+h3_at "${CLEAN}" in_progress null; o="$(review_h3)"
+check "review --head on a clean merge of the base whose CI has not finished refuses as a moved head, naming wait-pr, and leaves h3 ready with no pass on it" "rc:1|yes|yes|yes|ready||none" \
+  "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: " "${o}")|$(has "; once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0, review --head ${REV} takes it" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+# A clean merge whose one check is green while ci.yml, which runs on every pull_request, has not started
+# on it: CI there is not finished, as wait-pr reads it, so the head is not taken.
+h3_at "${CLEAN}"; echo '{"total_count":0,"workflow_runs":[]}' > "${FXH}/${CLEAN}.runs"; o="$(review_h3)"
+check "review --head on a clean merge of the base with its one check green and ci.yml not started on it refuses as a moved head, naming ci.yml with no run on the head, and leaves h3 ready with no pass on it" "rc:1|yes|yes|ready||none" \
+  "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: .github/workflows/ci.yml (no run on ${CLEAN:0:7}); once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+h3_at "${CLEAN}"
+check "before review --head, the clean merge ${CLEAN:0:7} has no pass of its own" "none" "$(h3_pass "${CLEAN}")"
+o="$(review_h3)"
+check "review --head on the reviewed head plus one clean merge of the base, its check and ci.yml's pull_request run green, puts h3 in review, says so naming both heads, and records the pass on the new head" \
+  "rc:0|yes|review|${PRC}|${CLEAN} from ${REV}|pass" \
+  "$(tail -1 <<< "${o}")|$(has "accepted: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, the reviewed head; its pass counts for ${CLEAN:0:7}" "${o}")|$(fm_of h3 status)|$(fm_of h3 prs)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+check "the clone keeps no ref of review --head's fetch" "" "$(git -C "${ROOT}/svc" for-each-ref refs/swarm)"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 

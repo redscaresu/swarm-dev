@@ -157,6 +157,10 @@ check "the load rule names the leftover cleanup, the labelled container cleanup,
   "$(has "Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=f1)\`)" "${brief}")|$(has "Name and label every container (\`--name f1-load-<n> --label swarm=f1\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name" "${brief}")|$(has "Never start load with run_in_background" "${brief}")|$(has "Cap your test runner's parallelism at 4 (its jobs or workers setting) too" "${brief}")|$(has "make test JOBS=4" "${brief}" | grep -q '^yes' && echo "project flag in brief" || echo yes)|$(has "no longer than the check and you kill it when the check ends" "${brief}")|$(has "or wrap each in \`timeout <seconds>\`" "${brief}")|$(has "\`docker ps --filter label=swarm=f1\`" "${brief}")"
 check "a builder re-reads, before it pushes, the comments and docs naming what its diff changes, and fixes the stale ones" "yes" \
   "$(has "Before you push, for each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it, and fix each one that no longer matches." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
+# If the brief drops the sentence, builders go back to merging the base in each time it moves, and
+# each merge-in reruns CI: this goes red.
+check "a builder merges the base in only on a conflict or a swarm.sh line, never because the base moved" "yes" \
+  "$(has "Merge origin/dev into your branch only when the PR is CONFLICTING or a swarm.sh line tells you to (a Stacked line, a merge refusal, a nudge); never because the base moved: \`swarm.sh merge\` brings the base in at merge time, and each merge-in reruns CI." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
 # f1's review brief: its checklist names the docs-move-with-behaviour line, with swarm-dev's env:
 # line as the example. The gh stub answers the PR's head with the worktree's while ${ROOT}/head
 # exists; it is removed after the check. The review-f1 agent in the herdr stub, its events and f1's
@@ -169,10 +173,10 @@ check "a review brief holds, as an exception to the scope rule, a PR that change
   "$(has "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding." "${rbrief}")|$(has "- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed." "${rbrief}")"
 rm -f "${ROOT}/head"
 # The builder brief (_brief) of f1, whose worktree lacks scripts/select-tests.sh (only svc's own
-# checkout has it), then has it: after review fixes only the change's tests (select-tests.sh only where
-# the builder works), and no self-matching pgrep poll.
-selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
-own="After review fixes, run only the project's own tests for the change and let CI run the full suite."
+# checkout has it), then has it: before the first push and after review fixes only the change's tests,
+# then a push once they pass (select-tests.sh only where the builder works), and no self-matching pgrep poll.
+selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`), push once they pass, and let CI run the full suite."
+own="Before your first push, and after review fixes, run only the project's own tests for the change, push once they pass, and let CI run the full suite."
 nopoll="Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Poll the PIDs you recorded with \`ps -p <pids>\` (a later step's shell cannot \`wait\` on them), and find load by its \`f1-load\` marker with the bracketed pattern above, keeping the bare marker out of the poll's own command."
 mkdir -p "${ROOT}/svc/scripts"; : > "${ROOT}/svc/scripts/select-tests.sh"
 plain="$(run _brief f1 | tr -s '[:space:]' ' ')"
@@ -181,8 +185,16 @@ withsel="$(run _brief f1 | tr -s '[:space:]' ' ')"
 rm -r "${ROOT}/svc-wt/f1/scripts"
 check "a worktree without scripts/select-tests.sh (its repo's checkout has one): after review fixes the brief names the project's own tests and CI, and no select-tests" "yes|no" \
   "$(has "${own}" "${plain}")|$(grep -qF 'select-tests' <<< "${plain}" && echo yes || echo no)"
-check "a worktree with scripts/select-tests.sh: after review fixes the brief names select-tests.sh --run and CI" "yes|no" \
-  "$(has "After review fixes, ${selected}" "${withsel}")|$(grep -qF "${own}" <<< "${withsel}" && echo yes || echo no)"
+check "a worktree with scripts/select-tests.sh: before the first push and after review fixes the brief names select-tests.sh --run, a push once they pass, and CI" "yes|no" \
+  "$(has "Before your first push, and after review fixes, ${selected}" "${withsel}")|$(grep -qF "${own}" <<< "${withsel}" && echo yes || echo no)"
+# The builder acts when its own background test run ends, stops any run still going before a push by
+# a route the guard allows, and after the PR opens pushes what is ready with further points in the body.
+bgrun="Run a long test run in the background (Bash run_in_background), so its end wakes you, and act on its result when it ends."
+stoprun="Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
+oncepr="After the PR opens, push what is ready and put further points in the PR body, rather than a push for each: every push restarts CI."
+check "the builder brief runs a long test run in the background and acts when it ends" "yes" "$(has "${bgrun}" "${plain}")"
+check "the builder brief stops its own test run before a push, by PID or its background task, never pkill or killall" "yes" "$(has "${stoprun}" "${plain}")"
+check "the builder brief, after the PR opens, pushes what is ready and puts further points in the PR body" "yes" "$(has "${oncepr}" "${plain}")"
 check "with and without select-tests.sh, the brief forbids a pgrep -f poll that matches itself and points to the bracketed marker" "yes|yes" \
   "$(has "${nopoll}" "${plain}")|$(has "${nopoll}" "${withsel}")"
 # A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
@@ -287,7 +299,7 @@ report_rules() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|%s|%s|%s|%s\n' "$(has "Never write your report while agent work is left:" "${b}")" \
     "$(has "A merge or handover note that ends \`finish: $2 has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours ${FINISH_CLOSE}" "${b}")" \
-    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
+    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, a story reconcile reopened after its PR closed unmerged, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
     "$(has "only once no agent work is left (the stop rule above): write your report" "${b}")" \
     "$(grep -qF "Write your report only when no story of this epic that is yours to start is ready and none is running" <<< "${b}" && echo there || echo gone)"
 }

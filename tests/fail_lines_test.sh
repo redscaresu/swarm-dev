@@ -260,9 +260,19 @@ check "a JS it or test call is matched, its escaped quotes as the test prints th
   "  rules-unchecked: another has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
   "$(unchecked)"
 
-rule="$(sed -n '/^mutation_rule() {/,/^}/p' "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)"
+# The brief's text as mutation_rule prints it, and AGENTS.md's mutation paragraph on one line.
+rule="$(eval "$(sed -n '/^mutation_rule() {/,/^}/p' "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)"; mutation_rule)"
+agents_para="$(sed -n '/^- Prove a mutation/,/^$/p' "$(dirname "${SWARM}")/../AGENTS.md" | tr '\n' ' ' | tr -s ' ')"
+has_text() { grep -qF "$1" <<< "$2" && echo yes || echo no; }
 check "mutation_rule tells builders to paste each test's FAIL line into the PR body" "yes|yes" \
-  "$(grep -qF "paste each test's FAIL line" <<< "${rule}" && echo yes || echo no)|$(grep -qF "into the PR body" <<< "${rule}" && echo yes || echo no)"
+  "$(has_text "paste each test's FAIL line" "${rule}")|$(has_text "into the PR body" "${rule}")"
+# #695: a proof in place after the PR opens left the worktree dirty and review-agent refused it.
+check "mutation_rule: in place with cp before the PR opens, on a copy without .git after it" "yes|yes|yes" \
+  "$(has_text "Before the PR opens, do it in place: back up the file you fixed with cp" "${rule}")|$(has_text "After the PR opens, prove it on a copy of the worktree without .git, never in place" "${rule}")|$(has_text "Make the copy in a new directory outside the worktree" "${rule}")"
+check "mutation_rule says to push what is ready and put further points in the PR body" "yes" \
+  "$(has_text "Push what is ready, and put further points in the PR body" "${rule}")"
+check "AGENTS.md's mutation paragraph has the same before/after split and the push line" "yes|yes|yes|yes" \
+  "$(has_text "Before the PR opens, copy the file aside" "${agents_para}")|$(has_text "After the PR opens, prove it on a copy of the worktree without \`.git\`, never in place" "${agents_para}")|$(has_text "Make the copy in a new directory outside the worktree" "${agents_para}")|$(has_text "Push what is ready, and put further points in the PR body" "${agents_para}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

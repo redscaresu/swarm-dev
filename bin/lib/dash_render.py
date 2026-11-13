@@ -158,8 +158,9 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t > escalated_at.get(f[2], (0,))[0]:
         escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {o[len('ok (attempt '):-1]}")
 recs, stalled = [], []
-# The panes of agents past stall_minutes that run a test suite or wait on a background task (dash.sh's
-# test_running and bg_running over dash_age's stalled_panes): working, not stalled.
+# The panes of agents past stall_minutes that run a test suite, at any age, or wait on a background task
+# launched less than 3 times stall_minutes ago (dash.sh's test_running and bg_running over dash_age's
+# stalled_panes): working, not stalled.
 TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -167,8 +168,8 @@ try:
 except (ValueError, KeyError, TypeError):
     agents = None
 # Each agent's row ends with its pane, its workspace's label and its tab's (pane_where): the workspace -
-# and the tab its record's name for one herdr gives none of. The tree groups by their ids (pane_ids) and
-# heads them with the labels.
+# for one herdr gives no label for, and the tab its record's name with its id, `t1 (w1:t3)`. The tree
+# groups by their ids (pane_ids) and heads them with the labels.
 ws_labels = herdr_labels(E.get("DASH_WORKSPACES", ""), "workspaces", "workspace_id")
 tab_labels = herdr_labels(E.get("DASH_TABS", ""), "tabs", "tab_id")
 
@@ -613,12 +614,11 @@ def tree_view():
     tree = collections.OrderedDict()
     for r in recs:
         # By workspace and tab id (pane_ids), so two tabs with one label stay apart, headed by herdr's labels
-        # (pane_where's): a workspace with none by its id, a tab with none by its record's name and its id,
-        # `t1 (w1:t3)`, so two such tabs read apart. Each row ends with the pane, cut first on a narrow screen:
-        # its workspace and tab are its headings, and its PR matters more than its pane.
+        # (pane_where's): a workspace with none by its id, a tab with none as pane_where marks it, its
+        # record's name and its id, `t1 (w1:t3)`, so two such tabs read apart. Each row ends with the pane,
+        # cut first on a narrow screen: its workspace and tab are its headings, and its PR matters more than its pane.
         (ws_id, tab_id), (_, ws, tab) = r["ids"], r["where"]
-        head = tab if tab_labels.get(tab_id) else (f"{tab} ({tab_id})" if tab_id else tab)
-        tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()).setdefault((tab_id or tab, head), []).append(r)
+        tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()).setdefault((tab_id or tab, tab), []).append(r)
     width = min(max((len(r["name"]) for r in recs), default=0), 30)
     rows = []
     for (_, ws), tabs in tree.items():

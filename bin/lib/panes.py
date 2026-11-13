@@ -24,11 +24,12 @@ def pane_ids(pane, entries):
     ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
     return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
 # pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
-# labels). A workspace herdr gives no label for is "-"; a tab is record, the name swarm-dev gave the tab
-# (its tab record's), so where, status and dash name it alike whether or not herdr labelled it.
+# labels). A workspace herdr gives no label for is "-". A tab herdr gives no label for (or no tab list)
+# is record, the name swarm-dev gave the tab (its tab record's), with the tab's id when herdr gave one,
+# `t1 (w1:t3)`, so where, status and dash's rows and tree all tell swarm-dev's name from herdr's label.
 def pane_where(pane, entries, labels, record="-"):
     ws, tab = pane_ids(pane, entries)
-    return labels[0].get(ws) or "-", labels[1].get(tab) or record
+    return labels[0].get(ws) or "-", labels[1].get(tab) or (f"{record} ({tab})" if tab else record)
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True
@@ -443,16 +444,15 @@ def session_state(log, name, listing):
 TEST_RUN = re.compile(r"(\S*/)?g?make(\s+\S+)*?\s+(test|check)(\s|$)"
                       r"|(\S*/)?(ba|z|da|k)?sh(\s+-\S+)*\s+(\S*/)?scripts/test\.sh(\s|$)"
                       r"|(\S*/)?scripts/test\.sh(\s|$)")
-# TEST_RUN_STALLS: how many stall_minutes a test run counts as work for; an older one may be hung.
+# TEST_RUN_STALLS: how many stall_minutes a background task (bg_running) counts as work for, and how old a
+# builder's own last sign of life may be for an unsignable worktree to hold its stall (agents.sh's sign_held).
+# A test run (test_running) has no such limit: it is work for as long as it runs.
 TEST_RUN_STALLS = 3
-def etime_secs(t):   # ps etime: [[dd-]hh:]mm:ss
-    d, _, hms = t.rpartition("-")
-    h = [0, 0] + [int(x) for x in hms.split(":")]
-    return int(d or 0) * 86400 + h[-3] * 3600 + h[-2] * 60 + h[-1]
-def test_running(info, stall_minutes):
+# test_running(info): agents.sh's header notes say what it reads. A run's age (ps etime, still in the read so
+# the line has the shape longest_child.py's read has) is not asked: a builder's own full suite can run for hours.
+def test_running(info):
     try:
         shell = int(json.loads(info)["result"]["process_info"]["shell_pid"])
-        cap = TEST_RUN_STALLS * int(stall_minutes) * 60
         out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True, timeout=10)
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         return False
@@ -463,11 +463,7 @@ def test_running(info, stall_minutes):
         f = l.split(None, 3)
         if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
             parent[int(f[0])] = int(f[1])
-            try:
-                young = etime_secs(f[2]) < cap
-            except ValueError:
-                young = False
-            if young and TEST_RUN.match(f[3].strip()):
+            if TEST_RUN.match(f[3].strip()):
                 runs.add(int(f[0]))
     for p in runs:
         for _ in parent:   # up to the pane's shell; a cycle or a process with no parent listed ends the walk
