@@ -3,9 +3,10 @@
 # alone. plan-<hld> and scope-<epic> are plan PRs and agree-<hld or epic> an agreement PR, each only
 # when the name names an HLD or epic in the PR's worktree (its file name made clean); they need one
 # codex-review pass. retro-<x> is a retro file PR only when <board>/retros holds a file of that name
-# (retros/v0.31.0.md makes retro-v0-31-0 one); retro-goals-step, with no such file, is a story-scope
-# edit. finish-<slug> and drop-<slug> (swarm.sh finish and drop), hold-<slug> and any other name, a
-# story slug such as plan-hld-gaps too, are story-scope edits, holds and finishes, which get none. Each name runs through board-pr start and open (or finish, or drop) on a local bare
+# (retros/v0.31.0.md makes retro-v0-31-0 one); retro-goals-step is a story-scope edit even with that
+# file in its PR. finish-<slug> and drop-<slug> (swarm.sh finish and drop), hold-<slug> and any other
+# name, a story slug such as plan-hld-gaps too, are story-scope edits, holds and finishes, which get
+# none. Each name runs through board-pr start and open (or finish, or drop) on a local bare
 # origin, with no codex call. merge --board, which never reads the kind, is checked once: refused on
 # a red head, merged on a green one, with no codex call. Then the command files: the plan and
 # agreement steps keep their codex-review pass, run before board-pr open, and /epic names its
@@ -89,9 +90,9 @@ opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md "---\nsta
 opened plan-hld-gaps "$(none_line plan-hld-gaps "story-scope edit")"
 opened scope-creep "$(none_line scope-creep "story-scope edit")"
 # --- A retro file PR: retro-<x> with a retros/ file whose clean name is <x>; no codex-review. A retro-
-# story slug with no such file is a story-scope edit.
+# story slug is a story-scope edit even with a retros/ file in its PR: only a file of that name counts.
 opened retro-v0-31-0 "$(none_line retro-v0-31-0 "retro file")" docs/retros/v0.31.0.md "# v0.31.0\n"
-opened retro-goals-step "$(none_line retro-goals-step "story-scope edit")"
+opened retro-goals-step "$(none_line retro-goals-step "story-scope edit")" docs/retros/v0.31.0.md "# v0.31.0\n"
 # --- Holds and story-scope edits: no codex-review.
 opened hold-s "$(none_line hold-s hold)"
 opened rescope-s "$(none_line rescope-s "story-scope edit")"
