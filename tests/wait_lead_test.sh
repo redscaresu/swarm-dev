@@ -145,14 +145,14 @@ fresh() {
 }
 # again — forget the last run's output and exit code, keeping what it saw.
 again() { rm -f "${ROOT}/out" "${ROOT}/rc"; }
-# lead [VAR=value]... <timeout-ms> — swarm.sh wait --lead in the foreground, polling every second, inside
-# herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
+# lead [VAR=value]... <timeout-ms> [arg]... — swarm.sh wait --lead in the foreground, polling every second, inside
+# herdr, any further args passed on; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
 # so the gh counts below are a pass's, unless a case sets it longer.
 lead() {
   local envs=()
   while [[ "$1" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
-    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$@" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
 # must <what> <command>... — count a FAIL when the command is false, and say nothing when it is true.
 must() { local what="$1"; shift; "$@" || { echo "FAIL ${what}"; fails=$((fails + 1)); }; }
@@ -290,7 +290,10 @@ check "the replaced: line is no queue item: not in seen, not logged" no_exit_lin
 # watches, so the run says it failed, and the lead starts it again.
 fresh
 start 20000
-kill -TERM "$(cat "${P}/.swarm/lead/pid")"
+# A run that never took its lock has no pid file: that is one FAIL below, not an abort of the whole file.
+held_pid="$(cat "${P}/.swarm/lead/pid" 2>/dev/null)" || held_pid=""
+check "the run holds the pid file" test -n "${held_pid}"
+[[ -z "${held_pid}" ]] || kill -TERM "${held_pid}" 2>/dev/null || true
 check "a TERM from outside ends the run within 5 s" returned 50
 check "it prints one wait-failed: exit 143 line, no replaced: line, and exits 143" failed_with 143
 check "it prints no replaced: line" test "$(grep -c '^replaced: ' "${ROOT}/out")" == 0
@@ -337,6 +340,10 @@ check "SWARM_LEAD_POLL=0 prints one wait-failed: line, exit 1, and no timeout: l
 fresh; lead 12s
 check "a timeout that is no number is refused" grep -q "the timeout is in milliseconds, not '12s'" "${ROOT}/out"
 check "it prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+# The wait command refuses --past with --lead before wait_lead runs: its traps go on first (lead_traps).
+fresh; lead 0 --past abc
+check "--past with --lead is refused by the wait command" grep -q 'it takes no --lead' "${ROOT}/out"
+check "a refusal before wait_lead prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; lead SWARM_LEAD_HEADS_EVERY=0 1000
 check "SWARM_LEAD_HEADS_EVERY=0 is refused" grep -q 'SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1' "${ROOT}/out"
 check "SWARM_LEAD_HEADS_EVERY=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1

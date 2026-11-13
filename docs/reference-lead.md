@@ -118,6 +118,20 @@ shows the agent in one of the project's panes (the builder or `review-<slug>` fo
 seen, so a later poll prints it if it still holds. A read that fails keeps the line, and so does a poll
 whose first read failed, which makes no second one. A `no-review: ... (started N of 3)` line is never
 dropped: that poll started the review agent itself, and the line is how the lead hears of it.
+Every run but `wait --lead 0` (a single read, silent when nothing is new) ends on a line once it has
+started. A timed run that exits with no output was stopped by a KILL (a newer run's, after 5 s in a
+slow read, or one sent by hand: exit 137, nothing on stderr) or failed before it started (not in a swarm
+project, a bad config line, a project `swarm.sh` refuses: exit 1, the cause on stderr). Three of those
+lines are no queue item: none goes into
+`.swarm/lead/seen` or logs a `lead-woken` line.
+`timeout: nothing new in <N> min, exit: swarm.sh wait --lead` comes at the timeout (an hour by default, N its minutes rounded up) and exits 1.
+`replaced: a newer wait --lead watches now` exits 143: a newer run stopped this one with a USR1, a
+signal only that newer run sends. A run answers it at once while it sleeps between polls; one still in a
+slow read 5 s later gets a KILL and prints nothing. `wait-failed: exit <rc>, exit: swarm.sh wait --lead`
+comes on any other non-zero exit that printed nothing, and keeps that exit code: an invalid argument, a
+lock it could not take, a failed read of the queue, or a TERM from anything else, such as a tool's
+timeout (exit 143). Its stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
+left it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
 their paths and the exit: `merge: <slug> <PR URL>... (held: changes <path>[, <path>]...; exit: the user
@@ -856,5 +870,5 @@ Wait until the lead's queue gains one of these, and print each new one:
 A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`.
 One held because its merge of the base dropped base lines is `merge: <slug> <PR URL> (held: dropped base lines: <n>, first <file>: <text>; exit: the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand)`.
 One whose check could not run is `merge: <slug> <PR URL> (held: dropped base lines unchecked: <why>; exit: the user checks the merge by hand and merges it, or runs swarm.sh merge again)`.
-Every other exit prints one line too: `timeout:` at its timeout (exit 1), `replaced:` when a newer run stopped it (exit 143), and `wait-failed: exit <rc>` on an error, with that exit code ([§ The lead](reference-lead.md#the-lead)).
+Every other exit but a KILL or a failure before the run starts prints one line too: `timeout:` at its timeout (exit 1), `replaced:` when a newer run stopped it (exit 143), and `wait-failed: exit <rc>` on an error, with that exit code ([§ The lead](reference-lead.md#the-lead)).
 `wait --lead 0` prints nothing when nothing is new.

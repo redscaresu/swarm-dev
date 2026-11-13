@@ -987,6 +987,69 @@ check "the lead's kept arm starts review-agent once, waits on it (again while bu
 check "the kept arm reads head moved: and stopped: before taking a story in review as a pass, and re-reads each PR's head before a multi-PR review" "yes|yes" \
   "$(python3 -c 'import sys; t = sys.argv[1]; a = t.find(sys.argv[2]); b = t.find(sys.argv[3]); c = t.find(sys.argv[4]); print("yes" if 0 <= a < b < c else "no")' "${kept}" "If it has a \`head moved:\` line" "If the file has a \`stopped:\` line" "Otherwise the file is a pass. If the story is in review with no \`kept:\` line")|$(has "Once every PR has passed, read each PR's head again (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`) and compare it with the head noted for it: a PR whose head moved since has had no review, so start the review agent on it again. Only when every PR's head is still the one that passed, run \`swarm.sh review <slug>\` with every PR URL on the line" "${kept}")"
 
+# --- review --head on a head past the reviewed one (review_heads, base_merges_only): a head that adds only
+# git's own clean merges of the base takes the pass, with a base-accepted line review_pass follows; a
+# merge with an edit of its own, or a commit of the PR's own, is refused as a moved head, as before.
+# The svc clone's origin moves to ${ROOT}/o/svc.git, so its URL ends in o/svc, the PR's repo; W pushes
+# main there and each case's head to refs/pull/15/head, the ref base_merges_only fetches.
+"${GIT[@]}" clone -q --bare "${ROOT}/svc.git" "${ROOT}/o/svc.git"
+"${GIT[@]}" -C "${ROOT}/svc" remote set-url origin "${ROOT}/o/svc.git"
+W="${ROOT}/w3"; "${GIT[@]}" clone -q "${ROOT}/o/svc.git" "${W}"
+PRC=https://github.com/o/svc/pull/15
+# wc3 <file> <text> — a commit on W's branch writing <file>; prints it.
+wc3() { echo "$2" > "${W}/$1"; "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -qm "$1"; "${GIT[@]}" -C "${W}" rev-parse HEAD; }
+# merge_main <branch> [<file> <text>] — on <branch>, git's own merge of main, or with <file> then written
+# as <text> in the merge (an edit of its own, so its remerge-diff is not empty); prints the merge.
+merge_main() {
+  "${GIT[@]}" -C "${W}" checkout -q "$1"; "${GIT[@]}" -C "${W}" merge -q --no-ff --no-commit main > /dev/null 2>&1 || true
+  [[ $# -lt 2 ]] || echo "$3" > "${W}/$2"
+  "${GIT[@]}" -C "${W}" add -A; "${GIT[@]}" -C "${W}" commit -q --no-edit; "${GIT[@]}" -C "${W}" rev-parse HEAD
+}
+# h3_at <head> [<status> <conclusion>] — PR 15's head is <head> (gh and refs/pull/15/head), its one check
+# run test is <status> <conclusion> (completed success, green, by default), h3 is ready with no prs:, and
+# its review file is a pass on REV, the head the review read.
+h3_at() {
+  "${GIT[@]}" -C "${W}" push -q -f "${ROOT}/o/svc.git" "$1:refs/pull/15/head"; echo "$1" > "${FXH}/head"
+  local c=null; [[ "${3-success}" == null ]] || c="\"${3-success}\""
+  printf '{"total_count":1,"check_runs":[{"name":"test","status":"%s","conclusion":%s,"html_url":"https://github.com/o/svc/runs/1","path":".github/workflows/test.yml","head_sha":"%s"}]}\n' \
+    "${2:-completed}" "${c}" "$1" > "${FXH}/$1.checks"
+  echo '{"total_count":0,"statuses":[]}' > "${FXH}/$1.status"
+  printf '%s\n' --- "status: ready" "kind: code" "epic: e" "repo: svc" "touches: [bin/h3.sh:fn_h3]" --- "" "# h3" > "${b}/stories/h3.md"
+  rm -f "${p}/.swarm/state/h3"*; mkdir -p "${p}/.swarm/reviews"
+  printf '%s\n' "head: ${REV}" "## Findings" "none" > "${p}/.swarm/reviews/h3.md"
+}
+# review_h3 — review h3 --head REV PRC, as a review agent runs it: output, then rc:<exit>.
+review_h3() { (cd "${ROOT}/svc" && env -u SWARM_PROJECT SWARM_PROJECT="${p}" PATH="${MGH}:${STUB_BIN}:${PATH}" bash "${SWARM}" review h3 --head "${REV}" "${PRC}" 2>&1; echo "rc:$?"); }
+# h3_pass <sha> — whether review_pass counts <sha> as reviewed for h3, as the lead's unmerged: line reads it.
+# shellcheck source=/dev/null
+h3_pass() { (PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/agents.sh"; . "${SWARM%/*}/lib/merge.sh"; . "${SWARM%/*}/lib/build.sh"
+  if review_pass h3 "$1"; then echo pass; else echo none; fi); }
+accepted_lines() { awk -F'\t' '$2 == "base-accepted" && $3 == "h3" { sub(/ ~~ .*/, "", $5); print $5 }' "${p}/.swarm/events.tsv"; }
+"${GIT[@]}" -C "${W}" checkout -q -b story/h3; REV="$(wc3 h3.txt one)"
+"${GIT[@]}" -C "${W}" checkout -q main; wc3 g.txt g1 > /dev/null; "${GIT[@]}" -C "${W}" push -q origin main
+"${GIT[@]}" -C "${W}" checkout -q -b own "${REV}"; OWN="$(wc3 h3.txt two)"
+"${GIT[@]}" -C "${W}" checkout -q -b edit "${REV}"; EDIT="$(merge_main edit extra.txt mine)"
+CLEAN="$(merge_main story/h3)"
+moved="the head of ${PRC} is"
+for c in "a commit of the PR's own:${OWN}:${OWN:0:7}, after ${REV:0:7}, is a commit of its own, not a merge of main" \
+         "a merge of the base with an edit of its own:${EDIT}:merge ${EDIT:0:7} is not git's own merge of its parents"; do
+  name="${c%%:*}"; rest="${c#*:}"; sha="${rest%%:*}"; why="${rest#*:}"
+  h3_at "${sha}"; o="$(review_h3)"
+  check "review --head on ${name} refuses as a moved head, saying why, and leaves h3 ready with no pass on it" "rc:1|yes|yes|ready||none" \
+    "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${sha:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged: the new head needs a review of its own" "${o}")|$(has "review: ${PRC}'s head ${sha:0:7} is not ${REV:0:7} plus clean merges of main: ${why}" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${sha}")"
+done
+# A clean merge whose CI has not finished: the review waited for green on REV only, so the head is not taken.
+h3_at "${CLEAN}" in_progress null; o="$(review_h3)"
+check "review --head on a clean merge of the base whose CI has not finished refuses as a moved head, naming wait-pr, and leaves h3 ready with no pass on it" "rc:1|yes|yes|yes|ready||none" \
+  "$(tail -1 <<< "${o}")|$(has "review: ${moved} ${CLEAN:0:7}, not ${REV:0:7}, the head that passed review; h3 is unchanged" "${o}")|$(has "review: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, but CI on it is not finished: " "${o}")|$(has "; once swarm.sh wait-pr --head ${CLEAN} ${PRC} exits 0, review --head ${REV} takes it" "${o}")|$(fm_of h3 status)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+h3_at "${CLEAN}"
+check "before review --head, the clean merge ${CLEAN:0:7} has no pass of its own" "none" "$(h3_pass "${CLEAN}")"
+o="$(review_h3)"
+check "review --head on the reviewed head plus one clean merge of the base puts h3 in review, says so naming both heads, and records the pass on the new head" \
+  "rc:0|yes|review|${PRC}|${CLEAN} from ${REV}|pass" \
+  "$(tail -1 <<< "${o}")|$(has "accepted: ${PRC}'s head ${CLEAN:0:7} adds only clean merges of main (${CLEAN:0:7}) to ${REV:0:7}, the reviewed head; its pass counts for ${CLEAN:0:7}" "${o}")|$(fm_of h3 status)|$(fm_of h3 prs)|$(accepted_lines)|$(h3_pass "${CLEAN}")"
+check "the clone keeps no ref of review --head's fetch" "" "$(git -C "${ROOT}/svc" for-each-ref refs/swarm)"
+
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
