@@ -2753,14 +2753,16 @@ REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may ta
 # that adds to <sha> only git's own clean merges of the PR's base (base_merges_only, as merge --head
 # reads it) brings no code the review did not read, so it is taken, with a line `<pr-url> <head> <base>
 # <merges, short>` added to REVIEW_ACCEPTED for mark_review, once ci_gate head finds it green (the review
-# waited for green on <sha> only). Any other head, one whose merges cannot be read, and one whose CI is red,
+# waited for green on <sha> only), each workflow a pull_request runs there included, as wait-pr reads them
+# (ci_gate head with the PR's base, number and changed file count): one with no run on the head is not
+# finished. Any other head, one whose merges cannot be read, and one whose CI is red,
 # not finished or unread (within REVIEW_HEAD_SECONDS), dies as a moved head does, after a line on stderr
-# saying why it was not taken. Only a moved
-# head's PR has its base branch read, a second gh read. Each gh read stops after REVIEW_HEAD_SECONDS;
-# one that fails or runs out says to run review again.
+# saying why it was not taken. Only a moved head's PR has its base branch and changed file count read, a
+# second gh read. Each gh read stops after REVIEW_HEAD_SECONDS; one that fails or runs out says to run
+# review again.
 REVIEW_ACCEPTED=""
 review_heads() {
-  local f="$1" want="$2" slug url head base why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head info base changed why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
   pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
   if [[ "${f}" == "${BOARD}/stories/"* ]]; then
@@ -2788,15 +2790,19 @@ review_heads() {
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     [[ "${head}" != "${want}" ]] || continue
-    # Only a moved head needs the PR's base, for base_merges_only's read of its merges.
-    base="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName < /dev/null \
-      | json "d['baseRefName']" 2>/dev/null)" || base=""
-    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] \
-      || die "review: gh could not read the base branch of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
+    # Only a moved head needs the PR's base, for base_merges_only's read of its merges and ci_gate head's of
+    # the workflows a pull_request runs, and its changed file count, for ci_gate's read of its files.
+    info="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName,changedFiles < /dev/null \
+      | json "'%s %d' % (d['baseRefName'], d['changedFiles'])" 2>/dev/null)" || info=""
+    read -r base changed <<< "${info}"
+    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
+      || die "review: gh could not read the base branch and changed file count of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     if why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)"; then
       merges="$(short_shas "${why##*$'\n'}")"
-      # The review waited for green on <sha> only: a merge of the base can still break a check.
-      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" < /dev/null 2>&1)" || rc=$?
+      # The review waited for green on <sha> only: a merge of the base can still break a check. With the
+      # base, number and file count, as wait-pr passes them, a workflow that has not started yet is not
+      # finished, so one green check alone does not take the head.
+      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" "${base}" "${n}" "${changed}" < /dev/null 2>&1)" || rc=$?
       if [[ ${rc} -eq 0 ]]; then REVIEW_ACCEPTED+="${url} ${head} ${base} ${merges}"$'\n'; continue; fi
       case ${rc} in 1) ci="red" ;; 2) ci="not finished" ;; *) ci="unread" ;; esac
       why="$(tr -d '\000-\037\177' <<< "${why%%$'\n'*}")"
