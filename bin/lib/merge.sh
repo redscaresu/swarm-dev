@@ -762,6 +762,15 @@ base_merged_from() {
     END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
+# base_accepted_from <slug> <sha> — the reviewed head review --head took <sha> in place of, as adding
+# to it only git's own clean merges of the base (mark_review's `base-accepted <slug> <sha> from <head>`,
+# read without its key=value tail), or nothing.
+base_accepted_from() {
+  awk -F'\t' -v t="$1" -v o="$2 from " "${EVENT_OUTCOME_AWK}"'
+    $2 == "base-accepted" && $3 == t { oc = outcome($5); if (index(oc, o) == 1) h = substr(oc, length(o) + 1) }
+    END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
 # only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
 # among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
@@ -2186,10 +2195,16 @@ within() {
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
 # has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+# Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
+# the rest of the report, so an edit made to a board file during it shows on the next report, and so
+# does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
+# $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the next read sees it.
+# A snapshot that fails leaves every read to the files, as before.
 report_start() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
   REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+  board_snapshot "${REPORT_SKIP_FILE}.written" || true
 }
 
 # report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git

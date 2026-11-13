@@ -414,8 +414,8 @@ Repeat until a step below says stop:
      the conductor and deletes its report, so the collect would never run. Then read the report.
      `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
      `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
-     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
-     does not count. Handle all of these first: a build that died as
+     The report may also list a PR closed unmerged or a story in review with several PRs, kept or
+     not, which `<n>` does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
      report says for each (docs/reference-merging.md § Merging lists them). Clear any other cause the report
@@ -439,8 +439,11 @@ Repeat until a step below says stop:
      an error before anything new came in: a bad argument, a lock it could not take, a failed read
      of the queue, or a TERM from outside it (exit 143). Read its stderr for the cause and fix it if it is yours before you start it again.
      Only one runs at a time: a new one stops the earlier one, which then prints
-     `replaced: a newer wait --lead watches now` (exit 143). That needs nothing from you, since the
-     newer one watches. A new run first reports anything that landed while none was running.
+     `replaced: a newer wait --lead watches now` (exit 143), or, when it was still in a slow read 5 s
+     later, exits 137 with nothing printed. After a newer run took over, either needs nothing from you,
+     since the newer one watches. Any other exit with nothing printed failed before it started (exit 1,
+     the cause on stderr, which you fix if it is yours) or was stopped by a KILL from outside (exit 137,
+     nothing on stderr): start it again. A new run first reports anything that landed while none was running.
 
      Once both waits are running, send each
      `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
