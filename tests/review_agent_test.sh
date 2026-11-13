@@ -927,7 +927,7 @@ check "the merge = agent brief has one review --head and one merge --head comman
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
 # A head pushed since the review: review --head's refusal is followed in this session (the story is not
-# in review yet), and --next moves the pass of the old head aside. merge's refusal comes once review put
+# in review yet), once the agent has moved its pass of the old head aside. merge's refusal comes once review put
 # the story in review, so it still ends the agent with head moved: and a stop note, on which the
 # conductor starts a new review agent on the new head.
 AFOLLOW="run the green step above on the new head, waiting with \`SWARM_PROJECT=${p} ${SWARM} wait-pr --head <that head, from git rev-parse HEAD> ${PRA}\`, then run \`SWARM_PROJECT=${p} ${SWARM} review-agent --next h1 ${PRA}\` and do the round it prints in this session, as following a moved head says above"
@@ -1138,7 +1138,7 @@ follow m2 "${PRM}" "${mbrief}" "${SITE}" > /dev/null
 check "site 2: the green step, the dropped-lines check and a review of the new head run, in that order, before the verdict, and nothing records a pass of the first head" \
   "review-file none prev none|ci H2|dropped-lines H2|codex H2|verdict pass H2|none|1|review" "$(flow_after "${M2}")|$(no_pass_on_h1 m2)|$(reviews_of m2)|$(fm_of m2 status)"
 # Site 3, review's refusal: the agent passed the first head and wrote its review file, then a push came
-# before its review --head, which refuses it. --next moves that pass aside.
+# before its review --head, which refuses it. The brief has it move that pass aside before the follow.
 PRM=https://github.com/o/svc/pull/17
 mbrief="$(m_start m3 "${PRM}")"; MFOLLOW="$(mfollow m3 "${PRM}")"
 flow_pane m3 "$(cmd_in "${mbrief}" " codex-review ")" > /dev/null || echo "FAIL the brief's codex-review for m3 exited non-zero"
