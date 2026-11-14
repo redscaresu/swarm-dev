@@ -2234,7 +2234,8 @@ init_claude() {
 BOARD_BASE_PAST='2da305247898d622618058c62cd705560ea90b83ce9b225687e565080f255103
 302798ca551553b5d24d68577a24630f5d31dd7b6b9d006c66981a0810d02d62
 9956edaf77067f1c503bbc52572022998ba127a653c5960ce164a8a8fa6ed102
-ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9'
+ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9
+ec48da53c63e58b127fbb7aa8b70d14a1f91dfd1b3fae9dcddb0e780ba3bf4c2'
 
 # init_board_base <rel> — init's line for the board's Board.base, which exists (a dangling symlink too):
 # replaced with the current template when it is a regular file, not a symlink, holding a past one nobody
