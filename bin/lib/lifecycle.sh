@@ -2234,7 +2234,8 @@ init_claude() {
 BOARD_BASE_PAST='2da305247898d622618058c62cd705560ea90b83ce9b225687e565080f255103
 302798ca551553b5d24d68577a24630f5d31dd7b6b9d006c66981a0810d02d62
 9956edaf77067f1c503bbc52572022998ba127a653c5960ce164a8a8fa6ed102
-ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9'
+ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9
+ec48da53c63e58b127fbb7aa8b70d14a1f91dfd1b3fae9dcddb0e780ba3bf4c2'
 
 # init_board_base <rel> — init's line for the board's Board.base, which exists (a dangling symlink too):
 # replaced with the current template when it is a regular file, not a symlink, holding a past one nobody
@@ -2386,6 +2387,11 @@ LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protec
 LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
 LEAD_WORKSPACE="${LEAD_DIR}/workspace"   # "<herdr workspace id>\t<its label, refused or kept>[\t<note>]" per line (lead_rename)
 LEAD_HERDR_WAIT="${SWARM_LEAD_HERDR_WAIT:-5}"   # seconds each herdr call of lead_label may take (within)
+# usage_line's: the /usage reading the user copies in (bin/lib/usage_estimate.py says its form), the
+# seconds between its reads of the session logs, at least 0, and the seconds one read may take (within).
+USAGE_READING="${PROJECT_DIR}/.swarm/usage-reading"
+USAGE_EVERY="${SWARM_USAGE_EVERY:-600}"
+USAGE_WAIT=60
 
 # The plugin ships hooks/ beside bin/; a copy of bin/ alone (a test's stand-in plugin) has no lead.
 # shellcheck source=hooks/lead-session.sh
@@ -3081,6 +3087,66 @@ stop_lines() {
   done
 }
 
+# plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
+# agents have all written their output: a tab record scope-<epic> (has_records' overflow scope-<epic>-<n>
+# too) of an epic on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit,
+# that lists at least one `<pane> <name>` and has no plan board PR worktree (plan_pr_open; _board-plan-<hld>
+# for an HLD). Each <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only
+# when it is newer than its planner's resume reference and parses as JSON. The reference is the epic file;
+# for split-critic the scope worktree, which is gone here, so a listed split critic never counts; for an
+# HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing reference counts
+# nothing. Board and .swarm files, one python3 for the JSON of a swarm whose outputs are all fresh; no gh or herdr.
+plan_lines() {
+  local f label kind slug item groups="" names name n ref out exit done_list files
+  for f in "${STATE_DIR}"/scope-?* "${STATE_DIR}"/plan-?*; do
+    [[ -f "${f}" ]] || continue
+    label="${f##*/}"
+    [[ "${label}" != *.* ]] || continue   # a codex brief copy or a temporary file, as cut_names skips
+    kind="${label%%-*}"; slug="${label#*-}"
+    item="${BOARD}/epics"; [[ "${kind}" == scope ]] || item="${BOARD}/hld"
+    if [[ ! -f "${item}/${slug}.md" && "${slug}" =~ ^(.+)-[0-9]+$ && -f "${item}/${BASH_REMATCH[1]}.md" ]]; then
+      slug="${BASH_REMATCH[1]}"   # an overflow tab of the same swarm
+    fi
+    [[ -f "${item}/${slug}.md" ]] || continue
+    groups+="${kind} ${slug}"$'\n'
+  done
+  while read -r kind slug; do
+    [[ -n "${slug}" ]] || continue
+    if [[ "${kind}" == scope ]]; then
+      ! plan_pr_open "${slug}" || continue
+      exit="/swarm-dev:plan-epic ${slug}"
+    else
+      [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || continue
+      exit="/swarm-dev:plan-hld ${slug}"
+    fi
+    names=""
+    for f in "${STATE_DIR}/${kind}-${slug}" "${STATE_DIR}/${kind}-${slug}"-*; do
+      { [[ -f "${f}" ]] && label_record "${f}" "${kind}-${slug}"; } || continue
+      names+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+    done
+    done_list=""; files=()
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      n="${name%-"${slug}"}"
+      [[ " ${done_list//,/} " != *" ${n} "* ]] || continue
+      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"
+      if [[ "${kind}" == plan ]]; then
+        ref="${PROJECT_DIR}/.swarm/${slug}/base-rev"; [[ "${BOARD_IN_REPO}" == 1 ]] || ref="${BOARD}/hld/${slug}.md"
+      elif [[ "${n}" == split-critic ]]; then ref="$(worktree_for "${PROJECT_DIR}" "_board-scope-${slug}")"
+      else ref="${BOARD}/epics/${slug}.md"; fi
+      # -nt alone is true against a missing reference.
+      [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]] || { files=(); break; }
+      files+=("${out}"); done_list+=", ${n}"
+    done < <(awk '!seen[$0]++' <<< "${names}")
+    [[ ${#files[@]} -gt 0 ]] || continue
+    python3 -I -c 'import json, sys
+for p in sys.argv[1:]:
+    with open(p, encoding="utf-8") as fh:
+        json.load(fh)' "${files[@]}" 2>/dev/null || continue
+    echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+  done < <(awk '!seen[$0]++' <<< "${groups}")
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
@@ -3094,7 +3160,8 @@ stop_lines() {
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
 # whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
-# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
+# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list, and plan_lines'
+# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
@@ -3137,6 +3204,7 @@ lead_queue() {
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
   stop_lines
+  plan_lines
   stuck_lines
   pr_lines
   main_red_lines
@@ -4622,6 +4690,25 @@ line_holds() {
   esac
 }
 
+# usage_line — with usage_warn_percent set, wait --lead's `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of
+# Fable's own limit, ...` line the first time either estimate reaches it in a usage week, and nothing on any
+# other poll of that week (usage_estimate.py --warn, over CLAUDE_PROJECTS and USAGE_READING, reading the time
+# lead_wake records in LEAD_DIR once it prints the line, usage_warned). It reads the logs at most once every USAGE_EVERY seconds. A warning, never a gate: nothing
+# stops or slows on it. A read that fails, or takes over USAGE_WAIT seconds, warns on stderr and prints no line.
+usage_line() {
+  local rc=0
+  within "${USAGE_WAIT}" python3 "${SWARM_HOME}/bin/lib/usage_estimate.py" "${CLAUDE_PROJECTS}" --warn "${CFG_usage_warn_percent}" \
+    --state "${LEAD_DIR}" --every "${USAGE_EVERY}" --reading "${USAGE_READING}" < /dev/null || rc=$?
+  (( rc == 0 )) || echo "warning: wait --lead could not read the usage estimate (exit ${rc}), so this poll has no usage: line" >&2
+}
+
+# usage_warned — once a usage: line printed, make the time its estimate was made (usage_estimate.py's
+# LEAD_DIR/usage-pending, or now without one) LEAD_DIR/usage-warned: usage_line prints nothing more while that
+# time is inside the current usage week, whatever the reading says.
+usage_warned() {
+  mv -f "${LEAD_DIR}/usage-pending" "${LEAD_DIR}/usage-warned" 2>/dev/null || date +%s > "${LEAD_DIR}/usage-warned"
+}
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
 # and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
 # since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
@@ -4629,7 +4716,7 @@ line_holds() {
 # head none covers (main_red_fix), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
-# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
+# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and usage_line's, drop every line
 # whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
 # drop a no-agent:, no-review: or `idle: ... is ready with no build` line it would print whose agent a
 # second read of herdr's list shows (line_holds), and save the rest of the queue as LEAD_SEEN. Print
@@ -4674,12 +4761,17 @@ lead_wake() {
   tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
   u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
   now="${now}${now:+${u:+$'\n'}}${u}"
-  # A merged story names no line, whatever the producer: its file stays on the board until reconcile.
-  gone="$(while IFS= read -r line; do lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
+  # Off (the key empty), no subshell and no read of the session logs.
+  u=""; [[ -z "${CFG_usage_warn_percent}" ]] || u="$(usage_line)"
+  now="${now}${now:+${u:+$'\n'}}${u}"
+  # A merged story names no line, whatever the producer: its file stays on the board until reconcile. A
+  # usage: line names no story, so a story named as its first word does not drop it.
+  gone="$(while IFS= read -r line; do [[ "${line}" == "usage: "* ]] && continue; lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
   if [[ -n "${gone}" ]]; then
     while IFS= read -r line; do
       lead_line_slug "${line}"
-      grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || kept+="${line}"$'\n'
+      [[ "${line}" == "usage: "* ]] || ! grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || continue
+      kept+="${line}"$'\n'
     done <<< "${now}"
     now="${kept%$'\n'}"
   fi
@@ -4700,6 +4792,7 @@ lead_wake() {
   LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
     echo "${line}"; lead_line_slug "${line}"
+    [[ "${line}" != "usage: "* ]] || usage_warned
     record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
@@ -4840,6 +4933,7 @@ wait_lead() {
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   [[ "${LEAD_HEADS_EVERY}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1, not '${LEAD_HEADS_EVERY}'"
+  [[ "${USAGE_EVERY}" =~ ^[0-9]+$ ]] || die "SWARM_USAGE_EVERY is whole seconds, not '${USAGE_EVERY}'"
   lead_lock
   start=${SECONDS}
   if [[ -f "${LEAD_SEEN}" ]]; then ! lead_poll || return 0; else ! lead_poll quiet || return 0; fi
@@ -4866,9 +4960,10 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # review-agent hold that kept a builder back in its last round, upgrade_hold's), hint- (how to
 # resume it, while a restart is under way), closed- (skipped as closed, upgrade_closed: the pane and
 # session it saw), closing- (its session gone by upgrade_one's idle check, for upgrade_restart to
-# skip it); summary, the lines it prints at the end; closed, the names skipped as closed; checked, made once the closed check
-# ran (upgrade_reread); and why, a failed restart's. UPGRADE_SAID: how upgrade_say sent its last text,
-# prompt or note. UPGRADE_HERDR: herdr's agent list, read once per round (upgrade_herdr).
+# skip it); summary, the lines it prints at the end; closed, the names skipped as closed; checked,
+# made once the closed check ran (upgrade_reread); and why, a failed restart's. UPGRADE_SAID: how
+# upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's agent list, read once per
+# round (upgrade_herdr).
 # UPGRADE_CLAUDE: Claude Code's list of its sessions, read once for the closed check (upgrade_claude).
 # UPGRADE_WANT and UPGRADE_NEW: the run's agents (upgrade_want) and version.
 UPGRADE_PID="${PROJECT_DIR}/.swarm/upgrade.pid"
@@ -5196,8 +5291,10 @@ upgrade_held_why() {
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
 
-# upgrade_end <want> <version> — at the end of the wait: each conductor marked ready is read again (it
-# may have gone busy since), each builder still waiting is left, then each conductor idle with its
+# upgrade_end <want> <version> — at the end of the wait: each conductor asked for its handover is read
+# again: one marked ready may have gone busy since, and one whose session is gone is done with
+# (upgrade_conductor_gone: skipped as closed once its handover is in, else left), so it holds no
+# builder and is told nothing. Each builder still waiting is left, then each conductor idle with its
 # handover in is moved (upgrade_conductor); one whose handover is not, or that
 # stayed busy after it, is told to carry on as before, by prompt once it is idle (UPGRADE_GRACE_MS
 # more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
@@ -5211,9 +5308,14 @@ upgrade_end() {
   else echo "herdr's agent list could not be read during the run, so no agent was moved" >> "${UPGRADE_DIR}/summary"; list=""; fi
   UPGRADE_HERDR=""   # each state read from here on asks herdr afresh: the end may wait minutes
   while IFS=$'\t' read -r name pane role cur; do
-    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" ]] || continue
-    [[ "$(upgrade_state "${name}" "${pane}" </dev/null)" == idle ]] || rm -f "${UPGRADE_DIR}/ready-${name}"
+    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
+    case "$(upgrade_state "${name}" "${pane}" </dev/null)" in
+      idle) ;;
+      gone) upgrade_conductor_gone "${name}" "${pane}" ;;
+      *) rm -f "${UPGRADE_DIR}/ready-${name}" ;;
+    esac
   done <<< "${list}"
+  list="$(upgrade_open <<< "${list}")"   # less a conductor that went: it holds no builder, and is told nothing
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
@@ -5444,14 +5546,20 @@ upgrade_ask() {
   : > "$(upgrade_paused "$1")" || true
   st="$(upgrade_state "$1" "$2")"
   case "${st}" in
-    gone) rm -f "$(upgrade_paused "$1")" "${d}/ready-$1"
-          if [[ -s "$(cat "${d}/hand-$1")" ]]; then upgrade_closed "$1" "$2"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
-          return 0 ;;
+    gone) upgrade_conductor_gone "$1" "$2"; return 0 ;;
     idle) if [[ -s "$(cat "${d}/hand-$1")" ]]; then : > "${d}/ready-$1"; return 0; fi
           [[ "$(cat "${d}/asked-$1")" != note ]] || upgrade_request "$1" "$2" "$4" || true ;;
   esac
   rm -f "${d}/ready-$1"
   return 1
+}
+
+# upgrade_conductor_gone <conductor> <pane> — the asked conductor's Claude session is gone: its pause
+# and ready markers go, and it is skipped as closed (upgrade_closed, for the agent in <pane>) once its
+# handover is written, else left, as one that wrote none.
+upgrade_conductor_gone() {
+  rm -f "$(upgrade_paused "$1")" "${UPGRADE_DIR}/ready-$1"
+  if [[ -s "$(cat "${UPGRADE_DIR}/hand-$1")" ]]; then upgrade_closed "$1" "$2"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
 }
 
 # upgrade_request <conductor> <pane> <version> — mark it paused (upgrade_paused), then ask it

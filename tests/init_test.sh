@@ -38,14 +38,14 @@ origin() {
   "${GIT[@]}" -C "${w}" commit -q --allow-empty -m seed && "${GIT[@]}" -C "${w}" push -q "${bare}" "${2:-main}"
   git -C "$1" remote add origin "${bare}" && git -C "$1" fetch -q origin
 }
-# gate <repo> <path> [<base>] — the CI gate's verdict on a PR that adds <path> in <repo>, run as CI
-# runs it, against the commit before (or <base>).
+# gate <repo> <path>... — the CI gate's verdict on a PR that adds each <path> in <repo>, run as CI
+# runs it, against the commit before (or GATE_BASE).
 gate() {
-  local base
-  base="$(cd "$1" && "${GIT[@]}" add -A && "${GIT[@]}" commit -q --allow-empty -m base --no-verify && git rev-parse HEAD)"
-  mkdir -p "$(dirname "$1/$2")" && echo x > "$1/$2"
-  (cd "$1" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm pr --no-verify \
-    && BASE_SHA="${3:-${base}}" GITHUB_OUTPUT=/dev/stdout bash .github/swarm-board-only.sh 2>/dev/null | grep '^board_only=')
+  local base r="$1" f; shift
+  base="$(cd "${r}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -q --allow-empty -m base --no-verify && git rev-parse HEAD)"
+  for f in "$@"; do mkdir -p "$(dirname "${r}/${f}")" && echo x > "${r}/${f}"; done
+  (cd "${r}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm pr --no-verify \
+    && BASE_SHA="${GATE_BASE:-${base}}" GITHUB_OUTPUT=/dev/stdout bash .github/swarm-board-only.sh 2>/dev/null | grep '^board_only=')
 }
 
 # --- A fresh repo: every template file, .claude/swarm/, the three lines; the second run changes nothing.
@@ -57,6 +57,10 @@ sections=$'Alternatives\nCurrent state\nDesign\nEpics\nGoals\nNon-goals\nOpen qu
 check "init writes the HLD template with a grants line and the ten sections" "yes|${sections}" \
   "$(grep -qxF 'grants: []' "${p}/docs/hld/README.md" && echo yes)|$(sed -nE 's/^## ([^ ]+( [^ ]+)*)  .*/\1/p' "${p}/docs/hld/README.md" | LC_ALL=C sort)"
 check "init's Board.base has a view on the HLDs" "yes" "$(grep -qF -- '- file.inFolder("hld")' "${p}/docs/Board.base" && echo yes || echo no)"
+check "init writes the retros README" "yes" "$([[ -f "${p}/docs/retros/README.md" ]] && echo yes || echo no)"
+# The Retros view picks retro files by a covers: value, so README.md and the notes in retros/ stay out.
+check "init's Board.base has a Retros view that filters on covers" "yes" \
+  "$(awk '/^  - type:/{v=0; n=0} /^    name: Retros$/{v=1} v && /^      not:$/{n=1} v && n && /^        - covers\.isEmpty\(\)$/{f=1} END{print (f ? "yes" : "no")}' "${p}/docs/Board.base")"
 check "init creates .claude/swarm/" "yes" "$([[ -d "${p}/.claude/swarm" ]] && echo yes || echo no)"
 check "init adds the three .gitignore lines after the existing one" \
   $'node_modules/\n.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json' "$(cat "${p}/.gitignore")"
@@ -208,15 +212,20 @@ check "board_dir = . says to commit only what init wrote, not the repo's other f
   "$([[ "${line}" == *" stories/README.md"* ]] && echo yes || echo no)|$([[ "${line}" == *notes.txt* ]] && echo yes || echo no)"
 check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
 check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
-check "board_dir = . gates on the board's own files at the root" "yes|board_only=true|board_only=false" \
-  "$(grep -qxF 'BOARD=""' "${q}/.github/swarm-board-only.sh" && echo yes)|$(gate "${q}" stories/a.md)|$(gate "${q}" src/main.go)"
+check "board_dir = . gates on the board's own files at the root" "yes|board_only=true|board_only=false|board_only=true" \
+  "$(grep -qxF 'BOARD=""' "${q}/.github/swarm-board-only.sh" && echo yes)|$(gate "${q}" stories/a.md)|$(gate "${q}" src/main.go)|$(gate "${q}" retros/v1.0.0.md)"
 
 # --- The gate skips only the board's own files: a docs page beside the board runs the checks.
 q="${ROOT}/docs-pages"; "${GIT[@]}" init -q "${q}"; origin "${q}"
 run "${q}" init >/dev/null || true
 check "a PR that changes only docs/stories/ is board-only" "board_only=true" "$(gate "${q}" docs/stories/a.md)"
 check "a PR that adds a docs page beside the board is not" "board_only=false" "$(gate "${q}" docs/guide.md)"
-check "a push that opens a branch (an all-zero base) is not" "board_only=false" "$(gate "${q}" docs/stories/b.md 0000000000000000000000000000000000000000)"
+check "a push that opens a branch (an all-zero base) is not" "board_only=false" "$(GATE_BASE=0000000000000000000000000000000000000000 gate "${q}" docs/stories/b.md)"
+# retros/*.md is a glob: a retro file is the board's own, a script beside it is not.
+check "a PR that adds only docs/retros/v1.0.0.md is board-only" "board_only=true" "$(gate "${q}" docs/retros/v1.0.0.md)"
+check "a PR that adds only docs/retros/x.sh is not" "board_only=false" "$(gate "${q}" docs/retros/x.sh)"
+rm "${q}/docs/retros/v1.0.0.md"   # gate's base commit drops it, so the PR adds it again
+check "a PR that adds docs/retros/v1.0.0.md beside bin/x is not" "board_only=false" "$(gate "${q}" docs/retros/v1.0.0.md bin/x)"
 
 # --- A board outside the repo: CI without the gate, and a hook that never skips.
 q="${ROOT}/outside"; "${GIT[@]}" init -q "${q}"; origin "${q}"
@@ -282,6 +291,18 @@ rm "${q}/Makefile"
 out="$( { cd "${q}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm code 2>&1; } || true)"
 check "with no check target, the hook warns and lets the commit through" "yes|yes" \
   "$(has "${out}" 'pre-commit: make has no check target, so nothing was checked; add one to the Makefile')|$([[ "$(git -C "${q}" log -1 --format=%s)" == code ]] && echo yes || echo no)"
+# retros/*.md is a glob: a retro file is the board's own, a script beside it is not. The check target
+# leaves a marker outside the repo, so the marker shows whether the hook ran make check.
+printf 'check:\n\t@touch %s\n' "${ROOT}/hook-checked" > "${q}/Makefile"
+(cd "${q}" && "${GIT[@]}" add Makefile && "${GIT[@]}" commit -qm make --no-verify)
+# hook_ran <path> — commit <path> alone in ${q}: ran when the hook ran make check, else skipped.
+hook_ran() {
+  rm -f "${ROOT}/hook-checked"; mkdir -p "$(dirname "${q}/$1")" && echo x > "${q}/$1"
+  (cd "${q}" && "${GIT[@]}" add -- "$1" && "${GIT[@]}" commit -qm "$1" >/dev/null 2>&1) || { echo "commit failed"; return; }
+  [[ -e "${ROOT}/hook-checked" ]] && echo ran || echo skipped
+}
+check "the hook skips make check on a commit of only docs/retros/v1.0.0.md" skipped "$(hook_ran docs/retros/v1.0.0.md)"
+check "the hook runs make check on a commit of docs/retros/x.sh" ran "$(hook_ran docs/retros/x.sh)"
 
 # --- core.hooksPath set: no hook is written there, and the lines to add are printed.
 q="${ROOT}/hookspath"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.githooks"

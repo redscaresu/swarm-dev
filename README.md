@@ -100,11 +100,14 @@ It stops only for decisions that are yours. The common ones:
 - `swarm.sh dash --watch`: the live dashboard in the recording above.
 - `swarm.sh status`: what needs a look and what waits on you.
 - `swarm.sh flow`: what the run cost, where the time went, and how the reviews did.
+- `swarm.sh retro`: the lists a retro goes through with you before a minor release.
 
 ## Cost and safety
 
 Every agent is a full Claude Code session on your own logins, so a run spends real tokens.
 `swarm.sh flow` shows where they went.
+With `usage_warn_percent` set, `wait --lead` warns once a week when its usage estimate passes it.
+It is only an estimate, and it counts Fable low until you give it a `/usage` reading. `/usage` is the only truth.
 
 - No agent touches real cloud or credentials. That work is a `lead` story, done in your own session
   while you watch.

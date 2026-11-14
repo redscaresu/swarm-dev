@@ -384,6 +384,10 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` line means every agent
+     open in that plan's tab has written its output, so the step they ran is over. Run the exit
+     (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
+     plan's next step. The line comes again at the end of each later step, since its names change. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
      next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
@@ -426,7 +430,11 @@ Repeat until a step below says stop:
      builder its key is unlocked and to commit and carry on, and send it to each builder the line names
      with `swarm.sh tell <slug> resume <file>`. The line comes from the conductors' `wait --stall`, so
      it can come up to `stall_minutes` late. A builder leaves it once its next probe reads `clear`, it
-     commits, its worktree is clean or gone, or it stops running.
+     commits, its worktree is clean or gone, or it stops running. A
+     `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, ...` line (with `usage_warn_percent`
+     set, once a usage week) says the estimate has reached the key. Tell the user, and ask them to check
+     `/usage`, the only truth: the estimate counts Fable low until they give it a reading. Change nothing
+     on it: it is a warning, never a gate, so no build stops or slows.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference-lead.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` ends on a `timeout:` or `wait-failed:` line, start it again. Neither is a queue

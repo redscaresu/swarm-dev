@@ -11,6 +11,7 @@ GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pin
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+WATCH_POLL=60           # seconds between watch's polls, scaled (nap); its poll-cache max age is one under it
 MAIN_CI_OK=0            # ci_gate main's exit codes, as ci_gate.py names them (CI_OK, CI_RED)
 MAIN_CI_RED=1
 FIX_MAIN_LINES=20       # FAIL lines fix-main prints and puts in its story
@@ -2017,21 +2018,27 @@ red_mains() {
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
 }
 
-# board_paths — the board's own files in the project's repo, one prefix a line, as the board-only CI
-# gate that swarm.sh init writes has them; nothing for a board outside the repo.
+# board_paths — the board's own files in the project's repo, one entry a line, as the board-only CI
+# gate that swarm.sh init writes has them: a folder (ending in /), a file, or retros/*.md, a glob, so a
+# retro file is the board's and a script beside it is not; nothing for a board outside the repo. Each
+# reader matches the glob as a glob: on_board_paths, ci_gate.py's on_board and git's pathspecs.
 board_paths() {
   local rel
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   rel="$(board_rel)"
-  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/" "${rel}retros/*.md"
 }
 
-# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
-# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
+# on_board_paths <file> — <file> is one of board_paths' entries, under one that ends in a slash, or
+# matched by one whose last part holds a *, as the board-only CI gate's case has it: that last * is
+# any run of characters, slashes too, and the text either side is taken as it is, so a board folder
+# named with a * stays literal. Board.base is that file alone, not Board.base.py, and retros/*.md
+# takes retros/v1.0.0.md, not retros/x.sh.
 on_board_paths() {
   local q
   while IFS= read -r q; do
     if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    elif [[ "${q##*/}" == *\** ]]; then [[ "$1" != "${q%\**}"*"${q##*\*}" ]] || return 0   # loose-match: ok the entry's glob, its text either side of the last * quoted
     else [[ "$1" != "${q}" ]] || return 0; fi
   done < <(board_paths)
   return 1
@@ -2194,7 +2201,8 @@ within() {
 # read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
-# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind. A
+# report that is killed mid-frame removes it through report_cleanup, its caller's EXIT trap.
 # Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
 # the rest of the report, so an edit made to a board file during it shows on the next report, and so
 # does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
@@ -2257,6 +2265,14 @@ report_skipped() {
   names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
+}
+
+# report_cleanup — a report's exit: remove its skip file and the snapshot mark (REPORT_SKIP_FILE and
+# BOARD_SNAP_MARK), so a report killed (TERM, HUP, INT) or stopped mid-frame leaves no swarm-report.*
+# file in TMPDIR. status, next and dash set it as their EXIT trap; bash runs that trap on those signals.
+report_cleanup() {
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  [[ -z "${BOARD_SNAP_MARK:-}" ]] || rm -f "${BOARD_SNAP_MARK}"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
@@ -2911,11 +2927,14 @@ watch_repos() {
 # (review_on_head, which counts a head merge made from a reviewed head), and
 # green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
 # checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
+# Under watch (WATCH_SHARE set, watch_prs), ci_gate age's check-runs and status reads go through the poll
+# cache, so concurrent watches share them; next's reads go to GitHub.
 queued_line() {
-  local slug="${4#story/}" m
+  local slug="${4#story/}" m share_dir=""
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
   if review_on_head "${slug}" "$3"; then return 0; fi
-  m="$(ci_gate age "$1" "$3" 2>/dev/null)" || return 0
+  if (( ${WATCH_SHARE:-0} > 0 )); then share_dir="${PROJECT_DIR}/.swarm/poll-cache"; fi
+  m="$(SWARM_POLL_CACHE="${share_dir}" SWARM_POLL_CACHE_SECONDS="${WATCH_SHARE:-0}" ci_gate age "$1" "$3" 2>/dev/null)" || return 0
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${m}" =~ ^[0-9]+$ ]] && (( m >= CFG_queue_minutes )); then echo "queued: $1 #$2 $4 green ${m}m with no review on ${3:0:7}"; fi
 }
@@ -2963,9 +2982,17 @@ queued_sent() {
 # poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a watch
 # with --epic or --backlog steps up a story of its own whose PR went red on STEP_UP_RED_HEADS heads of
 # its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
+# Concurrent watches share each poll's reads: the open-PR list (watch_rows), each head's check runs and
+# queued_line's ci_gate age reads go through the poll cache (bin/lib/poll_cache.py, .swarm/poll-cache),
+# which takes a read another watch made under WATCH_SHARE seconds ago, and keeps a read only when it
+# succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL, scaled as nap: 59 s), so a lone watch
+# never reads its own; 0 (a scaled poll under 2 s) is off. A shared read can be up to that old, so a
+# change can take a poll longer to be seen. The mergeable read (watch_mergeable) is never shared: it is
+# keyed by PR number, not head, and a kept MERGEABLE would hide a new conflict.
 watch_prs() {
-  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
   watch_scope "$@"; watch_repos die
+  WATCH_SHARE="$(awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }')"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
   # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
@@ -3025,7 +3052,7 @@ watch_prs() {
         fi
         # A failed read (a spent rate limit prints an error body and exits 1) counts as unknown for this
         # poll, said once per PR, with gh's reason, until a read of that PR next succeeds.
-        if ! runs="$(gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" \
+        if ! runs="$(watch_gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"' 2>&1)" \
           || ! [[ "${runs}" =~ ^[0-9]+\ [0-9]+$ ]]; then
           if [[ "${unread}" != *" ${repo}#${n} "* ]]; then
@@ -3081,8 +3108,17 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
-    nap 60
+    nap "${WATCH_POLL}"
   done
+}
+
+# watch_gh <gh args...> — gh <args>, for watch: through the poll cache's command form while WATCH_SHARE
+# is on (watch_prs), which prints a kept read's output or runs gh, keeping it only when gh exits 0; a
+# failed read prints gh's stdout, then its stderr, and exits as gh did.
+watch_gh() {
+  if (( ${WATCH_SHARE:-0} > 0 )); then
+    python3 -I "${SWARM_HOME}/bin/lib/poll_cache.py" "${PROJECT_DIR}/.swarm/poll-cache" "${WATCH_SHARE}" -- gh "$@"
+  else gh "$@"; fi
 }
 
 # opened_due <slug> <sha> — true when a scoped watch says <slug>'s PR, its head at <sha>, opened: its
@@ -3103,10 +3139,11 @@ opened_due() {
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
 # <seconds since its last update>` (0 when the local clock is behind GitHub's), through REST, whose budget
 # is apart from GraphQL's (gh pr list spent that dry under a swarm). A row that does not parse is left
-# out. When gh fails it fails, printing gh's output, its last line the error.
+# out. When gh fails it fails, printing gh's output, its last line the error. Read through watch_gh, so
+# concurrent watches share it.
 watch_rows() {
   local list
-  list="$(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
+  list="$(watch_gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
     -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \([now - (.updated_at|fromdateiso8601), 0] | max | floor)"' 2>&1)" \
     || { printf '%s\n' "${list}"; return 1; }
   awk '$1 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && NF == 4' <<< "${list}"
@@ -3369,6 +3406,7 @@ status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent workspaces tabs
   status_time
   report_start || die "status: cannot start the report deadline"
+  trap report_cleanup EXIT
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
@@ -3405,7 +3443,7 @@ status_report() {
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     # Read here, after pane_check and before status_report.py's pane reads, as they only label
     # (status_report.py's pane_where); the Stacked, Waiting on you and Next reads below share the deadline
-    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name.
+    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name with its id.
     workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
     tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.

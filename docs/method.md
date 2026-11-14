@@ -79,7 +79,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them. Stuck agents wake the lead the same way: an agent on a prompt, a dialog, an expired login, an API error no `wait` is resuming, or manual mode gives a `prompt:` line that names who clears it. So do stuck PRs: a story PR reviewed, green and left unmerged past `queue_minutes` gives an `unmerged:` line, and one that conflicts with its base a `conflict:` line, each with its exit. From v0.30.0 four more lines join them: `stuck:` for a builder idle on findings or a conflict, `main-red:` for a red base, `reported:` for a conductor that reported with agent work left, and `sign-blocked:` for builders that cannot sign their work.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them. Stuck agents wake the lead the same way: an agent on a prompt, a dialog, an expired login, an API error no `wait` is resuming, or manual mode gives a `prompt:` line that names who clears it. So do stuck PRs: a story PR reviewed, green and left unmerged past `queue_minutes` gives an `unmerged:` line, and one that conflicts with its base a `conflict:` line, each with its exit. From v0.30.0 four more lines join them: `stuck:` for a builder idle on findings or a conflict, `main-red:` for a red base, `reported:` for a conductor that reported with agent work left, and `sign-blocked:` for builders that cannot sign their work. A plan swarm whose agents have all written their output gives a `planned:` line, whose exit runs the plan's next step.
 
 ## The board
 
@@ -99,7 +99,7 @@ lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it w
 `origin/HEAD`, and asks origin only when that is missing, without prompting and for at most 15 seconds; with
 no answer it writes no CI and says so. The step fails, naming the target, when make has no `check` target.
 Its gate, `.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
-files (`stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages in
+files (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and `retros/*.md` under `board_dir`, so other pages in
 `docs/` still get checked). A board outside the repo gets the workflow without the gate. A `ci.yml` that init
 wrote carries a marker line; init leaves it alone after that and only writes the gate again if it is missing.
 With other workflows already there, init leaves them, writes the gate, and prints the step to add to the job
@@ -139,11 +139,11 @@ once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an e
 | `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference-models.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference-models.md § Settings) |
 | `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference-models.md § Settings) |
+| `usage_warn_percent` | empty | a whole number from 1 to 100: `wait --lead` prints one `usage:` line the first time a usage week's estimate reaches it. It is only an estimate, from the session logs, and it counts Fable low until you give it a `/usage` reading; `/usage` is the only truth. A warning, never a gate. Empty is off (reference-models.md § Settings) |
 
-The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`,
-else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a
-board in a notes vault works if every story names its `repo:`. When the board is not in the story's
-repo, the builder leaves the story file alone and the lead runs `swarm.sh finish <slug>` on merge.
+The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`, else the git repo you are in; a
+worktree resolves to its main checkout. It need not be a git repo: a board in a notes vault works if every story names its `repo:`.
+When the board is not in the story's repo, the builder leaves the story file alone and the lead runs `swarm.sh finish <slug>` on merge.
 
 ## Where the rest is
 

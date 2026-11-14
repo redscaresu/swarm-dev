@@ -9,11 +9,16 @@ from collections import Counter
 # remerged this way, and a merge with neither parent on <base> (a stacked build's merge of its parent
 # branch) is unchecked, not clean. Of each merge's `git show --remerge-diff`, a removed line L of
 # file F prints when L is in the base side's F and the merge's F has fewer copies of L than a merge
-# of the two sides keeps: the base side's copies, plus the PR side's, less the merge base's (`git
-# merge-base` of the two parents), and it prints L once per copy the merge's F is short of, so a copy
-# the resolution moved, removed in one place and added back in another, is no second report. So a
-# copy the base added, or one both sides had, that the resolution dropped prints, and a copy the PR's
-# own commits removed does not, whatever other copies of L the file holds. Each side's F is read
+# of the two sides keeps (owed): the base side's copies, plus the PR side's, less the merge base's
+# (`git merge-base` of the two parents). A line the merge base's F lacks and both sides added, as when
+# one change reached the base by a squash merge and the PR side by its own commit, is owed the larger
+# side's copies instead, so one copy kept of a line each side added once is no drop. Where the merge
+# base has L, a new copy on each side can be two separate additions (a `}`, a `fi`), so the sum
+# stands. It prints L once per copy the merge's F is short of, so a copy the resolution moved,
+# removed in one place and added back in another, is no second report. So a copy the base added
+# (beyond the PR side's, for a line new to F), or one both sides had, that the resolution dropped
+# prints, and a copy the PR's own commits removed does not, whatever other copies of L the file
+# holds. Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
 # part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
@@ -135,6 +140,13 @@ def removed(diff):
                 old = int(m.group(1)) if m.group(1) is not None else 1
                 new = int(m.group(2)) if m.group(2) is not None else 1
 
+def owed(base, side, root):
+    """the copies of a line a merge of the two sides keeps, from each side's count and the merge base's: the
+    sum less the merge base's, or the larger side's for a line new to the file that both sides added"""
+    if root == 0 and base > 0 and side > 0:   # one change on both sides, such as a squash and its own commit
+        return max(base, side)
+    return base + side - root   # with L in the merge base, a new copy on each side can be two additions
+
 def scan(m, pr, base_side, ours):
     """the `<sha7> <file>: <text>` line of each base line merge m's resolution dropped"""
     rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
@@ -196,7 +208,7 @@ def scan(m, pr, base_side, ours):
         side, root = copies(pr, path, after) or Counter(), copies(mb, path, after) or Counter()
         kept = (read(m, after) or Counter()) if after is not None else Counter()
         if (path, text) not in short:
-            short[path, text] = base[text] + side[text] - root[text] - kept[text] if base[text] else 0
+            short[path, text] = owed(base[text], side[text], root[text]) - kept[text] if base[text] else 0
         if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
             short[path, text] -= 1
             found.append("%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
