@@ -174,9 +174,9 @@ codex_review_cmd() {
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
 codex_rule() {
   # shellcheck disable=SC2154 # assigned in another file
-  printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
+  printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes (twice that when codex times out and a fallback reviews in its place), longer than a foreground Bash call may last."
   printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage or rate limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage or rate limit or on "codex skipped: ...", do not run it again: a builder carries on without it, whoever reviews the PR reads the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit", "codex skipped: rate limit" or "codex skipped: timed out".'
-  printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit" (or "codex rate limit"), a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" (or "codex rate limit", as printed) in place of codex skipped.'
+  printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit" (or "codex rate limit", "codex unreachable" or "codex timeout"), a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" (or "codex rate limit", as printed) in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
 # are logged too, with their reason, and never count toward it. A deferred one (held back by the round
@@ -1681,14 +1681,16 @@ first, as below.
 $(dropped_lines_rule "$2" "$5" "$3" "$4")
 
 Run \`$(codex_review_cmd "$3" "$1" "$2")\` in the background (Bash run_in_background) and wait for it to
-finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
+finish: it can run for ${CFG_codex_minutes} minutes (twice that when codex times out and a fallback
+reviews in its place), longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage or rate limit it prints early may be
 followed by a fallback's review. If it ends on codex's usage or rate limit or on "codex skipped: ...",
 do not run it again: you report \`codex skipped: usage limit\`, \`codex skipped: rate limit\` or
 \`codex skipped: timed out\`, and in a round
 with no \`/code-review\`, you read the diff yourself in codex's place, so the round is never a pass
 on no review at all. When it prints
-\`reviewed by fallback <model>: codex usage limit\` (or \`codex rate limit\`), a fallback agent reviewed in codex's place: report
+\`reviewed by fallback <model>: codex usage limit\` (or \`codex rate limit\`, \`codex unreachable\` or
+\`codex timeout\`), a fallback agent reviewed in codex's place: report
 its findings as codex's, under that line, and log each with \`--reviewer fallback\`, as below. ${cr}
 
 $(review_checklist "${story}")

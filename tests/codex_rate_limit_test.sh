@@ -84,8 +84,10 @@ mkdir -p "${p}/.claude/swarm" "${p}/docs/stories"
 git -c init.defaultBranch=main init -q "${p}"
 printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${p}/docs/stories/s1.md"
 # review [config line] — codex-review main for SWARM_STORY=s1 (none with NOSTORY set), with that
-# config, 60 s of codex's time, a fallback's least time 1 s and HERDR_ENV=1 unless NOHERDR is set:
-# sets out and rc. A run past 30 s is KILLed, failing the checks instead of hanging the test.
+# config, 60 s of codex's time, a fallback's least time 1 s, a 1 s wait before codex-review's one retry
+# after a rate limit (codex_retry_test.sh tests the retry; here the stub hits the limit on both calls) and
+# HERDR_ENV=1 unless NOHERDR is set: sets out and rc. A run past 30 s is KILLed, failing the checks
+# instead of hanging the test.
 review() {
   local pid i set=()
   # env takes no -u after an assignment: both are unset first, then set unless NOHERDR or NOSTORY.
@@ -94,7 +96,7 @@ review() {
   printf '%s\n' "$@" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
   # umask 022, the usual one, so a file codex-review leaves open to group or other shows it.
   (cd "${p}" && umask 022 && exec env -u SWARM_PROJECT -u SWARM_PR -u HERDR_ENV -u SWARM_STORY "${set[@]+"${set[@]}"}" SWARM_FALLBACK_MIN_SECONDS=1 HERDR_WORKSPACE_ID=w \
-    SWARM_CODEX_SECONDS=60 PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
+    SWARM_CODEX_RETRY_SECONDS=1 SWARM_CODEX_SECONDS=60 PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
   pid=$!
   for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
   kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"

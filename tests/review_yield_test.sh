@@ -22,8 +22,8 @@ for s in a b; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${P}/docs/
 # gh answers from prs/<head with / as _>: its `url<TAB>state<TAB>mergedAt` lines, newest first.
 # shellcheck disable=SC2016 # the stub's own shell expands these
 # pr view <n> prints heads/<n>, its head branch (a split's board PR's is board/scope-<epic>), and
-# fails while ghfail exists.
-printf '#!/bin/sh\n[ "$1 $2" = "pr view" ] && { [ ! -e "%s/ghfail" ] && cat "%s/heads/$3" 2>/dev/null; exit; }\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" "${dir}" "${dir}" > "${dir}/bin/gh"
+# fails while ghfail exists. Every call is logged to gh.log.
+printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\n[ "$1 $2" = "pr view" ] && { [ ! -e "%s/ghfail" ] && cat "%s/heads/$3" 2>/dev/null; exit; }\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" "${dir}" "${dir}" "${dir}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 printf '%s\tOPEN\t\n' "${U}/1" > "${dir}/prs/story_a"
 printf '%s\tOPEN\t\n' "${U}/2" > "${dir}/prs/story_b"
@@ -64,6 +64,8 @@ snap() { cksum "${P}/.swarm/findings.tsv" "${P}/.swarm/events.tsv"; }
 before="$(snap)"
 H1=$'reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework'
 H2=$'prs\trounds\trounds_per_pr\tmax_rounds'
+# The merged-without-codex block, last, as it prints with no story PR merged without codex.
+NC=$'\nmerged_without_codex\tpr\tmerged\trounds\nnone'
 B1="$(printf '%s\n' "${H1}" \
   $'codex\tall\t4\t1\t3\t75%\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' \
   $'lead\tall\t2\t2\t0\t0%\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0' $'lead\tnit\t1\t1\t0\t0%\t0' \
@@ -71,7 +73,7 @@ B1="$(printf '%s\n' "${H1}" \
   $'all\tvacuous\t3\t1\t2\t67%\t0' $'all\tnit\t3\t2\t1\t33%\t0' $'all\tscope\t1\t0\t1\t100%\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0' \
   $'all\tall\t8\t4\t4\t50%\t0')"
 check "block 1 per reviewer and kind (4- and 5-field rows as unknown), per kind, and all all; block 2 sums each PR's rounds" \
-  "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
+  "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "${NC}" "exit 0")"
 # A declined row with its reason (7 fields) beside the 4- and 6-field ones: the old rows count as
 # before; only the new row's own lines and all all change. An escaped row (a defect review missed)
 # counts nowhere: were it counted, vacuous's lines would change and an escaped line appear.
@@ -80,7 +82,7 @@ printf '%s\n' $'2026-10-03\tplan-gap\to/r#1\tt\tdeclined\tskeptic\tnit' \
   $'2026-10-03\tvacuous\to/r#1\tt\tescaped\tescaped' >> "${P}/.swarm/findings.tsv"
 old_rows() { grep -v -e '^skeptic' -e $'\tplan-gap\t' -e $'^all\tall\t' <<< "$1"; }
 check "a 7-field row leaves the 4-, 5- and 6-field rows' counts as they were" \
-  "$(old_rows "$(yield_of "${P}")")" "$(old_rows "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")")"
+  "$(old_rows "$(yield_of "${P}")")" "$(old_rows "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "${NC}" "exit 0")")"
 out="$(yield_of "${P}")"
 check "the 7-field row counts as one decline, all all only adds it, and no escaped line" \
   "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%\t0' $'skeptic\tplan-gap\t1\t0\t1\t100%\t0' $'all\tall\t9\t4\t5\t56%\t0')"
@@ -177,7 +179,7 @@ check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   $'lead\tall\t2\t2\t0\t0%\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0' $'lead\tnit\t1\t1\t0\t0%\t0' \
   $'unknown\tall\t1\t0\t1\t100%\t0' $'unknown\tscope\t1\t0\t1\t100%\t0' \
   $'all\tvacuous\t3\t1\t2\t67%\t0' $'all\tnit\t2\t1\t1\t50%\t0' $'all\tscope\t1\t0\t1\t100%\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0' \
-  $'all\tall\t7\t3\t4\t57%\t0' "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
+  $'all\tall\t7\t3\t4\t57%\t0' "" "${H2}" $'2\t3\t1.5\t3' "${NC}" "exit 0")"
 USAGE="swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 for args in "--since 2026-1-5" "--since" "--bogus"; do
   # shellcheck disable=SC2086 # split on purpose: each case is its own arguments
@@ -185,7 +187,7 @@ for args in "--since 2026-1-5" "--since" "--bogus"; do
 done
 mv "${P}/.swarm/agents.tsv" "${dir}/agents.tsv"
 check "with no agents.tsv: block 1 as before, block 2 all zero, exit 0" \
-  "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'0\t0\t0\t0' "exit 0")"
+  "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'0\t0\t0\t0' "${NC}" "exit 0")"
 mv "${dir}/agents.tsv" "${P}/.swarm/agents.tsv"
 check "findings.tsv and events.tsv are byte-identical after every run" "$(snap)" "${before}"
 
@@ -223,25 +225,25 @@ printf '%s\n' \
   $'2026-10-02\tnit\to/r#4\tt\tfixed\tcodex' \
   $'2026-10-02\tnit\to/r#5\tt\tdeclined\tlead' > "${Q}/.swarm/findings.tsv"
 check "attempts sharing a PR add up; attempts with their own PRs keep their own tells" \
-  "$(yield_of "${Q}" | tail -3)" "$(printf '%s\n' "${H2}" $'3\t8\t2.7\t4' "exit 0")"
+  "$(yield_of "${Q}" | grep -A1 $'^prs\t')" "$(printf '%s\n' "${H2}" $'3\t8\t2.7\t4')"
 check "--epic ec: only its PR #3 and its finding, and the PR it counted" \
   "$(yield_of "${Q}" --epic ec)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t1\t0\t1\t100%\t0' $'codex\tvacuous\t1\t0\t1\t100%\t0' $'all\tvacuous\t1\t0\t1\t100%\t0' $'all\tall\t1\t0\t1\t100%\t0' \
-  "" "${H2}" $'1\t3\t3\t3' "" pr "${U}/3" "exit 0")"
+  "" "${H2}" $'1\t3\t3\t3' "" pr "${U}/3" "${NC}" "exit 0")"
 check "--epic ed: #4 with its one round and #5 with its four, ec left out" \
   "$(yield_of "${Q}" --epic ed)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t1\t1\t0\t0%\t0' $'codex\tnit\t1\t1\t0\t0%\t0' $'lead\tall\t1\t0\t1\t100%\t0' $'lead\tnit\t1\t0\t1\t100%\t0' \
   $'all\tnit\t2\t1\t1\t50%\t0' $'all\tall\t2\t1\t1\t50%\t0' \
-  "" "${H2}" $'2\t5\t2.5\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
+  "" "${H2}" $'2\t5\t2.5\t4' "" pr "${U}/4" "${U}/5" "${NC}" "exit 0")"
 # --since keeps #4's finding (dated 2026-10-02) but not its build's round (started 2026-10-01), so
 # block 3 lists both PRs: each one that either block counted.
 check "--epic ed --since 2026-10-02: #4 in block 1 only, #5 in both, and block 3 lists the two" \
   "$(yield_of "${Q}" --epic ed --since 2026-10-02)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t1\t1\t0\t0%\t0' $'codex\tnit\t1\t1\t0\t0%\t0' $'lead\tall\t1\t0\t1\t100%\t0' $'lead\tnit\t1\t0\t1\t100%\t0' \
   $'all\tnit\t2\t1\t1\t50%\t0' $'all\tall\t2\t1\t1\t50%\t0' \
-  "" "${H2}" $'1\t4\t4\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
+  "" "${H2}" $'1\t4\t4\t4' "" pr "${U}/4" "${U}/5" "${NC}" "exit 0")"
 check "--epic ed --since 2026-10-03: nothing counted, so block 3 lists no PR" \
-  "$(yield_of "${Q}" --epic ed --since 2026-10-03)" "$(printf '%s\n' "${H1}" $'all\tall\t0\t0\t0\t-\t0' "" "${H2}" $'0\t0\t0\t0' "" pr "exit 0")"
+  "$(yield_of "${Q}" --epic ed --since 2026-10-03)" "$(printf '%s\n' "${H1}" $'all\tall\t0\t0\t0\t-\t0' "" "${H2}" $'0\t0\t0\t0' "" pr "${NC}" "exit 0")"
 
 # A finding whose kind is the word all (log-finding takes it) is a kind of its own, counted once.
 R="${dir}/three"
@@ -251,13 +253,79 @@ printf '%s\n' $'2026-10-02\tall\to/r#1\tt\tfixed\tcodex' $'2026-10-02\tnit\to/r#
 check "a kind named all is counted once, apart from the totals" \
   "$(yield_of "${R}")" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t2\t1\t1\t50%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' $'codex\tall\t1\t1\t0\t0%\t0' \
-  $'all\tnit\t1\t0\t1\t100%\t0' $'all\tall\t1\t1\t0\t0%\t0' $'all\tall\t2\t1\t1\t50%\t0' "" "${H2}" $'0\t0\t0\t0' "exit 0")"
+  $'all\tnit\t1\t0\t1\t100%\t0' $'all\tall\t1\t1\t0\t0%\t0' $'all\tall\t2\t1\t1\t50%\t0' "" "${H2}" $'0\t0\t0\t0' "${NC}" "exit 0")"
 
 # --epic with no split rows reads no epic's history: a git on PATH logs every call.
 printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec %s "$@"\n' "${dir}" "$(command -v git)" > "${dir}/bin/git"; chmod +x "${dir}/bin/git"
 yield_of "${R}" --epic e >/dev/null
 check "--epic with no splits runs no git log over the board's history" "$(grep -c -- '--diff-filter=D' "${dir}/git.log" || true)" "0"
 rm "${dir}/bin/git"
+
+# --- Merged without codex, in a fourth project: five story PRs merged on 2026-10-05. w's every codex-review
+# run was codex's; x's every run timed out (one line from before codex-review's line said codex=, its run
+# known by the reap line before it on its pane, and one that says codex=skipped), and a run after its merge
+# that codex reviewed does not count; y's run fell back after codex-unreachable, then codex reviewed one; z's
+# one run, from before codex=, fell back after a usage limit (its codex-review line ok). A later old-style
+# ok line on z's pane, with no codex-z line before it, is no run of z's, and an unscoped run names no story.
+# v was built twice, each build opening its own PR (as d above): codex reviewed the first PR (#15, closed),
+# and every run on the merged one (#16) was skipped, so #16 is listed: the first PR's run is not its own.
+M="${dir}/four"
+mkdir -p "${M}/.swarm" "${M}/docs/stories"
+git -C "${M}" init -q
+n=11
+for s in w x y z; do
+  printf -- '---\nkind: code\nstatus: done\n---\n' > "${M}/docs/stories/${s}.md"
+  printf '2026-10-01\tcode\t%s\tclaude\topus\txhigh\t-\n' "${s}" >> "${M}/.swarm/agents.tsv"
+  printf '%s\tMERGED\t2026-10-05T12:00:00Z\n' "${U}/${n}" > "${dir}/prs/story_${s}"
+  n=$((n + 1))
+done
+printf -- '---\nkind: code\nstatus: done\n---\n' > "${M}/docs/stories/v.md"
+printf '%s\n' $'2026-10-01\tcode\tv\tclaude\topus\txhigh\tv15' $'2026-10-03\tescalate\tv\tclaude\tfable\txhigh\tv16' >> "${M}/.swarm/agents.tsv"
+printf '%s\tMERGED\t2026-10-05T12:00:00Z\n%s\tCLOSED\t\n' "${U}/16" "${U}/15" > "${dir}/prs/story_v"
+for n in 15 16; do
+  printf '{"type":"user","cwd":"%s/four-wt/v","timestamp":"2026-10-0%sT09:00:00Z"}\n{"type":"user","message":{"content":"%s/%s\\n"}}\n' \
+    "${dir}" "$(((n - 15) * 2 + 1))" "${U}" "${n}" > "${dir}/projects/p/v${n}.jsonl"
+done
+V='~~ version=0.30.0'
+printf '%s\n' \
+  $'2026-10-02T10:00:00Z\tcodex-review\tmain\tw:1\tok ~~ slug=w role=review codex=reviewed version=0.30.0' \
+  $'2026-10-03T10:00:00Z\tcodex-review\tmain\tw:1\tok ~~ slug=w role=review codex=reviewed version=0.30.0' \
+  $'2026-10-02T10:00:00Z\treap\tcodex-x\tw:2\ttimed out after 10 min ~~ slug=x role=review version=0.30.0' \
+  "2026-10-02T10:00:01Z	codex-review	main	w:2	codex skipped: timed out after 10 min ${V}" \
+  $'2026-10-03T10:00:00Z\treap\tcodex-x\tw:5\ttimed out after 10 min ~~ slug=x role=review version=0.30.0' \
+  $'2026-10-03T10:00:01Z\tcodex-review\tmain\tw:5\tcodex skipped: timed out after 10 min ~~ slug=x role=review codex=skipped version=0.30.0' \
+  $'2026-10-06T10:00:00Z\tcodex-review\tmain\tw:5\tok ~~ slug=x role=review codex=reviewed version=0.30.0' \
+  $'2026-10-02T10:00:00Z\tincident\tcodex-y\tw:3\tcodex-unreachable ~~ slug=y role=review version=0.30.0' \
+  $'2026-10-02T10:00:09Z\tcodex-review\tmain\tw:3\tok ~~ slug=y role=review codex=fallback version=0.30.0' \
+  $'2026-10-03T10:00:00Z\tcodex-review\tmain\tw:3\tok ~~ slug=y role=review codex=reviewed version=0.30.0' \
+  $'2026-10-02T10:00:00Z\tincident\tcodex-z\tw:4\tcodex-limit: usage limit ~~ slug=z role=review version=0.30.0' \
+  "2026-10-02T10:00:09Z	codex-review	main	w:4	ok ${V}" \
+  "2026-10-03T10:00:00Z	codex-review	main	w:4	ok ${V}" \
+  $'2026-10-03T10:00:00Z\tcodex-review\tmain\tw:6\tok ~~ role=conduct codex=reviewed version=0.30.0' \
+  $'2026-10-01T10:00:00Z\tcodex-review\tmain\tw:7\tok ~~ slug=v role=code codex=reviewed version=0.30.0' \
+  $'2026-10-03T10:00:00Z\tcodex-review\tmain\tw:8\tfailed (exit 1) ~~ slug=v role=review codex=skipped version=0.30.0' > "${M}/.swarm/events.tsv"
+NOCODEX=$'merged_without_codex\tpr\tmerged\trounds'
+no_codex() { sed -n $'/^merged_without_codex\t/,/^$/p' <<< "$1" | grep -v '^exit '; }
+# reviewers_of <args> — yield_of with flow running its reviewers section alone (SWARM_FLOW_SECTIONS), as
+# a full flow run is slow on a busy machine.
+reviewers_of() { SWARM_FLOW_SECTIONS=reviewers yield_of "$@"; }
+rm -f "${dir}/gh.log"
+out="$(reviewers_of "${M}")"; calls="$(sort "${dir}/gh.log")"
+check "merged without codex: v's merged PR, x's every run skipped and z's one fallback, not w (codex every run) or y (codex reviewed one)" \
+  "$(no_codex "${out}")" "$(printf '%s\n' "${NOCODEX}" "v	${U}/16	2026-10-05	skipped" "x	${U}/12	2026-10-05	skipped,skipped" "z	${U}/14	2026-10-05	fallback")"
+check "an empty window prints the block's heading and none" "$(no_codex "$(reviewers_of "${M}" --since 2026-10-06)")" "$(printf '%s\n' "${NOCODEX}" none)"
+# The block makes no gh call: the same run from a copy of the checkout whose flow_reviewers.py ends before
+# the block (cut at its heading comment, which must be there) makes the same calls, outcomes' own.
+home="$(cd "$(dirname "${SWARM}")/.." && pwd)"; mkdir -p "${dir}/home"
+cp -R "${home}/bin" "${home}/.claude-plugin" "${home}/hooks" "${home}/templates" "${dir}/home/"
+cut="$(python3 -c 'import sys; s = open(sys.argv[1]).read(); i = s.find("\n# Merged without codex:")
+if i < 0: sys.exit("no block heading")
+open(sys.argv[1], "w").write(s[:i + 1]); print("cut")' "${dir}/home/bin/lib/flow_reviewers.py")" || cut=no
+rm -f "${dir}/gh.log"
+out="$(SWARM="${dir}/home/bin/swarm.sh" reviewers_of "${M}")"
+check "the copy without the block prints no block, and its gh calls are the same as with it" "cut|0|same" \
+  "${cut}|$(grep -c '^merged_without_codex' <<< "${out}" || true)|$([[ "${calls}" == "$(sort "${dir}/gh.log")" ]] && echo same || echo "differ: $(diff <(echo "${calls}") <(sort "${dir}/gh.log") | head -5)")"
+check "among them outcomes' one pr list --head per story" "5" "$(grep -c '^pr list --head story/[vwxyz] ' <<< "${calls}")"
 
 if [[ "${fails}" -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
