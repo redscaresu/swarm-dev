@@ -1359,10 +1359,11 @@ staged_chain() {
 # <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails, is cut or gives no list. A
 # caller counts exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE;
 # SWARM_GH_FRESH set skips the cached read) under <rule>, the board's path and both SHAs, written only
-# once git and gh both answered, no line says no merged PR and no read passed a commit no PR lists
-# (gh's search can lag a fresh merge): a merged commit's PR and a file at a commit never change, so
-# next, which dash runs every frame, pays one gh call per base move. A repo that merges PRs of several
-# commits by rebase passes such commits, so there it pays one per call.
+# once git and gh both answered, no line says no merged PR, no read passed a commit no PR lists (gh's
+# search can lag a fresh merge) and no change sits at a shallow clone's edge, which prints whatever its
+# head: a merged commit's PR and a file at a commit never change, so next, which dash runs every frame,
+# pays one gh call per base move. A repo that merges PRs of several commits by rebase passes such
+# commits, so there it pays one per call.
 non_fix_change() {
   # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
   # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
@@ -1433,11 +1434,12 @@ for p in prs:
     [[ -n "${c}" ]] || continue
     if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
     line="${c:0:7} #${n} ${head}:"
+    # A commit with no parent to read is a shallow clone's edge: the commits the clone never fetched,
+    # between <from> and it, may hold non-fixes, so it prints whatever its head, and is not cached.
+    if [[ "${prev}" == - ]]; then out+="${line} git cannot read the commit before it"$'\n'; keep=""; continue; fi
     [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
     if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
     p="${rel}stories/${BASH_REMATCH[1]}.md"
-    # No parent to read (a shallow clone's edge) is no answer: printed, but not cached.
-    if [[ "${prev}" == - ]]; then out+="${line} git cannot read the commit before it"$'\n'; keep=""; continue; fi
     # No listed PR's commit to stand on: <from> may be one of this PR's own commits.
     if [[ "${base}" == - ]]; then out+="${line} its base is not known: ${from:0:7} is no listed PR's commit"$'\n'; keep=""; continue; fi
     # A read that passes commits no PR lists rests on gh's list being whole: never cached.

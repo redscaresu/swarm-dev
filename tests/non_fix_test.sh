@@ -324,6 +324,20 @@ check "in a shallow clone, the edge commit's story PR prints as unreadable" \
 nf v1.2.0 HEAD
 check "and that answer is not cached" 1 "${CODE}"
 rm "${ROOT}/gh.fail"
+# The edge commit a fix-main PR: a fix by its head alone, but the commits the clone never fetched may
+# hold non-fixes, so it prints too, and is not cached.
+git -C "${P_FULL}" branch -q fm-tip "${FM}"
+SH="${ROOT}/shallow-fm"
+git clone -q --depth 1 --branch fm-tip "file://${P_FULL}" "${SH}" && git -C "${SH}" fetch -q --depth 1 origin tag v1.2.0
+mkdir -p "${SH}/.claude/swarm"; printf '.claude/\n.swarm/\n' >> "${SH}/.git/info/exclude"
+P="${SH}"; board_dir docs
+nf v1.2.0 HEAD
+check "in a shallow clone whose edge commit is a story/fix-main-<sha7> PR, it prints as unreadable" \
+  "0|${FM:0:7} #7 story/fix-main-abc1234: git cannot read the commit before it" "${CODE}|${OUT}"
+: > "${ROOT}/gh.fail"
+nf v1.2.0 HEAD
+check "and that answer is not cached either" 1 "${CODE}"
+rm "${ROOT}/gh.fail"
 P="${P_FULL}"
 
 # Changing board_dir with both commits fixed reads afresh: under board/, the plan commit is a change
