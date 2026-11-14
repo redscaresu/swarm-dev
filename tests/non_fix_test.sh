@@ -31,10 +31,12 @@ NL=$'\n'
 T=0
 tick() { T=$((T + 1)); export GIT_AUTHOR_DATE GIT_COMMITTER_DATE; GIT_COMMITTER_DATE="2026-01-15T10:00:$(printf %02d "${T}")Z"; GIT_AUTHOR_DATE="${GIT_COMMITTER_DATE}"; }
 
-# The stub gh logs each call to gh.log, fails while gh.fail is there, and prints prs.json. The git
-# wrapper logs each call to git.log and runs the real git.
+# The stub gh logs each call to gh.log, fails while gh.fail is there, sleeps gh.sleep's seconds while it
+# is there, and prints prs.json. The git wrapper logs each call to git.log and runs the real git.
 mkdir -p "${ROOT}/bin"
-printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\n[ ! -f "%s/gh.fail" ] || exit 1\ncat "%s/prs.json"\n' "${ROOT}" "${ROOT}" "${ROOT}" > "${ROOT}/bin/gh"
+# shellcheck disable=SC2016 # the stub's own $(cat ...), which the stub runs
+printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\n[ ! -f "%s/gh.fail" ] || exit 1\n[ ! -f "%s/gh.sleep" ] || sleep "$(cat "%s/gh.sleep")"\ncat "%s/prs.json"\n' \
+  "${ROOT}" "${ROOT}" "${ROOT}" "${ROOT}" "${ROOT}" > "${ROOT}/bin/gh"
 printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec "%s" "$@"\n' "${ROOT}" "$(command -v git)" > "${ROOT}/bin/git"
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/git"
 
@@ -82,6 +84,7 @@ check() { # <name> <want> <got>
   else printf 'FAIL %s\n  want: %s\n  got:  %s\n' "$1" "${2//${NL}/${NL}        }" "${3//${NL}/${NL}        }"; fails=$((fails + 1)); fi
 }
 has() { grep -qxF -- "$2" <<< "$1"; }   # <text> <line> — <text> holds <line>, whole
+starts() { awk -v s="$2" 'index($0, s) == 1 { f = 1 } END { exit !f }' <<< "$1"; }   # <text> <prefix> — a line of <text> starts with <prefix>
 cached_files() { find "${P}/.swarm/gh-cache" -name '*.json' 2>/dev/null | wc -l | tr -d ' '; }
 
 # story <slug> <front matter line>... [-- <body line>...] — write docs/stories/<slug>.md.
@@ -118,6 +121,11 @@ story s4 'status: ready' 'kind: code' 'fix: true'
 story s5 'status: ready' 'kind: code'
 story s6 'status: ready' 'kind: code' -- 'fix: true'
 story s7 'status: ready' 'kind: code'
+story s8 'status: ready' 'kind: code'
+story s9 'status: ready' 'kind: code' 'fix: true'
+story s10 'status: ready' 'kind: code' 'fix: true'
+story s11 'status: ready' 'kind: code' 'fix: true'
+story s13 'status: ready' 'kind: code' 'fix: true'
 commit "plan"; PLAN="${SHA}"; pr 2 board/plan "${PLAN}"
 echo 1 > "${P}/bin/s1"; commit "s1"; C1="${SHA}"; pr 3 story/s1 "${C1}"
 echo 2 > "${P}/bin/s2"; commit "s2"; C2="${SHA}"; pr 4 story/s2 "${C2}"
@@ -132,6 +140,32 @@ echo 6 > "${P}/bin/s6"; commit "s6"; BODY="${SHA}"; pr 11 story/s6 "${BODY}"
 git -C "${P}" checkout -q -b story/s7; echo 7 > "${P}/bin/s7"; commit "s7"; SIDE="${SHA}"
 git -C "${P}" checkout -q main; tick; git -C "${P}" merge -q --no-ff story/s7 -m "Merge story/s7"
 NOFF="$(git -C "${P}" rev-parse HEAD)"; pr 12 story/s7 "${NOFF}"
+# Two rebase merges: each PR's commits land one by one, and gh names only the last as its mergeCommit.
+# s8's first commit adds fix: true to its own story (a board-only commit), its second changes code.
+story s8 'status: ready' 'kind: code' 'fix: true'; commit "s8: mark it a fix"; MARK="${SHA}"
+echo 8 > "${P}/bin/s8"; commit "s8"; REB="${SHA}"; pr 13 story/s8 "${REB}"
+# s9, a fix: true story from the plan, has two code commits; the first is in no PR's mergeCommit.
+echo 9 > "${P}/bin/s9a"; commit "s9: part one"; REB1="${SHA}"
+echo 9 > "${P}/bin/s9b"; commit "s9: part two"; REB2="${SHA}"; pr 14 story/s9 "${REB2}"
+# A direct push (no PR, board-only) takes s10's fix: true away; then s10's PR merges as a squash.
+story s10 'status: ready' 'kind: code' 'fix: false'; commit "s10 is no fix after all"
+echo 10 > "${P}/bin/s10"; commit "s10"; UNMARK="${SHA}"; pr 15 story/s10 "${UNMARK}"
+# s11, a fix: true story, merges by rebase: its first commit deletes its own story file, as a builder's
+# PR does, its second changes code.
+rm "${P}/docs/stories/s11.md"; commit "s11: done with its story"
+echo 11 > "${P}/bin/s11"; commit "s11"; GONE="${SHA}"; pr 16 story/s11 "${GONE}"
+# A direct push (no PR) adds the fix: true story s12; then a --no-ff merge of story/s12, which deletes
+# its story file and changes code. A merge commit is read at its own first parent, the direct push.
+story s12 'status: ready' 'kind: code' 'fix: true'; commit "s12, a fix, planned by hand"
+git -C "${P}" checkout -q -b story/s12; rm "${P}/docs/stories/s12.md"; echo 12 > "${P}/bin/s12"; commit "s12"
+git -C "${P}" checkout -q main; tick; git -C "${P}" merge -q --no-ff story/s12 -m "Merge story/s12"
+NOFF2="$(git -C "${P}" rev-parse HEAD)"; pr 17 story/s12 "${NOFF2}"
+# A direct push takes s13's fix: true away; then s13's PR merges by rebase, its first commit deleting
+# its story file, its second changing code. The deletion does not bring the old fix: true back.
+story s13 'status: ready' 'kind: code' 'fix: false'; commit "s13 is no fix after all"
+rm "${P}/docs/stories/s13.md"; commit "s13: done with its story"
+echo 13 > "${P}/bin/s13"; commit "s13"; UNMARK2="${SHA}"; pr 18 story/s13 "${UNMARK2}"
+TIP="${UNMARK2}"
 write_prs
 
 L_S2="${C2:0:7} #4 story/s2: docs/stories/s2.md had no fix: true before the merge"
@@ -142,7 +176,11 @@ L_DECOY="${DECOY:0:7} #9 story/fix-main-docs: no docs/stories/fix-main-docs.md b
 L_OWN="${OWN:0:7} #10 story/s5: docs/stories/s5.md had no fix: true before the merge"
 L_BODY="${BODY:0:7} #11 story/s6: docs/stories/s6.md had no fix: true before the merge"
 L_NOFF="${NOFF:0:7} #12 story/s7: docs/stories/s7.md had no fix: true before the merge"
-AFTER_S2="${L_S3}${NL}${L_X}${NL}${L_NOPR}${NL}${L_DECOY}${NL}${L_OWN}${NL}${L_BODY}${NL}${L_NOFF}"
+L_REB="${REB:0:7} #13 story/s8: docs/stories/s8.md had no fix: true at ${NOFF:0:7}, the last listed PR before it"
+L_REB1="${REB1:0:7}: no merged PR has this commit"
+L_UNMARK="${UNMARK:0:7} #15 story/s10: docs/stories/s10.md changed between ${REB2:0:7} and the merge"
+L_UNMARK2="${UNMARK2:0:7} #18 story/s13: docs/stories/s13.md changed between ${NOFF2:0:7} and the merge"
+AFTER_S2="${L_S3}${NL}${L_X}${NL}${L_NOPR}${NL}${L_DECOY}${NL}${L_OWN}${NL}${L_BODY}${NL}${L_NOFF}${NL}${L_REB}${NL}${L_REB1}${NL}${L_UNMARK}${NL}${L_UNMARK2}"
 ALL="${L_S2}${NL}${AFTER_S2}"
 
 # --- v1.2.0..HEAD, the board in docs/.
@@ -161,14 +199,21 @@ check "a PR that adds fix: true to its own story file is printed as a non-fix" y
 check "fix: true only in a story's body is printed as a non-fix" yes "$(has "${OUT}" "${L_BODY}" && echo yes || echo no)"
 check "a --no-ff merge commit from a non-fix story is printed" yes "$(has "${OUT}" "${L_NOFF}" && echo yes || echo no)"
 check "the --no-ff merge's own side commit is not a change of its own" no "$(grep -qF "${SIDE:0:7}" <<< "${OUT}" && echo yes || echo no)"
+check "a rebase-merged PR whose earlier commit adds fix: true to its own story is printed as a non-fix" yes "$(has "${OUT}" "${L_REB}" && echo yes || echo no)"
+check "a rebase-merged fix: true PR is read at the PR before it, not at <from>: its last commit is not printed" no "$(starts "${OUT}" "${REB2:0:7} " && echo yes || echo no)"
+check "a direct push that takes fix: true away before the story's PR merges: the PR is printed as a non-fix" yes "$(has "${OUT}" "${L_UNMARK}" && echo yes || echo no)"
+check "a rebase-merged fix: true PR whose earlier commit deleted its own story file is not printed" no "$(grep -qF "${GONE:0:7}" <<< "${OUT}" && echo yes || echo no)"
+check "a --no-ff merge of a fix: true story a direct push added is read at its first parent: not printed" no "$(starts "${OUT}" "${NOFF2:0:7} " && echo yes || echo no)"
+check "a direct push that takes fix: true away, then a rebase PR that deletes the story first: printed as a non-fix" yes "$(has "${OUT}" "${L_UNMARK2}" && echo yes || echo no)"
 check "one gh pr list of the PRs merged from the day before the tag's commit date" \
   "pr list --repo o/r --state merged --search merged:>=2026-01-14 --json number,headRefName,mergeCommit --limit 1000" "$(cat "${ROOT}/gh.log")"
 check "no git log call" 0 "$(grep -cE '(^| )log( |$)' "${ROOT}/git.log" || true)"
 # The walk itself: today's git gives a first-parent walk's merges the same answer with or without
 # --full-history, so only the call shows the flag that keeps a merge TREESAME to its second parent on
-# a git that compares later parents too.
-check "the commits are one rev-list: first-parent, full history, the board's folder excluded" \
-  "-C ${P} rev-list --reverse --first-parent --full-history ${OLD}..${NOFF} -- . :(exclude)docs/" "$(grep -F ' rev-list ' "${ROOT}/git.log")"
+# a git that compares later parents too. The second lists every commit, for the bases.
+check "the changes are one rev-list: first-parent, full history, the board's folder excluded; then one of every commit" \
+  "-C ${P} rev-list --reverse --first-parent --full-history ${OLD}..${TIP} -- . :(exclude)docs/
+-C ${P} rev-list --reverse --first-parent --parents ${OLD}..${TIP}" "$(grep -F ' rev-list ' "${ROOT}/git.log" | sed -n 1,2p)"
 check "an answer with a no-PR line is not cached" 0 "$(cached_files)"
 
 # A non-fix story merged before the tag, still on the board at done, plus a fix: true story after it.
@@ -208,6 +253,20 @@ check "a board outside the repo exits 1, with no gh call" "1||non_fix_change: th
 # above, was cached).
 board_dir docs
 rm -r "${P}/.swarm/gh-cache"
+# A gh that hangs is cut: at the report's deadline under a report (REPORT_END, as next and dash run it),
+# else after the function's own bound (60 s; SWARM_NON_FIX_WAIT here). The stub sleeps 20 s.
+echo 20 > "${ROOT}/gh.sleep"
+t0="$(date +%s)"
+nf v1.2.0 "${C4}" REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + 1')" SWARM_REPORT_SECONDS=1
+check "a gh that hangs past the report's deadline is cut: exit 1, the why, no cache file, well before gh would answer" \
+  "1||non_fix_change: gh pr list --repo o/r --state merged was cut at the report's 1 s deadline|0|cut" \
+  "${CODE}|${OUT}|${ERR}|$(cached_files)|$([[ $(( $(date +%s) - t0 )) -lt 15 ]] && echo cut || echo "ran on")"
+t0="$(date +%s)"
+nf v1.2.0 "${C4}" SWARM_NON_FIX_WAIT=1
+check "outside a report, a gh that hangs past the bound is cut: exit 1, the why, no cache file, well before gh would answer" \
+  "1||non_fix_change: gh pr list --repo o/r --state merged gave no answer within 1 s|0|cut" \
+  "${CODE}|${OUT}|${ERR}|$(cached_files)|$([[ $(( $(date +%s) - t0 )) -lt 15 ]] && echo cut || echo "ran on")"
+rm "${ROOT}/gh.sleep"
 WIN="${L_S2}${NL}${L_S3}${NL}${L_X}"
 : > "${ROOT}/gh.fail"
 nf v1.2.0 "${C4}"
@@ -234,6 +293,38 @@ nf v1.2.0 HEAD
 nf v1.2.0 HEAD
 check "an answer with a no-PR line (gh's search can lag) is never read from the cache" 1 "${CODE}"
 rm "${ROOT}/gh.fail"
+# s10's read passes the direct push, which no PR lists (as a board PR gh's search has not listed yet
+# would be): its answer rests on gh's list being whole, so it is never cached.
+nf "${REB2}" "${UNMARK}"
+check "from s9's PR to s10's: s10 is printed" "0|${L_UNMARK}" "${CODE}|${OUT}"
+: > "${ROOT}/gh.fail"
+nf "${REB2}" "${UNMARK}"
+check "an answer whose read passed a commit no PR lists is never read from the cache" 1 "${CODE}"
+rm "${ROOT}/gh.fail"
+# <from> inside a rebase merge, at s8's own marking commit, which no PR lists: s8's base is not known,
+# so it is no fix, and the answer is not cached.
+nf "${MARK}" "${REB}"
+check "a <from> no PR lists, inside a rebase merge: the PR's base is not known, so it is printed" \
+  "0|${REB:0:7} #13 story/s8: its base is not known: ${MARK:0:7} is no listed PR's commit" "${CODE}|${OUT}"
+: > "${ROOT}/gh.fail"
+nf "${MARK}" "${REB}"
+check "and that answer is not cached" 1 "${CODE}"
+rm "${ROOT}/gh.fail"
+
+# A shallow clone, one commit deep, with the tag fetched on its own: its one commit, s13's, shows no
+# parent. It is read as unreadable, not at a parent made up, and the answer is not cached.
+SH="${ROOT}/shallow"; P_FULL="${P}"
+git clone -q --depth 1 "file://${P}" "${SH}" && git -C "${SH}" fetch -q --depth 1 origin tag v1.2.0
+mkdir -p "${SH}/.claude/swarm"; printf '.claude/\n.swarm/\n' >> "${SH}/.git/info/exclude"
+P="${SH}"; board_dir docs
+nf v1.2.0 HEAD
+check "in a shallow clone, the edge commit's story PR prints as unreadable" \
+  "0|${UNMARK2:0:7} #18 story/s13: git cannot read the commit before it" "${CODE}|${OUT}"
+: > "${ROOT}/gh.fail"
+nf v1.2.0 HEAD
+check "and that answer is not cached" 1 "${CODE}"
+rm "${ROOT}/gh.fail"
+P="${P_FULL}"
 
 # Changing board_dir with both commits fixed reads afresh: under board/, the plan commit is a change
 # (docs/ is no board now), and s1's story is read at board/stories/s1.md, which is not there.

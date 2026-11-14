@@ -1335,27 +1335,41 @@ staged_chain() {
 # parent alone, so the flag guards a git that does not. Its PR is the merged PR whose mergeCommit is that
 # commit, from one gh pr list --repo <owner/repo> --state merged of the PRs merged from the day before
 # <from>'s commit date (UTC), <limit> at most: a change whose PR is past that prints as having none.
+# That call ends at the report's deadline (REPORT_END) under a report (next, dash), else after <wait>
+# seconds (SWARM_NON_FIX_WAIT, for tests); a call cut there is a failing gh.
 # The change is a fix when that PR's head is story/fix-main-<sha7> exactly (a fix-main build: fix_main
 # writes no other name, so a planner's slug such as fix-main-docs is no fix), or story/<slug> whose
-# <board>/stories/<slug>.md, read at the
-# commit's first parent, has fix: true in its first front matter (fm_text; a trailing # comment and
-# whitespace off, as stage_of takes them). The parent is the base as the planner left it, so a PR cannot
-# make its own feature a fix by adding fix: true in its own diff, and a PR that deleted its own file is
-# read too. Every other change prints one of
+# <board>/stories/<slug>.md has fix: true in its first front matter (fm_text; a trailing # comment and
+# whitespace off, as stage_of takes them), read at the base the PR merged onto. For a merge commit (two
+# parents or more) that is its first parent, which git names. Else it is the nearest commit before it
+# on the first-parent line that is a merged PR's mergeCommit, else <from> when gh lists it as one (a
+# release tag's commit is): for a squash, its parent; for a rebase merge, whose earlier commits no PR
+# lists, the commit before the PR's first. With neither, <from> may sit inside the PR, so the base is
+# not known: the change is no fix, and the answer is not cached. Other commits
+# between that base and the commit's parent (a rebase merge's earlier ones, a direct push, or a PR gh's
+# search has not listed yet) may not touch the file, save one that only deletes it: any other change
+# to it there, adding fix: true or taking it away, makes the change no fix, and such an answer is not
+# cached, as it rests on gh's list being whole. So the board is read as the planner left it: a PR
+# cannot make its own feature a fix in any of its commits, and a PR that deleted its own file is read
+# too. Every other change prints one of
 #   <sha7> #<n> <head>: <why>                its story is no fix, its file is missing, or its head is no story branch
 #   <sha7>: no merged PR has this commit     a direct push, a rebase merge's earlier commits, or a PR the list missed
 # It reads git at those commits alone, never the checkout or the board's state, so a local edit changes
 # nothing. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
-# <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails or gives no list. A caller counts
-# exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE; SWARM_GH_FRESH set skips
-# the cached read) under <rule>, the board's path and both SHAs, written only once git and gh both
-# answered and no line says no merged PR (gh's search can lag a fresh merge): a merged commit's PR and a
-# file at a commit never change, so next, which dash runs every frame, pays one gh call per base move.
+# <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails, is cut or gives no list. A
+# caller counts exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE;
+# SWARM_GH_FRESH set skips the cached read) under <rule>, the board's path and both SHAs, written only
+# once git and gh both answered, no line says no merged PR and no read passed a commit no PR lists
+# (gh's search can lag a fresh merge): a merged commit's PR and a file at a commit never change, so
+# next, which dash runs every frame, pays one gh call per base move. A repo that merges PRs of several
+# commits by rebase passes such commits, so there it pays one per call.
 non_fix_change() {
   # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
   # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
-  local rule=1 limit=1000
-  local repo="$1" from="" to="" rel q ex=() changes day json map c n head p txt v line out="" keep=1
+  # wait: how long that call may take outside a report.
+  local rule=1 limit=1000 wait="${SWARM_NON_FIX_WAIT:-60}"
+  local repo="$1" from="" to="" rel q ex=() changes all day bound rc json map rows c base prev n head p txt v b at line out="" keep=1
+  [[ "${wait}" =~ ^[1-9][0-9]*$ ]] || wait=60
   [[ ${BOARD_IN_REPO} == 1 ]] || { echo "non_fix_change: the board is outside the repo, so git holds no story history to read" >&2; return 1; }
   [[ "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "non_fix_change: '${repo}' is not <owner>/<repo>" >&2; return 1; }
   for q in "$2" "$3"; do
@@ -1374,11 +1388,22 @@ non_fix_change() {
   changes="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --full-history "${from}..${to}" -- . ${ex[@]+"${ex[@]}"} 2>/dev/null)" \
     || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
   [[ -n "${changes}" ]] || return 0
+  # Every commit on the first-parent line, each with its parents, to find each change's base in.
+  all="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --parents "${from}..${to}" 2>/dev/null)" \
+    || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
   day="$(git -C "${PROJECT_DIR}" show -s --format=%ct "${from}" 2>/dev/null)" || day=""
   [[ "${day}" =~ ^[0-9]+$ ]] || { echo "non_fix_change: git cannot read the date of ${from:0:7}" >&2; return 1; }
   day="$(perl -MPOSIX -e 'print POSIX::strftime("%Y-%m-%d", gmtime($ARGV[0] - 86400))' "${day}")"
-  json="$(gh pr list --repo "${repo}" --state merged --search "merged:>=${day}" --json number,headRefName,mergeCommit \
-    --limit "${limit}" < /dev/null 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} --state merged failed" >&2; return 1; }
+  bound="${wait}"; [[ -z "${REPORT_END:-}" ]] || bound="@${REPORT_END}"
+  rc=0; json="$(within "${bound}" gh pr list --repo "${repo}" --state merged --search "merged:>=${day}" \
+    --json number,headRefName,mergeCommit --limit "${limit}" < /dev/null 2>/dev/null)" || rc=$?
+  if (( rc == 142 )) && [[ -n "${REPORT_END:-}" ]]; then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged was cut at the report's ${REPORT_SECONDS:-} s deadline" >&2; return 1
+  elif (( rc == 142 )); then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged gave no answer within ${wait} s" >&2; return 1
+  elif (( rc != 0 )); then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged failed" >&2; return 1
+  fi
   # One "<mergeCommit> <number> <head>" line per merged PR; one that does not read is left out, so its
   # commit prints as having no PR, and the answer is not cached.
   map="$(python3 -I -c '
@@ -1393,25 +1418,48 @@ for p in prs:
        and isinstance(head, str) and re.fullmatch(r"[^\s\x00-\x1f\x7f]+", head):
         print(oid, n, head)
 ' <<< "${json}" 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} gave no list of merged PRs" >&2; return 1; }
-  while IFS= read -r c; do
-    n=""; head=""
-    read -r _ n head <<< "$(awk -v c="${c}" '$1 == c { print; exit }' <<< "${map}")"
+  # "<change> <base> <parent> [<number> <head>]", oldest first: the parent is its first parent, - for
+  # none (a shallow clone's edge); the base is that parent for a merge commit, else the last commit
+  # before it, on the first-parent line, that the map names, else <from> when the map names it, else -.
+  # Each input ends in a newline, so an empty one is still one line and its file is still counted.
+  rows="$(awk -v from="${from}" 'FNR == 1 { f++ }
+    f == 1 { if (NF == 3) { n[$1] = $2; h[$1] = $3 }; next }
+    f == 2 { if (!seen++) last = (from in n) ? from : "-"; if (NF) ch[$1] = 1; next }
+    NF { p = (NF > 1) ? $2 : "-"
+         if ($1 in ch) print $1, ((NF > 2) ? p : last), p, (($1 in n) ? n[$1] " " h[$1] : "")
+         if ($1 in n) last = $1 }' \
+    <(printf '%s\n' "${map}") <(printf '%s\n' "${changes}") <(printf '%s\n' "${all}"))"
+  while read -r c base prev n head; do
+    [[ -n "${c}" ]] || continue
     if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
     line="${c:0:7} #${n} ${head}:"
     [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
     if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
     p="${rel}stories/${BASH_REMATCH[1]}.md"
-    if ! txt="$(git -C "${PROJECT_DIR}" show "${c}^:${p}" 2>/dev/null)"; then
-      # A parent git cannot read (a shallow clone) is no answer: printed, but not cached.
-      if git -C "${PROJECT_DIR}" rev-parse -q --verify "${c}^^{commit}" > /dev/null 2>&1; then out+="${line} no ${p} before the merge"$'\n'
+    # No parent to read (a shallow clone's edge) is no answer: printed, but not cached.
+    if [[ "${prev}" == - ]]; then out+="${line} git cannot read the commit before it"$'\n'; keep=""; continue; fi
+    # No listed PR's commit to stand on: <from> may be one of this PR's own commits.
+    if [[ "${base}" == - ]]; then out+="${line} its base is not known: ${from:0:7} is no listed PR's commit"$'\n'; keep=""; continue; fi
+    # A read that passes commits no PR lists rests on gh's list being whole: never cached.
+    at="before the merge"; [[ "${prev}" == "${base}" ]] || { at="at ${base:0:7}, the last listed PR before it"; keep=""; }
+    if ! txt="$(git -C "${PROJECT_DIR}" show "${base}:${p}" 2>/dev/null)"; then
+      # A base git cannot read (a shallow clone) is no answer: printed, but not cached.
+      if git -C "${PROJECT_DIR}" rev-parse -q --verify "${base}^{commit}" > /dev/null 2>&1; then out+="${line} no ${p} ${at}"$'\n'
       else out+="${line} git cannot read the commit before it"$'\n'; keep=""; fi
       continue
     fi
     v="$(fm_text fix <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-    [[ "${v}" != true ]] || continue
-    if [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true before the merge"$'\n'
-    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} before the merge, not true"$'\n'; fi
-  done <<< "${changes}"
+    if [[ "${v}" == true ]]; then
+      # The base's answer stands when no commit after it touched the file, or one did and deleted it.
+      [[ "${prev}" != "${base}" ]] || continue
+      b="$(git -C "${PROJECT_DIR}" rev-list --first-parent --full-history "${base}..${prev}" -- "${p}" 2>/dev/null)" \
+        || { out+="${line} git cannot read ${p}'s history before the merge"$'\n'; continue; }
+      [[ -n "${b}" ]] || continue
+      [[ "${b}" == *$'\n'* ]] || git -C "${PROJECT_DIR}" rev-parse -q --verify "${b}:${p}" > /dev/null 2>&1 || continue
+      out+="${line} ${p} changed between ${base:0:7} and the merge"$'\n'
+    elif [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true ${at}"$'\n'
+    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} ${at}, not true"$'\n'; fi
+  done <<< "${rows}"
   out="${out%$'\n'}"
   if [[ -n "${keep}" ]]; then non_fix_cache put "${rule}" "${repo}" "${rel}" "${from}" "${to}" <<< "${out}" || true; fi
   [[ -z "${out}" ]] || printf '%s\n' "${out}"
