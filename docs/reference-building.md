@@ -316,9 +316,14 @@ selection above passes from the session that runs swarm.sh, or can go under `env
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
 `gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY`
-reaches agents only when `agent_env` names it. Foundry is the exception: its endpoint and key exist
-only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`, every agent also gets
-the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables, with no `agent_env` line.
+reaches agents only when `agent_env` names it. Foundry and Bedrock are the exceptions. Foundry's
+endpoint and key exist only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`,
+every agent also gets the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables,
+with no `agent_env` line. When `CLAUDE_CODE_USE_BEDROCK` is `1` or `true`, every agent gets the
+session's `AWS_BEARER_TOKEN_BEDROCK` (Bedrock's API key) and `ANTHROPIC_DEFAULT_*_MODEL` variables the
+same way. Without them an agent on Bedrock hangs at its first request. `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are not passed: profile and SSO logins reach agents
+through `HOME` and `AWS_PROFILE`, and a long-lived exported secret stays opt-in through `agent_env`.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
