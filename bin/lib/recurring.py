@@ -1,8 +1,22 @@
 """recurring — the kinds of finding fixed (or escaped) on many distinct PRs in a window of days, and the
-check story that merged for each. outcomes_join prints its recurring block from here. It makes no gh
-call: it reads findings.tsv and the board's git log alone."""
+check story that merged for each. outcomes_join prints its recurring block from here, and retro's
+recurring section (retro_recurring.py) folds kinds by FOLD. It makes no gh call: it reads findings.tsv
+and the board's git log alone."""
 import collections, datetime, os, re, subprocess
 from report import fixed_rows, pr_key
+
+# One kind under several names (the 0.28 HLD's Appendix A): each name here counts as the kind it maps
+# to. retro's recurring section folds by it; outcomes' block does not.
+FOLD = {"docs-misstate-code": "docs", "stale-docs": "docs", "docs-stale": "docs",
+        "test-coverage": "test-gap", "missing-case": "test-gap"}
+
+def fold(kind):
+    # The kind a finding's kind counts as: its FOLD entry, or itself.
+    return FOLD.get(kind, kind)
+
+def fold_group(kind):
+    # Every name that folds into the kind, the kind itself among them, in name order.
+    return sorted({kind} | {k for k, v in FOLD.items() if v == kind})
 
 def board_log(board, *args):
     # git log over the board's stories on its default branch, where merges land (HEAD when there is no

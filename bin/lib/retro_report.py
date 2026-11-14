@@ -7,7 +7,8 @@
 # changes. A section that raises prints `error: <name>: <message>` under its heading, the others
 # still run, and retro exits 1; so does one that calls sys.exit with a failing code (sys.exit() or
 # sys.exit(0) only ends that section). bin/lib comes first on sys.path (SWARM_LIB, under python3 -I),
-# so a section imports bin/lib's report.py, never a file of that name in the project.
+# so a section imports bin/lib's report.py, never a file of that name in the project. The environment
+# holds SWARM_FINDING_REVIEWERS, so report.py's finding readers can read findings.tsv.
 import glob, os, runpy, sys, traceback
 sys.path.insert(0, os.environ["SWARM_LIB"])
 KEYS = "tag day project board events findings memory findings_open".split()

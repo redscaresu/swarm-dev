@@ -536,7 +536,8 @@ flow_sections() {
 # --memory defaults to Claude Code's memory folder for this project (CLAUDE_PROJECTS, then the main
 # checkout's path with each character outside A-Za-z0-9 turned into -, then /memory).
 # Then retro_report.py runs each bin/lib/retro_<name>.py under `## <name>`, with the context below.
-# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run. A new
+# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run, and
+# SWARM_FINDING_REVIEWERS is set for report.py's finding readers. A new
 # section is a new retro_<name>.py; neither this nor retro_report.py changes. Exits 1 when a section fails.
 retro_report() {
   local usage="usage: swarm.sh retro [--since <tag>] [--memory <dir>]" tag="" memory="" main base day home top writer v open rc=0
@@ -574,7 +575,7 @@ retro_report() {
   echo
   open="$(mktemp "${TMPDIR:-/tmp}/retro-findings.XXXXXX")" || die "retro: cannot make a temp file"
   out_of_scope_findings "${day}" > "${open}"
-  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
+  SWARM_LIB="${SWARM_HOME}/bin/lib" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
     "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${memory}" "${open}" || rc=$?
   rm -f "${open}"
   return "${rc}"
