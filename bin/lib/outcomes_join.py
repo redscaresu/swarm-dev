@@ -1,6 +1,7 @@
-import collections, datetime, os, re, subprocess, sys
+import collections, datetime, os, re, sys
 from events_outcome import outcome
 from report import *
+from recurring import block, board_log, dated_fixes
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 NO_PR = ("", "", "", "", "", "", "", "")
@@ -158,25 +159,6 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     for u in urls:
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
-def board_log(*args):
-    # git log over the board's stories on its default branch, where merges land (HEAD when there is no
-    # origin/HEAD, as dash_base_ref), so a story branch's own commits are no merge; "" when git fails.
-    # --first-parent dates a commit by the merge, and --no-renames keeps a story deleted beside a
-    # similar new one a deletion.
-    board = sys.argv[2]
-    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
-    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
-                          "--first-parent", "--diff-merges=first-parent", "--no-renames", *args, "--", "stories/"],
-                         capture_output=True, text=True)
-    return got.stdout if got.returncode == 0 else ""
-
-def board_commits(*args):
-    # The board's commits that add or delete a story file, newest first, as (the format's text, [the
-    # story paths]). Each commit prints as "\x01<format>\0" and then its paths (from the repo root, any
-    # characters), each ending "\0".
-    commits = [c.split("\0") for c in board_log("-z", "--name-only", *args).split("\x01")[1:]]
-    return [(c[0], [p.lstrip("\n") for p in c[1:] if p.strip("\n")]) for c in commits]
-
 # held: the minutes a story's first build waited ready under the conductor run it started in: from the
 # later of the run's start and the story's ready time to the build's start. The story was ready at its
 # last ok unblock event or board commit that set its `status: ready` (a story added ready, or readied
@@ -201,7 +183,7 @@ conducting, closed, reported = collections.defaultdict(list), collections.defaul
 # never counts.
 round_starts = collections.defaultdict(list)
 # Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
-for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
+for commit in board_log(sys.argv[2], "-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
     lines, path = commit.split("\n"), ""
     for l in lines[1:]:
         if l.startswith("+++ "):
@@ -319,53 +301,9 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
                      + [rework] + ([held(slug, story_epic, f[AS_IS]), ready_wait(slug, f[AS_IS])] if attempts == "1" else ["", ""])
                      + [green_to_review(slug, the_pr)]))
 
-def check_story(kind):
-    # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
-    # finds a merged story), as (slug, day it was deleted); None when git has none. Without
-    # --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story deleted
-    # beside it is never taken for it.
-    commits = board_commits("--diff-filter=D", "--format=%x01%cs", "-G", f"^checks: *{kind} *$")
-    if not commits or not commits[0][1]:
-        return None
-    deleted, paths = commits[0]
-    return os.path.splitext(os.path.basename(paths[0]))[0], datetime.date.fromisoformat(deleted)
-
-TODAY, DAY = datetime.date.today(), datetime.timedelta(days=1)
-WINDOW = datetime.timedelta(days=RECURRING_DAYS)
-
-def finding_day(s):
-    # A finding's local day, or None when it is malformed, impossible (2026-02-30) or in the future.
-    try:
-        d = datetime.date.fromisoformat(s) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else None
-    except ValueError:
-        return None
-    return d if d and d <= TODAY else None
-
-# After a blank line, every kind fixed (or escaped) on RECURRING_MIN_PRS or more PRs in the last
-# RECURRING_DAYS days (today among them), most PRs first; once its check story merged, its PRs in the
-# RECURRING_DAYS before that day and in the RECURRING_DAYS from it, the second as <n>/<days>d while
-# fewer days than that have passed. flow and review-yield skip these lines: they are not a row's width.
-dated_fixes = [(finding_day(f[0]), f[1], pr_key(f[2])) for f in fixed_rows(sys.argv[1])]
-dated_fixes = [f for f in dated_fixes if f[0]]
-
-def prs_between(kind, start, end):
-    # The distinct PRs the kind was fixed on from day start up to, not including, day end.
-    return len({pr for d, k, pr in dated_fixes if k == kind and start <= d < end})
-
-# One pass over the log for every kind's recent PRs; prs_between is only for the few flagged kinds.
-recent_prs = collections.defaultdict(set)
-for fix_day, fix_kind, fix_pr in dated_fixes:
-    if TODAY + DAY - WINDOW <= fix_day < TODAY + DAY:
-        recent_prs[fix_kind].add(fix_pr)
-recent = {k: len(v) for k, v in recent_prs.items()}
-flagged = sorted((k for k, n in recent.items() if n >= RECURRING_MIN_PRS), key=lambda k: (-recent[k], k))
-if flagged:
-    print("\nrecurring\tprs_30d\tcheck\tcheck_merged\tbefore_30d\tsince_30d")
-for flagged_kind in flagged:
-    check_slug, check_day = (re.fullmatch(r"[a-z0-9-]+", flagged_kind) and check_story(flagged_kind)) or ("", None)
-    counts = ["", ""]
-    if check_day:
-        since, covered = str(prs_between(flagged_kind, check_day, check_day + WINDOW)), max(0, (TODAY - check_day).days + 1)
-        counts = [str(prs_between(flagged_kind, check_day - WINDOW, check_day)),
-                  since if covered >= RECURRING_DAYS else f"{since}/{covered}d"]
-    print("\t".join([flagged_kind, str(recent[flagged_kind]), check_slug, check_day.isoformat() if check_day else ""] + counts))
+# After a blank line, recurring's block: the kinds fixed (or escaped) on RECURRING_MIN_PRS or more PRs
+# in the last RECURRING_DAYS days. flow and review-yield skip these lines: they are not a row's width.
+today = datetime.date.today()
+recurring_lines = block(dated_fixes(sys.argv[1], today), sys.argv[2], today, RECURRING_DAYS, RECURRING_MIN_PRS)
+if recurring_lines:
+    print("\n" + "\n".join(recurring_lines))

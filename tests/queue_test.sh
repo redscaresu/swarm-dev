@@ -15,7 +15,8 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+# A watch a check left running is stopped, its whole group, before the root goes (test_helpers.sh).
+trap 'stop_groups "${ROOT}/groups"; rm -rf "${ROOT}"' EXIT
 # No real Claude config or session is read: claude's state lives under ROOT.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 mkdir -p "${ROOT}/bin"
@@ -96,18 +97,21 @@ green() {
   printf 'done h1\ndone h2\ndone h5\n' > "${p}/.swarm/state/watch-seen"; opened
 }
 # watchrun — what watch --epic e1 printed, or "(still watching)" if it has not returned in 10 seconds.
-# gh.log then holds only this run's calls.
+# gh.log then holds only this run's calls: the watch runs as a process group of its own, and watchrun
+# returns only once that group is gone (stop_group), so no gh call a watch left in flight logs into the
+# next run's gh.log. A watch that never led a group of its own, or a group that outlives the stop, is
+# said after the output, so the check fails.
 watchrun() {
-  local pid
+  local pid stopped note=""
   : > "${ROOT}/gh.log"
-  # A new file each run: a watch the last run killed can leave a gh call in flight, whose error would
-  # land in a reused file (that check's failed list, as "printf: Broken pipe").
+  # A new file each run, so nothing the last run wrote is read as this one's.
   rm -f "${ROOT}/watch.out"
-  (cd "${p}" && exec env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic e1 > "${ROOT}/watch.out" 2>&1) &
-  pid=$!
+  (cd "${p}" && in_new_group env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic e1 > "${ROOT}/watch.out" 2>&1) &
+  pid=$!; group_record "${pid}" "${ROOT}/groups" || note=" (no group ${pid})"
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do kill -0 "${pid}" 2>/dev/null || break; sleep 0.5; done
-  if kill -0 "${pid}" 2>/dev/null; then pkill -P "${pid}" 2>/dev/null || true; kill "${pid}" 2>/dev/null || true; wait "${pid}" 2>/dev/null || true; echo "(still watching)"; return; fi
-  cat "${ROOT}/watch.out"
+  if kill -0 "${pid}" 2>/dev/null; then stopped="(still watching)"; else stopped="$(cat "${ROOT}/watch.out")"; fi
+  stop_group "${pid}" "${ROOT}/groups" || note+=" (group ${pid} not stopped)"
+  printf '%s\n' "${stopped}${note}"
 }
 # nextq [step] [bash] — next's queued lines (none: "(none)"), after checking its step is [step] (default
 # wait conduct-e1); run with [bash] (default bash), its stderr in next.err.
