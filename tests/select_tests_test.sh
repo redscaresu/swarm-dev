@@ -51,7 +51,7 @@ mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" 
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh rules.md; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_recurring_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
