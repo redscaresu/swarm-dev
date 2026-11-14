@@ -1355,6 +1355,49 @@ version_gt() {
   return 1
 }
 
+# retro_done <ref> <version> <tag> — true when <board_rel>retros/v<version>.md at git <ref> is a done
+# retro covering <version>: its first front-matter block (from line 1 to the next ---) has
+# `done: YYYY-MM-DD` and `covers: v<a.b.c>..v<x.y.z>`, one line each, no quotes, nothing after the
+# value, with x.y.z equal to <version> and a.b.c at or before <tag>. It reads the file with one git
+# show at <ref> (next passes origin/<base>, merge --release RELEASE_BASE), never the checkout. On a pass
+# it prints 'covers v<a.b.c>..v<x.y.z>, done <date>' on stdout; otherwise it prints why on one line,
+# also on stdout, and fails. A board outside the repo has no retro file at any ref, so it always fails
+# there. A file in retros/ with neither field is a note, and fails as one.
+retro_done() {
+  local ref="$1" ver="$2" tag="$3" path text d c
+  [[ -n "${ref}" && "${ref}" != -* ]] || { echo "retro_done: '${ref}' is not a git ref"; return 1; }
+  [[ "${ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || { echo "retro_done: '${ver}' and '${tag}' must each be x.y.z"; return 1; }
+  [[ ${BOARD_IN_REPO} == 1 ]] \
+    || { echo "no retro file can be read at ${ref}: the board (${BOARD}) is outside the project's repo"; return 1; }
+  path="$(board_rel)retros/v${ver}.md"
+  text="$(git -C "${PROJECT_DIR}" show "${ref}:${path}" 2> /dev/null)" || { echo "no ${path} at ${ref}"; return 1; }
+  d="$(retro_fm "done" <<< "${text}")"; c="$(retro_fm covers <<< "${text}")"
+  if [[ -z "${d}" && -z "${c}" ]]; then
+    echo "${path} at ${ref} has neither done: nor covers: in its front matter, so it is a note, not a retro"; return 1
+  fi
+  [[ -n "${d}" ]] || { echo "${path} at ${ref} has no done: in its front matter"; return 1; }
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "${path} at ${ref}: done: '${d}' is not YYYY-MM-DD"; return 1; }
+  [[ -n "${c}" ]] || { echo "${path} at ${ref} has no covers: in its front matter"; return 1; }
+  [[ "${c}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\.\.v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+    || { echo "${path} at ${ref}: covers: '${c}' is not v<a.b.c>..v<x.y.z>"; return 1; }
+  [[ "${BASH_REMATCH[2]}" == "${ver}" ]] \
+    || { echo "${path} at ${ref}: covers: ${c} ends at v${BASH_REMATCH[2]}, not v${ver}"; return 1; }
+  ! version_gt "${BASH_REMATCH[1]}" "${tag}" \
+    || { echo "${path} at ${ref}: covers: ${c} starts at v${BASH_REMATCH[1]}, after the last tag v${tag}"; return 1; }
+  echo "covers ${c}, done ${d}"
+}
+
+# retro_fm <key> — <key>'s value in the front matter of the text on stdin: the block from a --- on line
+# 1 to the next ---, its first line starting <key>:, the spaces after the colon off. Nothing when line 1
+# is not ---, the block never closes, or no line in it has <key>.
+retro_fm() {
+  awk -v k="$1" 'NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { closed = 1; exit }
+    !seen && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^[ \t]+/, "", v); seen = 1 }
+    END { if (closed && seen) print v }'
+}
+
 # staged_draft <epic file> — "<stage> <prev>" (x.y.z each) for a staged draft: status: draft, a
 # stage: v<x.y.z> (stage_of) whose minor is above 0, and its own hld: naming an agreed HLD whose
 # grants: list epics (the ticket epic_unticketed reads, so the board PR that sets it active lands
