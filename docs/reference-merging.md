@@ -754,7 +754,8 @@ Every builder, review agent and conductor brief lists the forms the guard passes
 `cd <dir> || exit 1 && <command>`, a merge run alone in its call (the brief gives its own merge
 command, or none under `merge = human`, so the rule names none), and the brief's own waits. A
 builder's is `swarm.sh wait-pr --head`. A review agent's are
-`swarm.sh wait --stall` and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
+`swarm.sh wait --stall`, `swarm.sh wait --stall --past <sha> <slug>` for a fix (it also ends once
+the builder pushes past `<sha>`) and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
 conductor's are its own `swarm.sh watch --epic <epic>` (or `--backlog`) and `swarm.sh wait`, since
 it never waits on CI. Text that mentions a merge goes through the Write tool, or into a `gh pr`
 command as a quoted heredoc (`--body "$(cat <<'EOF' ... EOF)"`). A `gh api` call that carries it is
