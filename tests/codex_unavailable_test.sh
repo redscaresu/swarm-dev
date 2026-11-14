@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # codex_unavailable_test.sh — codex-review when codex could not review at all. A codex whose output ends
 # in three reconnect lines, or in a "stream disconnected before completion" line, is stopped well before
-# its timeout, logs a codex-unreachable incident, and with fallback_reviewer set a fallback reviews in its
+# its timeout (or exits on them, as codex does on a broken stream), logs a codex-unreachable incident, and with fallback_reviewer set a fallback reviews in its
 # place ("reviewed by fallback <model>: codex unreachable"); with it empty, codex-review prints "codex
 # skipped: unreachable" and fails. A codex that times out keeps its reap line, and with fallback_reviewer
 # set the fallback gets a whole codex_minutes of its own (SWARM_CODEX_SECONDS stands in for it here); with
@@ -155,6 +155,27 @@ review "${HIGH}"
 check "with fallback_reviewer empty, a stream-disconnected line prints codex skipped: unreachable" \
   "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable" \
   "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
+
+# --- The same lines from a codex that exits on them at once, as the real codex does on a broken stream:
+# it is gone long before CODEX_UNREACHABLE_GRACE, so the live poll never sees it, and codex_limit reads
+# its output after it exits.
+codex "$(say "ERROR: stream disconnected before completion: error sending request for url (https://x.openai.azure.com/openai/responses)")" "exit 1"
+n="$(count incident)"
+review "${HIGH}" "fallback_reviewer = sonnet"
+check "a stream-disconnected line then exit 1: a codex-unreachable incident, and the fallback reviews" \
+  "0|$((n + 1))|codex-s1|codex-unreachable|yes" \
+  "${rc}|$(count incident)|$(events incident | tail -1)|$(has "reviewed by fallback sonnet: codex unreachable" "${out}")"
+n="$(count incident)"
+review "${HIGH}"
+check "with fallback_reviewer empty, a stream-disconnected line then exit 1 prints codex skipped: unreachable" \
+  "1|yes|$((n + 1))|codex-s1|codex-unreachable" \
+  "${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
+codex "$(say "ERROR: Reconnecting... 1/5")" "$(say "ERROR: Reconnecting... 2/5")" "$(say "ERROR: Reconnecting... 3/5")" "exit 1"
+n="$(count incident)"
+review "${HIGH}"
+check "with fallback_reviewer empty, three reconnect lines then exit 1 print codex skipped: unreachable" \
+  "1|yes|$((n + 1))|codex-s1|codex-unreachable" \
+  "${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
 
 # --- A silent hang past codex's time: the reap line as before, then the fallback with a whole budget of
 # its own, as codex-review prints it (codex's own time is spent, so what is left would be 0). 60 s, as
