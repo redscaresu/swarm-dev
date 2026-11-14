@@ -782,6 +782,12 @@ expect_conductor "a conductor that reported after its epic's last merge is colle
 # A conductor whose turn stopped on an API error (herdr idle, its pane ending on the error) is named a stall.
 expect_conductor "a conductor stopped on an API error: next names the stop" "wait conduct-e1" no e1 "stuck: *API error*" \
   "printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' > screen"
+# A model error (a 400 naming the model ID) is named as one: wait does not resume it, so the why says a fresh session.
+expect_conductor "a conductor stopped on a model error: next names it and the fresh-session restart" "wait conduct-e1" no e1 \
+  "stuck: *stopped on a model error*fresh session*" \
+  "printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error (eu.anthropic.claude-x-9): 400 The provided model identifier is invalid.' > screen"
+expect_conductor "a conductor stopped on a 529 is still named an API error, which wait resumes" "wait conduct-e1" no e1 \
+  "stuck: *stopped on an API error; *resumes it" "printf '%s\n' '⏺ API Error: 529 Overloaded' > screen"
 expect_conductor "a conductor whose pane has a later reply after an API error is still working" "wait conduct-e1" no e1 "*still working*" \
   "printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap

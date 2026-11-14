@@ -102,7 +102,8 @@ Useful while it runs:
   `SWARM_*` and `XDG_*`). Any other variable you exported reaches an agent only when its story names
   it under `env:` or the board's config lists it in `agent_env`. With Foundry on
   (`CLAUDE_CODE_USE_FOUNDRY`), the session's `ANTHROPIC_FOUNDRY_*` and
-  `ANTHROPIC_DEFAULT_<MODEL>_MODEL` settings pass to every agent too.
+  `ANTHROPIC_DEFAULT_<MODEL>_MODEL` settings pass to every agent too. With Bedrock on
+  (`CLAUDE_CODE_USE_BEDROCK`), so do `AWS_BEARER_TOKEN_BEDROCK` and the model settings.
 - The plugin's guard hook refuses a raw merge, a `cd <dir>` followed by `;` (write
   `cd <dir> || exit 1 &&`), a `git checkout` that drops uncommitted changes, a `git reset --hard`,
   `restore` or `clean` that would drop uncommitted changes or untracked files in the main checkout

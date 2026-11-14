@@ -383,9 +383,10 @@ The kinds and their exits:
   `wait` answers it.
 - `login`: the turn ended on "Please run /login". Exit: `the user runs /login, then swarm.sh tell
   <agent> resume <file>`.
-- `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
+- `api-error`: the turn ended on Claude Code's `API Error:` (or `API Error (<model>):`) line, a model
+  error among them. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
-  up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. Exit: `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
@@ -583,6 +584,25 @@ one that costs money, or one whose merge `held:` it for the user. An `unconfirme
 check by hand, goes to the lead, so its note does get a line. `review-agent` removes the note when it starts a new agent, so the line goes
 then; a start that fails with no agent running puts the note back. It reads the same herdr list as
 `no-agent:`; a poll whose list failed keeps the `stopped:` lines it saw last.
+
+**Plan swarm lines.** A plan swarm whose agents have all written their output wakes the lead too.
+`/plan-epic` opens its agents in a tab recorded as `.swarm/state/scope-<epic>`, and `/plan-hld` in
+`plan-<hld>`. The record has a `<pane> <name>` line for each agent still open. Each agent writes
+`.swarm/<epic>/<name>.json`, where `<name>` is the record's name less a trailing `-<epic>`
+(`survey-<epic>` writes `survey.json`). When every listed agent's file counts, `wait --lead` prints
+`planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>`, or
+`planned: <hld> (<names> done), exit: /swarm-dev:plan-hld <hld>` for an HLD's plan. A file counts
+when it parses as JSON and is newer than its planner's resume reference. For `/plan-epic` that is
+the epic file, and for its split critic the plan's board PR worktree. For `/plan-hld` it is
+`.swarm/<hld>/base-rev`, or the HLD file on a board outside the repo. A malformed file, or one
+from an earlier attempt, does not count, and neither does a `.partial`. There is no line while
+the plan's board PR worktree exists (`<repo>-wt/_board-scope-<epic>`, or `_board-plan-<hld>`),
+from `board-pr start` until `board-pr done`: the plan is then in its board PR, or about to be.
+As `/plan-hld` makes its worktree before it starts an agent, an HLD's plan gets this line only
+when its worktree is gone. The lead runs the exit, which reuses the outputs and starts the next step.
+The next step's agents change the names, so the line comes again when that step ends. It reads
+the tab records, the board and `.swarm` files, with one `python3` for the JSON, and makes no gh or
+herdr call. It is an alert, so a run's first read prints it.
 
 **A conductor that reported with agent work left wakes the lead too.** A conductor writes
 `.swarm/conduct-<epic>.report.md` as its last act, and a new `swarm.sh conduct` removes an earlier
