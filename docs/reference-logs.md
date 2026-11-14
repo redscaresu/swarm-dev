@@ -72,7 +72,7 @@ first. The cause says why they stepped in. It is one of `INTERVENE_CAUSES` in `b
 in the field `cause=<cause>`. Any other kind or cause, an empty line, or an events.tsv it cannot write
 fails and writes nothing, and an unknown cause's error lists the causes. So does the old form with no
 cause, `swarm.sh intervene <kind> "<one line>"`.
-An incident on an agent (`api-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
+An incident on an agent (`api-error`, `model-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
 `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail. `role=` is
 the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there. `slug=` is the story
 the command was working on. Where the command knows only the agent's name, the slug comes from the name. A
@@ -97,7 +97,9 @@ a nested run, whose runs log is set empty, writes none. Both take the incidents'
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
-Error:` line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
+Error` line whose status is 400 or 404 and whose text names the model (`model ID`, `model identifier`,
+`inference profile`, `model_not_found`) is `model-error` instead. An `API
+Error:` (or `API Error (<model>):`) line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
 own indented text does not count, and neither does a tool's output (`⎿`) that prints `API Error:` or
 quotes the denial. `next` and `tell`
 only read. `status` and `wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it
@@ -493,8 +495,8 @@ one hour here can straddle two of GitHub's. `--epic` does not narrow it.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
-so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`
-and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
+so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`,
+`model-error` and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
 `conduct-<epic>`'s its epic, as `outcomes` gives them, and `-` when none does. `--epic` keeps that
 epic's rows. Three more parts follow, each after a blank line, over every epic. TSV `kind cause
 incidents` counts the window's incidents per kind and `cause=` field, which `swarm.sh intervene`

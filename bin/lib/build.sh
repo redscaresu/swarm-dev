@@ -2011,10 +2011,12 @@ again with \`swarm.sh wait <slug>\` in the background.
 A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder as
 stalled for it. \`stuck: api error\` is a turn that stopped on an API error after wait told it to carry
 on three times: read the pane (\`herdr agent read <pane>\`), then tell it to resume once more and
-wait on it again, or list it for the lead. \`stuck: no output for <N>m (<pane>)\` is a busy session
+wait on it again, or list it for the lead. \`stuck: model error (<line>)\` is a turn the provider
+refused for its model (a 400 or 404 naming the model ID): a resume in the same session would send the
+same model, so tell it nothing and list it for the lead, who restarts it in a fresh session. \`stuck: no output for <N>m (<pane>)\` is a busy session
 whose pane has not changed that long with no background task running; a \`tell\` to a busy session
 is queued and delivered only when its turn ends, so do not tell it: read the pane and list it for the lead. With goal on, wait never tells a
-builder to carry on: its \`stuck: api error\` is the goal rule's to read, and the goal rule's close
+builder to carry on: its \`stuck: api error\` or \`stuck: model error\` is the goal rule's to read, and the goal rule's close
 for it stands.
 EOF
 }
@@ -2045,7 +2047,7 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   story for the lead (\`kind: lead\`, \`held_for: paused\`): list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
-  ends on an API error (wait prints \`stuck: api error\` for it); or \`swarm.sh story\` failed on a refused goal.
+  ends on an API error (wait prints \`stuck: api error\` or \`stuck: model error (<line>)\` for it); or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error --drop\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The close holds the story for the lead
   (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.
