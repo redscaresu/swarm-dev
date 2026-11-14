@@ -11,7 +11,8 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+# A watch a check left running is stopped, its whole group, before the root goes (test_helpers.sh).
+trap 'stop_groups "${ROOT}/groups"; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 
@@ -83,27 +84,35 @@ unsee() { { grep -vx "opened o/svc#$1" "${seen}" || true; } > "${ROOT}/seen"; cp
 # watch_for <watch args...> — what watch printed (stdout and stderr), a |, then how it ended: its exit
 # code, "polling" once it has listed the PRs three times (so two whole polls said nothing), or "timeout"
 # when neither comes within WATCH_SECS, swarm.sh's start included. It polls every 0.12 s; calls then holds
-# only this run's gh calls. A watch still running is stopped, then its children (its sleep); what it
-# printed is read before that, as a pipe the stop cuts can print an error (head: Broken pipe) after it.
+# only this run's gh calls. The watch runs as a process group of its own, and watch_for returns only once
+# that group is gone (stop_group): a watch still running is stopped with every process it started, and
+# one that exited leaves none behind, so no gh call of it writes to calls or the root after. What it
+# printed is read before the stop, as a pipe the stop cuts can print an error (head: Broken pipe) after
+# it. A watch that never led a group of its own, or a group that outlives the stop, is said after the
+# end, so the check fails.
 WATCH_SECS=60
 watch_for() {
-  local pid i end=timeout kids k out
+  local pid i end=timeout out note=""
   : > "${ROOT}/calls"; rm -f "${ROOT}/watch.out"
-  (cd "${p}" && exec env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" \
+  (cd "${p}" && in_new_group env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" \
     bash "${SWARM}" watch "$@" > "${ROOT}/watch.out" 2>&1) &
-  pid=$!
+  pid=$!; group_record "${pid}" "${ROOT}/groups" || note=" (no group ${pid})"
   for ((i = 0; i < WATCH_SECS * 5; i++)); do
     if ! kill -0 "${pid}" 2>/dev/null; then { wait "${pid}"; } 2>/dev/null && end=0 || end=$?; break; fi
     if [[ $(grep -c 'pulls?state=open' "${ROOT}/calls" || true) -ge 3 ]]; then end=polling; break; fi
     sleep 0.2
   done
   out="$(cat "${ROOT}/watch.out")"
-  if [[ "${end}" == polling || "${end}" == timeout ]]; then
-    kids="$(pgrep -P "${pid}" || true)"; kill "${pid}" 2>/dev/null || true; { wait "${pid}"; } 2>/dev/null || true
-    for k in ${kids}; do kill "${k}" 2>/dev/null || true; done
-  fi
-  printf '%s|%s' "${out}" "${end}"
+  stop_group "${pid}" "${ROOT}/groups" || note+=" (group ${pid} not stopped)"
+  printf '%s|%s' "${out}" "${end}${note}"
 }
+
+# in_new_group may change nothing of a watch but its process group. A launcher that left SIGPIPE ignored,
+# as an exec from python3 does, would have a watch's writer into `| head` print "Broken pipe" and end 1,
+# where a real watch's ends 141 and prints nothing. So that writer ends the same with it and without.
+# shellcheck disable=SC2016 # the inner bash's variable
+pipe_end() { "$@" bash -c 'yes | head -1 > /dev/null; echo "${PIPESTATUS[0]}"' 2>&1; }
+check "a command started through in_new_group has SIGPIPE as it was: a writer into a closed pipe ends the same" "$(pipe_end exec)" "$(pipe_end in_new_group)"
 
 check "watch --epic says its own story's PR opened, skipping another epic's, and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
 check "watch --epic reads nothing of the PR it says opened past the list" "0" "$(grep -cE 'pulls/2|commits/head2' "${ROOT}/calls" || true)"
