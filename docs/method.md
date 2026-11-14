@@ -99,7 +99,7 @@ lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it w
 `origin/HEAD`, and asks origin only when that is missing, without prompting and for at most 15 seconds; with
 no answer it writes no CI and says so. The step fails, naming the target, when make has no `check` target.
 Its gate, `.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
-files (`stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages in
+files (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and `retros/*.md` under `board_dir`, so other pages in
 `docs/` still get checked). A board outside the repo gets the workflow without the gate. A `ci.yml` that init
 wrote carries a marker line; init leaves it alone after that and only writes the gate again if it is missing.
 With other workflows already there, init leaves them, writes the gate, and prints the step to add to the job

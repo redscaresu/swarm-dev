@@ -239,13 +239,21 @@ merge --board "${URL}"
 is "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: exits 0" 0 "${rc}"
 check "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: merged" merged
 
-# One that also changes a file outside them is refused, whatever the order.
+# retros/*.md is a glob: a PR that changes only a retro file passes too.
+fresh; rm "${S}"; echo '[{"filename":"retros/v1.0.0.md","status":"added"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+merge --board "${URL}"
+is "board at the root, retros/v1.0.0.md only: exits 0" 0 "${rc}"
+check "board at the root, retros/v1.0.0.md only: merged" merged
+
+# One that also changes a file outside them is refused, whatever the order, and so is a script beside
+# the retro files.
 for files in '[{"filename":"stories/s.md"},{"filename":"bin/swarm.sh"}]' '[{"filename":"README.md"},{"filename":"epics/e.md"}]' \
-  '[{"filename":"Board.base.py"}]' '[{"filename":"Board.base-backup"}]' '[{"filename":"Board.basement/x.sh"}]' '[{"filename":".obsidianx/x.sh"}]'; do
+  '[{"filename":"Board.base.py"}]' '[{"filename":"Board.base-backup"}]' '[{"filename":"Board.basement/x.sh"}]' '[{"filename":".obsidianx/x.sh"}]' \
+  '[{"filename":"retros/x.sh"}]' '[{"filename":"bin/tool"}]'; do
   fresh; rm "${S}"; echo "${files}" > "${FX}/files"; grep -o '"filename"' <<< "${files}" | wc -l | tr -d ' ' > "${FX}/nfiles"
   merge --board "${URL}"; refused "board at the root, ${files}" "outside the board's paths"
 done
-check "board at the root, a refusal lists the board's paths" said "(stories/, epics/, hld/, Board.base, .obsidian/)"
+check "board at the root, a refusal lists the board's paths" said "(stories/, epics/, hld/, Board.base, .obsidian/, retros/*.md)"
 # Nor does a file renamed onto the board from outside.
 fresh; rm "${S}"; echo '[{"filename":"stories/x.md","previous_filename":"bin/swarm.sh","status":"renamed"}]' > "${FX}/files"
 merge --board "${URL}"; refused "board at the root, a file renamed onto stories/" "changes bin/swarm.sh, outside the board's paths"
