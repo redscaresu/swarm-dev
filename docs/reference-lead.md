@@ -304,6 +304,16 @@ base's read fails on 3 heads passes in a row (`SWARM_LEAD_PRS_WARN_AFTER`, the s
 stderr, or `could not tell the base of <owner/repo>` when it could not pick the base. The lead clears it:
 check `gh auth status`, that gh can see the repo, and `base_branches`.
 
+**A usage estimate past `usage_warn_percent` wakes the lead once a week.** With the key set, each poll
+reads the session logs at most once every 10 minutes (`SWARM_USAGE_EVERY`, 600 seconds). The first time
+the estimate of the week's share, or of Fable's own limit, reaches the key, the poll prints `usage: estimate
+<N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, at or past usage_warn_percent <P> (...; /usage is the truth),
+exit: check /usage, as nothing stops on this`. Once the line has printed, it writes the time of that estimate to
+`.swarm/lead/usage-warned`, and no poll reads the logs again while that time is in the current usage week,
+even when a reading added or changed later moves the week's edges. It is an estimate and a warning, never a gate. A read that fails or takes
+over 60 seconds prints a warning on stderr and no line. How the estimate is made, and how to calibrate
+it, is in reference-models.md § Settings.
+
 **A brief left in an idle agent's input box is submitted once.** herdr types a long brief into the
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
 its input box. On each read, `wait --lead` takes the agents this project opened that the read's one
@@ -831,6 +841,7 @@ Wait until the lead's queue gains one of these, and print each new one:
 - a story PR whose idle builder has sat 60 minutes on findings or a conflict (`stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`)
 - a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`)
 - a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`)
+- with `usage_warn_percent` set, a usage estimate that reaches it, once a usage week (`usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, ...`; reference-models.md § Settings)
 - any other line [§ The lead](reference-lead.md#the-lead) lists
 
 A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`.
