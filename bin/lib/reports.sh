@@ -396,6 +396,13 @@ dataset_report() {
 #     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
 #     their hold= field, unmarked for one with no field (written before merge passed it). --epic does
 #     not narrow it.
+#   panes: TSV story from minutes pane, per review pane (an ok review line after an ok review-finished
+#     line of its slug from the same pane, one row per slug and pane), from events.tsv alone: from its
+#     story's merge (when one came before the pane closed) or its newest handover, to its first
+#     pane-closed line with slug=<slug> role=review pane=<its pane> (or an ok `close
+#     review-<slug>` line from before 0.31.0); open with the minutes so far when none followed, unlogged when that open
+#     pane's start line is from before 0.31.0. Then, after a blank line, over_30, the rows past 30
+#     minutes. --epic does not narrow it.
 #   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
