@@ -17,7 +17,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
-#   swarm.sh retro [--since <tag>] [--memory <dir>]        the release retro's report, read-only, with no gh call: the tag (default the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, with no fetch) and its commit's day, the swarm.sh that wrote it (its commit, or its version when not a git checkout), then one section per bin/lib/retro_<name>.py: memories (the lead's memory notes in --memory <dir>, by default Claude Code's memory folder for this project, each with its name and description)
+#   swarm.sh retro [--since <tag>] [--memory <dir>]        the release retro's report, read-only, with no gh call: the tag (default the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, with no fetch) and its commit's day, the swarm.sh that wrote it (its commit, or its version when not a git checkout), then one section per bin/lib/retro_<name>.py: findings (the declined out-of-scope and deferred findings since the tag that no story carries), incidents (each lead-hand and user-caught line since the tag in full, and the other incident lines), memories (the lead's memory notes in --memory <dir>, by default Claude Code's memory folder for this project, each with its name and description), reaped (each reap line in events.tsv since the window's day, a count per target, and that a fallback reviewer killed on its timeout writes none)
 #   swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred, with --because the builder's own reason in one line; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
 #   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
@@ -247,7 +247,7 @@ CFG_step_up_findings=3  # with escalate_ladder set, the findings round of a buil
 CFG_top_rung_rounds=2   # with escalate_ladder set, the findings round on its top rung that holds the story for the lead
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
-CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
+CFG_codex_minutes=10    # codex-review stops a codex review that runs this long, a rate-limit retry included
 CFG_fallback_reviewer="" # empty: a codex usage or rate limit skips codex's review; else a review agent on this model reviews in its place
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
@@ -784,6 +784,9 @@ kill_tree() {
 CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
 # SWARM_CODEX_GRACE overrides it, for tests, when it is a whole number of seconds; anything else is ignored.
 [[ ! "${SWARM_CODEX_GRACE:-}" =~ ^[1-9][0-9]*$ ]] || CODEX_GRACE="${SWARM_CODEX_GRACE}"
+CODEX_RETRY_SECONDS=60   # how long codex-review waits after codex's rate limit before it runs codex once more
+# SWARM_CODEX_RETRY_SECONDS overrides it, for tests, when it is a whole number of seconds; anything else is ignored.
+[[ ! "${SWARM_CODEX_RETRY_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || CODEX_RETRY_SECONDS="${SWARM_CODEX_RETRY_SECONDS}"
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
@@ -871,10 +874,14 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # no pattern matches can still be read. One whose last lines hold its own limit message (codex_limit: CODEX_LIMIT_RE
 # or CODEX_RATE_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a codex-limit incident,
 # `codex-limit: usage limit` or `codex-limit: rate limit`, with the reap line's slug= and role= fields (the
-# incident line holds none of codex's lines), and with fallback_reviewer set,
-# codex_fallback reviews in its place, in what is left of codex_minutes.
+# incident line holds none of codex's lines). A first rate limit, with at least CODEX_RETRY_SECONDS plus
+# FALLBACK_MIN_SECONDS of codex_minutes left, is retried once (codex_retry_wait): codex runs again with the
+# same args, a fifo, log, tee and traps made new, in what is left after the first run and the wait, so the one
+# timeout still bounds both. A rate limit on the retry logs no second incident: one limit counts once. A usage
+# limit is never retried (it resets in hours). Then, with fallback_reviewer set, codex_fallback reviews in
+# codex's place, in what is left of codex_minutes.
 codex_review() {
-  local pid tpid left t0 rc=0 m i args story prompt="" dir log files fields=() kv=() f
+  local pid tpid left deadline step rc m i args story prompt="" dir log files fields=() kv=() f try=1
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   [[ -z "${SWARM_PR:-}" || "${SWARM_PR}" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+$ ]] \
@@ -907,27 +914,34 @@ codex_review() {
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
-  # The log and its fifo in a directory of this run's own (mktemp -d: mode 700), so no other user
+  # Each run's log and fifo in a directory of this run's own (mktemp -d: mode 700), so no other user
   # can make or read them first.
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"; log="${dir}/log"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"
   files+=" $(printf %q "${dir}")"
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
-  mkfifo "${dir}/fifo"
-  tee "${log}" < "${dir}/fifo" &
-  tpid=$!
-  # shellcheck disable=SC2064
-  trap "codex_cleanup ${tpid} ${files}" EXIT
-  codex exec review "${args[@]}" < /dev/null > "${dir}/fifo" 2>&1 &
-  pid=$!
-  # shellcheck disable=SC2064 # this codex's pid, fixed now
-  trap "stop_codex ${pid}; exit 143" TERM HUP
-  t0=${SECONDS}
-  poll_while "${left}" kill -0 "${pid}" 2>/dev/null
-  # What codex used is gone: a fallback gets only the rest.
-  left=$((left - (SECONDS - t0))); ((left > 0)) || left=0
-  if ! kill -0 "${pid}" 2>/dev/null; then
-    wait "${pid}" || rc=$?
+  # Every way out below goes through the EXIT trap; the timeout bounds both runs together.
+  deadline=$((SECONDS + left)); step="$(scaled 1)"
+  while :; do
+    # Each run a fifo and log made new, so no child of the first run left holding its pipe writes into the second's.
+    log="${dir}/log"
+    rm -f "${dir}/fifo" "${log}"; mkfifo "${dir}/fifo"
+    tee "${log}" < "${dir}/fifo" &
+    tpid=$!
+    # shellcheck disable=SC2064
+    trap "codex_cleanup ${tpid} ${files}" EXIT
+    codex exec review "${args[@]}" < /dev/null > "${dir}/fifo" 2>&1 &
+    pid=$!
+    # shellcheck disable=SC2064 # this codex's pid, fixed now
+    trap "stop_codex ${pid}; exit 143" TERM HUP
+    # Against the deadline, not a count of polls (poll_while's), whose forks on a busy machine would
+    # stretch the wait past it. SECONDS counts whole seconds, so the poll runs through the deadline's
+    # second: codex is never stopped before its time, and left (below) never exceeds codex_minutes.
+    while ((SECONDS <= deadline)) && kill -0 "${pid}" 2>/dev/null; do sleep "${step}"; done
+    # What codex used is gone: a retry or a fallback gets only the rest.
+    left=$((deadline - SECONDS)); ((left > 0)) || left=0
+    kill -0 "${pid}" 2>/dev/null && break
+    rc=0; wait "${pid}" || rc=$?
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done
     { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
     # Both reaped: no trap may signal their pids again, which another process could have taken.
@@ -935,20 +949,41 @@ codex_review() {
     trap "codex_cleanup - ${files}" EXIT
     trap "exit 143" TERM HUP
     [[ ${rc} -eq 0 ]] || codex_keep_tail "$1" "${log}" "${rc}"
+    CODEX_LIMIT_KIND=""
     [[ ${rc} -eq 0 ]] || CODEX_LIMIT_KIND="$(codex_limit "${log}")"
-    if [[ -n "${CODEX_LIMIT_KIND}" ]]; then
-      # Not the slug alone, which is also its builder's agent name: login_incident would take this
-      # line for the end of that builder's login episode.
-      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
-      # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
-      # does not review exits there, as codex did.
-      [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
+    [[ -n "${CODEX_LIMIT_KIND}" ]] || return "${rc}"
+    # Not the slug alone, which is also its builder's agent name: login_incident would take this
+    # line for the end of that builder's login episode. A rate limit on the retry is the first one still.
+    [[ ${try} -gt 1 && "${CODEX_LIMIT_KIND}" == rate ]] \
+      || record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
+    if [[ ${try} -eq 1 && "${CODEX_LIMIT_KIND}" == rate ]] && ((left >= CODEX_RETRY_SECONDS + FALLBACK_MIN_SECONDS)); then
+      codex_retry_wait "codex-${SWARM_STORY:-$1}" "${fields[@]+"${fields[@]}"}"
+      left=$((deadline - SECONDS)); ((left > 0)) || left=0
+      try=2
+      continue
     fi
+    # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
+    # does not review exits there, as codex did.
+    [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
     return "${rc}"
-  fi
+  done
   stop_codex "${pid}"
   record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min" "${fields[@]+"${fields[@]}"}"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
+}
+
+# codex_retry_wait <target> [key=value...] — codex hit its rate limit: say so, log a codex-retry line
+# (target codex-<story or base>, the incidents' slug/role tail; an event, not an incident), and sleep
+# CODEX_RETRY_SECONDS in the background, so a TERM or HUP stops the wait at once.
+codex_retry_wait() {
+  local spid
+  echo "codex rate limit: retrying in ${CODEX_RETRY_SECONDS} s" >&2
+  record_event codex-retry "$1" "rate limit: retrying in ${CODEX_RETRY_SECONDS} s" "${@:2}"
+  sleep "${CODEX_RETRY_SECONDS}" & spid=$!
+  # shellcheck disable=SC2064 # this sleep, fixed now
+  trap "kill ${spid} 2>/dev/null; exit 143" TERM HUP
+  wait "${spid}" || true
+  trap "exit 143" TERM HUP
 }
 
 # codex_cleanup <tee pid, or -> <file>... — codex-review's EXIT trap, so every way out (codex done, the

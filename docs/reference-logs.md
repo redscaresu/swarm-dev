@@ -82,7 +82,9 @@ An agent name gets an `s` in front when its slug starts with a digit, so a build
 `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
 `-done<N>` name reads as the name before it when it is under 32 characters. A longer one may hold a cut
 name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
-the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
+the agent running `codex-review`. When `codex-review` retries codex after a rate limit, it writes a
+`codex-retry` line, not a second incident: target `codex-<story>` (`codex-<base>` with no `SWARM_STORY`),
+outcome `rate limit: retrying in <N> s`, and the same tail as its `codex-limit` incident ([§ Building](reference-building.md#building)). `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
 A `pane-closed` line records a pane `swarm.sh` closed. It is not a command of its own. Its target is
 the agent name the pane was closed under, or `-` when its tab record names none, and its outcome is
@@ -723,12 +725,15 @@ Goal 5's first bar, which the lead reads by hand:
 | 5. Nothing waits for the lead unseen | lead queue p90 under 30 minutes | `flow lead_queue: p90_min` |
 
 The `reviewers` section shows what review yields, so the
-reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework`,
+reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework deferred`,
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
 declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on in the window and that
-`outcomes` shows as reworked. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
+`outcomes` shows as reworked. `deferred` counts the declined findings whose reason is `deferred`: findings
+held back, not sent to the builder. It is part of `declined`, so it shows how much of a kind's declines were held back.
+A row with no reason field, such as one logged before the reason existed, counts 0 here. That 0 means the
+reason is unknown, not that nothing was held back. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no
@@ -962,7 +967,14 @@ Each line is `<reason> <date> <kind> <PR>: <text>`, newest first.
 With none, it prints `no out-of-scope or deferred findings open since <tag>`.
 
 **incidents.** Each `user-caught` and `lead-hand` line (`swarm.sh intervene`) since the tag, with its date and text, and the other incident lines.
-`swarm.sh retro` does not print this list yet.
+It reads `events.tsv` and takes each line's day in local time, as `flow`'s `incidents` section does, and leaves out a line dated before the window's first day.
+Every `lead-hand` and `user-caught` line comes first, in full and oldest first, as TSV `day kind cause text`.
+The text is what follows `<kind>: ` in the line's outcome, and the cause is its `cause=` field.
+After a blank line come the other kinds that `flow`'s `incidents` section counts, as TSV `kind cause incidents first last`: the other `incident` lines, such as `wait-timeout` and `login`, and each stalled step-up, as kind `stalled step-up`.
+Each kind and cause gets one row, with its count and the first and last day it was seen, and a line with no `cause=` field has cause `-`.
+A part with no lines prints `no lead-hand or user-caught lines since <day>` or `no other incidents since <day>` in its place.
+A missing `events.tsv` prints `no incidents: <path> does not exist`.
+`flow`'s `incidents` section counts these kinds and prints no line's text.
 
 **memories.** The lead's memory notes that are not yet placed in a story, a check or a rule.
 It prints one line for each `*.md` note in the memory folder except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
@@ -972,7 +984,10 @@ By default it is Claude Code's memory folder for the project: the projects folde
 An empty folder prints `no memory notes: <dir> holds none`, and a missing one `no memory notes: <dir> does not exist`.
 
 **reaped.** The test files and codex runs that were killed for running too long since the tag, from the `reap` lines in `events.tsv`.
-`swarm.sh retro` does not print this list yet.
+It prints one row for each `reap` line on or after the window's day, in local time: the line's local day, its target and its outcome, then its `slug=` and `role=` fields when it has them.
+Then it prints a count for each target, the most first.
+The last line says that a fallback reviewer killed on its timeout writes no `reap` line, so the list is not every kill.
+With no `reap` line since the day it prints `no reap lines since <day> in <events.tsv>`, and with no `events.tsv` it prints `no reap lines: <events.tsv> does not exist`.
 
 **recurring.** The finding kinds that keep coming back and still have no check, with related kinds counted together.
 `swarm.sh retro` does not print this list yet.
