@@ -298,10 +298,9 @@ and epic co-authors, planners, conductors, builders and review agents. A restart
 `swarm.sh upgrade` gives them the values of the session that runs it. When herdr restores a pane, the
 values come from that pane's new shell, since swarm.sh never writes a value to disk. So a key you
 export only in the session that started the agent is gone after a herdr restore; export it from your
-shell's startup files to keep it there. This is how a provider's key
-reaches agents. On Azure Foundry, for example, Claude Code needs `ANTHROPIC_FOUNDRY_RESOURCE` and
-`ANTHROPIC_FOUNDRY_API_KEY`, and the `ANTHROPIC_DEFAULT_*_MODEL` names if your deployments are named
-differently from the models. Without them every agent stops at its start. Each value comes from the
+shell's startup files to keep it there. This is how a provider key that does not pass on its own
+reaches agents: another provider's secret, say, or `ANTHROPIC_BEDROCK_BASE_URL`. Foundry's and
+Bedrock's keys and model pins pass without it; see the exception below. Each value comes from the
 session that starts the agent. A name that session does not have is skipped with a warning, so the
 same board still runs from a session without the provider. When the config loads, `swarm.sh` refuses
 a name that is not `[A-Z_][A-Z0-9_]*` or is reserved, by the same rules as `env:`, and names the line.
