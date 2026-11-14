@@ -62,14 +62,14 @@ check() { # <name> <output> <exact expected output>
 }
 snap() { cksum "${P}/.swarm/findings.tsv" "${P}/.swarm/events.tsv"; }
 before="$(snap)"
-H1=$'reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework'
+H1=$'reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework\tdeferred'
 H2=$'prs\trounds\trounds_per_pr\tmax_rounds'
 B1="$(printf '%s\n' "${H1}" \
-  $'codex\tall\t4\t1\t3\t75%\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' \
-  $'lead\tall\t2\t2\t0\t0%\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0' $'lead\tnit\t1\t1\t0\t0%\t0' \
-  $'unknown\tall\t2\t1\t1\t50%\t0' $'unknown\tscope\t1\t0\t1\t100%\t0' $'unknown\tnit\t1\t1\t0\t0%\t0' \
-  $'all\tvacuous\t3\t1\t2\t67%\t0' $'all\tnit\t3\t2\t1\t33%\t0' $'all\tscope\t1\t0\t1\t100%\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0' \
-  $'all\tall\t8\t4\t4\t50%\t0')"
+  $'codex\tall\t4\t1\t3\t75%\t0\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0\t0' $'codex\tnit\t1\t0\t1\t100%\t0\t0' \
+  $'lead\tall\t2\t2\t0\t0%\t0\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0\t0' $'lead\tnit\t1\t1\t0\t0%\t0\t0' \
+  $'unknown\tall\t2\t1\t1\t50%\t0\t0' $'unknown\tscope\t1\t0\t1\t100%\t0\t0' $'unknown\tnit\t1\t1\t0\t0%\t0\t0' \
+  $'all\tvacuous\t3\t1\t2\t67%\t0\t0' $'all\tnit\t3\t2\t1\t33%\t0\t0' $'all\tscope\t1\t0\t1\t100%\t0\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0\t0' \
+  $'all\tall\t8\t4\t4\t50%\t0\t0')"
 check "block 1 per reviewer and kind (4- and 5-field rows as unknown), per kind, and all all; block 2 sums each PR's rounds" \
   "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
 # A declined row with its reason (7 fields) beside the 4- and 6-field ones: the old rows count as
@@ -83,7 +83,7 @@ check "a 7-field row leaves the 4-, 5- and 6-field rows' counts as they were" \
   "$(old_rows "$(yield_of "${P}")")" "$(old_rows "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")")"
 out="$(yield_of "${P}")"
 check "the 7-field row counts as one decline, all all only adds it, and no escaped line" \
-  "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%\t0' $'skeptic\tplan-gap\t1\t0\t1\t100%\t0' $'all\tall\t9\t4\t5\t56%\t0')"
+  "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%\t0\t0' $'skeptic\tplan-gap\t1\t0\t1\t100%\t0\t0' $'all\tall\t9\t4\t5\t56%\t0\t0')"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 # A split's board PR (#9): one finding the split critic raised and the lead fixed, and one split-gap it
 # missed that a child's plan found later (escaped). The critic's counts are a reviewer of their own, and
@@ -92,7 +92,7 @@ printf '%s\n' $'2026-10-03\tsplit-order\to/r#9\tt\tfixed\tsplit-critic' \
   $'2026-10-04\tsplit-gap\to/r#9\tt\tescaped\tescaped' >> "${P}/.swarm/findings.tsv"
 out="$(yield_of "${P}")"
 check "the split critic's fixed finding is a reviewers row" \
-  "$(grep -E $'^split-critic\t' <<< "${out}")" "$(printf '%s\n' $'split-critic\tall\t1\t1\t0\t0%\t0' $'split-critic\tsplit-order\t1\t1\t0\t0%\t0')"
+  "$(grep -E $'^split-critic\t' <<< "${out}")" "$(printf '%s\n' $'split-critic\tall\t1\t1\t0\t0%\t0\t0' $'split-critic\tsplit-order\t1\t1\t0\t0%\t0\t0')"
 check "the split block sets the critic's fix beside the escaped split-gap" \
   "$(grep -A1 $'^split\t' <<< "${out}")" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
 # A split is dated by its critic's rows (2026-10-03); every escaped gap counts against it, whatever its day.
@@ -173,11 +173,11 @@ check "with no row in the window that has a round, neither block prints" \
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"; cp "${dir}/events.bak" "${P}/.swarm/events.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \
-  $'codex\tall\t4\t1\t3\t75%\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' \
-  $'lead\tall\t2\t2\t0\t0%\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0' $'lead\tnit\t1\t1\t0\t0%\t0' \
-  $'unknown\tall\t1\t0\t1\t100%\t0' $'unknown\tscope\t1\t0\t1\t100%\t0' \
-  $'all\tvacuous\t3\t1\t2\t67%\t0' $'all\tnit\t2\t1\t1\t50%\t0' $'all\tscope\t1\t0\t1\t100%\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0' \
-  $'all\tall\t7\t3\t4\t57%\t0' "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
+  $'codex\tall\t4\t1\t3\t75%\t0\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0\t0' $'codex\tnit\t1\t0\t1\t100%\t0\t0' \
+  $'lead\tall\t2\t2\t0\t0%\t0\t0' $'lead\tmissing-check\t1\t1\t0\t0%\t0\t0' $'lead\tnit\t1\t1\t0\t0%\t0\t0' \
+  $'unknown\tall\t1\t0\t1\t100%\t0\t0' $'unknown\tscope\t1\t0\t1\t100%\t0\t0' \
+  $'all\tvacuous\t3\t1\t2\t67%\t0\t0' $'all\tnit\t2\t1\t1\t50%\t0\t0' $'all\tscope\t1\t0\t1\t100%\t0\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0\t0' \
+  $'all\tall\t7\t3\t4\t57%\t0\t0' "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
 USAGE="swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 for args in "--since 2026-1-5" "--since" "--bogus"; do
   # shellcheck disable=SC2086 # split on purpose: each case is its own arguments
@@ -226,22 +226,52 @@ check "attempts sharing a PR add up; attempts with their own PRs keep their own 
   "$(yield_of "${Q}" | tail -3)" "$(printf '%s\n' "${H2}" $'3\t8\t2.7\t4' "exit 0")"
 check "--epic ec: only its PR #3 and its finding, and the PR it counted" \
   "$(yield_of "${Q}" --epic ec)" "$(printf '%s\n' "${H1}" \
-  $'codex\tall\t1\t0\t1\t100%\t0' $'codex\tvacuous\t1\t0\t1\t100%\t0' $'all\tvacuous\t1\t0\t1\t100%\t0' $'all\tall\t1\t0\t1\t100%\t0' \
+  $'codex\tall\t1\t0\t1\t100%\t0\t0' $'codex\tvacuous\t1\t0\t1\t100%\t0\t0' $'all\tvacuous\t1\t0\t1\t100%\t0\t0' $'all\tall\t1\t0\t1\t100%\t0\t0' \
   "" "${H2}" $'1\t3\t3\t3' "" pr "${U}/3" "exit 0")"
 check "--epic ed: #4 with its one round and #5 with its four, ec left out" \
   "$(yield_of "${Q}" --epic ed)" "$(printf '%s\n' "${H1}" \
-  $'codex\tall\t1\t1\t0\t0%\t0' $'codex\tnit\t1\t1\t0\t0%\t0' $'lead\tall\t1\t0\t1\t100%\t0' $'lead\tnit\t1\t0\t1\t100%\t0' \
-  $'all\tnit\t2\t1\t1\t50%\t0' $'all\tall\t2\t1\t1\t50%\t0' \
+  $'codex\tall\t1\t1\t0\t0%\t0\t0' $'codex\tnit\t1\t1\t0\t0%\t0\t0' $'lead\tall\t1\t0\t1\t100%\t0\t0' $'lead\tnit\t1\t0\t1\t100%\t0\t0' \
+  $'all\tnit\t2\t1\t1\t50%\t0\t0' $'all\tall\t2\t1\t1\t50%\t0\t0' \
   "" "${H2}" $'2\t5\t2.5\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
 # --since keeps #4's finding (dated 2026-10-02) but not its build's round (started 2026-10-01), so
 # block 3 lists both PRs: each one that either block counted.
 check "--epic ed --since 2026-10-02: #4 in block 1 only, #5 in both, and block 3 lists the two" \
   "$(yield_of "${Q}" --epic ed --since 2026-10-02)" "$(printf '%s\n' "${H1}" \
-  $'codex\tall\t1\t1\t0\t0%\t0' $'codex\tnit\t1\t1\t0\t0%\t0' $'lead\tall\t1\t0\t1\t100%\t0' $'lead\tnit\t1\t0\t1\t100%\t0' \
-  $'all\tnit\t2\t1\t1\t50%\t0' $'all\tall\t2\t1\t1\t50%\t0' \
+  $'codex\tall\t1\t1\t0\t0%\t0\t0' $'codex\tnit\t1\t1\t0\t0%\t0\t0' $'lead\tall\t1\t0\t1\t100%\t0\t0' $'lead\tnit\t1\t0\t1\t100%\t0\t0' \
+  $'all\tnit\t2\t1\t1\t50%\t0\t0' $'all\tall\t2\t1\t1\t50%\t0\t0' \
   "" "${H2}" $'1\t4\t4\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
 check "--epic ed --since 2026-10-03: nothing counted, so block 3 lists no PR" \
-  "$(yield_of "${Q}" --epic ed --since 2026-10-03)" "$(printf '%s\n' "${H1}" $'all\tall\t0\t0\t0\t-\t0' "" "${H2}" $'0\t0\t0\t0' "" pr "exit 0")"
+  "$(yield_of "${Q}" --epic ed --since 2026-10-03)" "$(printf '%s\n' "${H1}" $'all\tall\t0\t0\t0\t-\t0\t0' "" "${H2}" $'0\t0\t0\t0' "" pr "exit 0")"
+
+# deferred: a codex duplicate-code finding fixed, one declined as nit and one declined as deferred, all
+# on story e's PR #6 (epic ee). Each line counting them reads 3 1 2 67% 0 1: only a declined row whose
+# reason is deferred counts. Then story f's PR #7 (epic ef) adds two deferred ones, so --epic is checked each way.
+S="${dir}/four"
+mkdir -p "${S}/.swarm" "${S}/docs/stories"
+git -C "${S}" init -q
+printf -- '---\nkind: code\nepic: ee\nstatus: ready\n---\n' > "${S}/docs/stories/e.md"
+printf -- '---\nkind: code\nepic: ef\nstatus: ready\n---\n' > "${S}/docs/stories/f.md"
+printf '%s\tOPEN\t\n' "${U}/6" > "${dir}/prs/story_e"
+printf '%s\tOPEN\t\n' "${U}/7" > "${dir}/prs/story_f"
+printf '%s\n' $'2026-10-01\tcode\te\tclaude\topus\txhigh\t-' $'2026-10-01\tcode\tf\tclaude\topus\txhigh\t-' > "${S}/.swarm/agents.tsv"
+: > "${S}/.swarm/events.tsv"
+printf '%s\n' $'2026-10-02\tduplicate-code\to/r#6\tt\tfixed\tcodex' \
+  $'2026-10-02\tduplicate-code\to/r#6\tt\tdeclined\tcodex\tnit' \
+  $'2026-10-02\tduplicate-code\to/r#6\tt\tdeclined\tcodex\tdeferred' > "${S}/.swarm/findings.tsv"
+rows_of() { grep -E $'^(codex|all)\t' <<< "$1"; }
+check "one fixed, one declined as nit and one declined as deferred: every line counting them reads 3 1 2 67% 0 1" \
+  "$(rows_of "$(yield_of "${S}")")" "$(printf '%s\n' $'codex\tall\t3\t1\t2\t67%\t0\t1' $'codex\tduplicate-code\t3\t1\t2\t67%\t0\t1' \
+  $'all\tduplicate-code\t3\t1\t2\t67%\t0\t1' $'all\tall\t3\t1\t2\t67%\t0\t1')"
+printf '%s\n' $'2026-10-02\tduplicate-code\to/r#7\tt\tdeclined\tcodex\tdeferred' \
+  $'2026-10-02\tduplicate-code\to/r#7\tt\tdeclined\tcodex\tdeferred' >> "${S}/.swarm/findings.tsv"
+check "--epic ee counts only its one deferred finding, not epic ef's two" \
+  "$(rows_of "$(yield_of "${S}" --epic ee)")" "$(printf '%s\n' $'codex\tall\t3\t1\t2\t67%\t0\t1' $'codex\tduplicate-code\t3\t1\t2\t67%\t0\t1' \
+  $'all\tduplicate-code\t3\t1\t2\t67%\t0\t1' $'all\tall\t3\t1\t2\t67%\t0\t1')"
+check "--epic ef counts only its two deferred findings, not epic ee's one" \
+  "$(rows_of "$(yield_of "${S}" --epic ef)")" "$(printf '%s\n' $'codex\tall\t2\t0\t2\t100%\t0\t2' $'codex\tduplicate-code\t2\t0\t2\t100%\t0\t2' \
+  $'all\tduplicate-code\t2\t0\t2\t100%\t0\t2' $'all\tall\t2\t0\t2\t100%\t0\t2')"
+check "with no --epic, all three deferred findings are counted" \
+  "$(rows_of "$(yield_of "${S}")" | grep -F $'all\tall\t')" $'all\tall\t5\t1\t4\t80%\t0\t3'
 
 # A finding whose kind is the word all (log-finding takes it) is a kind of its own, counted once.
 R="${dir}/three"
@@ -250,8 +280,8 @@ git -C "${R}" init -q
 printf '%s\n' $'2026-10-02\tall\to/r#1\tt\tfixed\tcodex' $'2026-10-02\tnit\to/r#1\tt\tdeclined\tcodex' > "${R}/.swarm/findings.tsv"
 check "a kind named all is counted once, apart from the totals" \
   "$(yield_of "${R}")" "$(printf '%s\n' "${H1}" \
-  $'codex\tall\t2\t1\t1\t50%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' $'codex\tall\t1\t1\t0\t0%\t0' \
-  $'all\tnit\t1\t0\t1\t100%\t0' $'all\tall\t1\t1\t0\t0%\t0' $'all\tall\t2\t1\t1\t50%\t0' "" "${H2}" $'0\t0\t0\t0' "exit 0")"
+  $'codex\tall\t2\t1\t1\t50%\t0\t0' $'codex\tnit\t1\t0\t1\t100%\t0\t0' $'codex\tall\t1\t1\t0\t0%\t0\t0' \
+  $'all\tnit\t1\t0\t1\t100%\t0\t0' $'all\tall\t1\t1\t0\t0%\t0\t0' $'all\tall\t2\t1\t1\t50%\t0\t0' "" "${H2}" $'0\t0\t0\t0' "exit 0")"
 
 # --epic with no split rows reads no epic's history: a git on PATH logs every call.
 printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec %s "$@"\n' "${dir}" "$(command -v git)" > "${dir}/bin/git"; chmod +x "${dir}/bin/git"
