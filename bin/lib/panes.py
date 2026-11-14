@@ -24,11 +24,12 @@ def pane_ids(pane, entries):
     ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
     return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
 # pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
-# labels). A workspace herdr gives no label for is "-"; a tab is record, the name swarm-dev gave the tab
-# (its tab record's), so where, status and dash name it alike whether or not herdr labelled it.
+# labels). A workspace herdr gives no label for is "-". A tab herdr gives no label for (or no tab list)
+# is record, the name swarm-dev gave the tab (its tab record's), with the tab's id when herdr gave one,
+# `t1 (w1:t3)`, so where, status and dash's rows and tree all tell swarm-dev's name from herdr's label.
 def pane_where(pane, entries, labels, record="-"):
     ws, tab = pane_ids(pane, entries)
-    return labels[0].get(ws) or "-", labels[1].get(tab) or record
+    return labels[0].get(ws) or "-", labels[1].get(tab) or (f"{record} ({tab})" if tab else record)
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True

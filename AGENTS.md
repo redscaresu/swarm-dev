@@ -77,6 +77,7 @@ Useful while it runs:
 - `swarm.sh wait-pr --head <sha> <pr-url>`: wait for a PR's checks on <sha>; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, no check runs or an expected workflow that never started within 5 minutes, a head that is still not <sha> by then, or the timeout. Without `--head` it waits on the head GitHub reports first, and right after a push that can still be the old one. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
 - `swarm.sh review-agent <slug> <pr-url>`: a review agent for one PR, scoped to its story's `touches` and **Done when**. It never edits the PR's code. It waits for green, runs codex every round and `/code-review` on round 1 only, and decides which findings to fix and which to decline. It sends the ones to fix to the builder, then reviews the builder's next head in the same session. From round 3 (the round cap) it sends only a regression the PR introduces or a line now false about the code, and declines the rest as deferred. A round with nothing to fix, because the agent declines every finding as a nit, low value, out of scope, wrong or deferred, is a pass: the review agent merges the PR with `merge = agent` or an HLD `merge` grant, and otherwise hands it to the user. With `escalate_ladder` set, the `step_up_findings`-th findings round (default 3) hands the build to the next model. On the top rung, the `top_rung_rounds`-th round (default 2) goes to the lead.
 - `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran, and how long a ready story waited for its build) and more.
+- `swarm.sh retro [--since <tag>] [--memory <dir>]`: the release retro's report since a tag (default the newest `v<x.y.z>` tag), one section per list the lead goes through with the user before a minor release. It is read-only and makes no gh call.
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file, and queues it for a busy one until its turn ends; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
@@ -175,10 +176,10 @@ Development rules for anyone, agent or person, working in this repository:
 - Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
   hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
   `make test` already unsets it.
-- Never run `flow`, `dash`, `outcomes` or `dataset` against the real repo in a loop, in parallel or
+- Never run `flow`, `dash`, `outcomes`, `retro` or `dataset` against the real repo in a loop, in parallel or
   over days, even when a story's Done when names a multi-day window. Run it once, after
-  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash` and
-  `dataset` as they are (they take no `--since`). After a test run, check that no `dash_slow.py` or
+  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash`, `retro` and
+  `dataset` as they are (`dash` and `dataset` take no `--since`; `retro` takes a tag). After a test run, check that no `dash_slow.py` or
   `swarm.sh flow --since` from your worktree is left. Kill by PID only what names your worktree or
   a test temp dir.
 - A stress or load run uses at most 4 CPUs in all, with `make test` at `JOBS=4` or fewer, and you

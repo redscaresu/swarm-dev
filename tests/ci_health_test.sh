@@ -45,9 +45,12 @@ export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so paral
 P="${dir}/repo"; G="${dir}/gh"; U=https://github.com/o/r/pull
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${G}" "${dir}/bin" "${dir}/projects" "${dir}/tmp"
 git -C "${P}" init -q
-# <n> days ago: its local day, or with t its UTC time (a PR's createdAt).
-ago() { python3 -c 'import datetime as d, sys; t = d.datetime.now(d.timezone.utc) - d.timedelta(days=int(sys.argv[1]))
-print(t.strftime("%Y-%m-%dT%H:%M:%SZ") if sys.argv[2:] else t.astimezone().date())' "$@"; }
+# Every day below is a local day, counted back from one instant (T0), as flow and dash's ci refresh
+# count theirs from their own local today. The PRs' and runs' times are fixed UTC instants, which no
+# window reads.
+T0="$(date +%s)"
+ago() { # <n> [<epoch>] — the local day n days before T0's, or before <epoch>'s
+  python3 -c 'import datetime as d, sys; print(d.date.fromtimestamp(int(sys.argv[2])) - d.timedelta(days=int(sys.argv[1])))' "$1" "${2:-${T0}}"; }
 today="$(ago 0)"; start="$(ago 30)"; week="$(ago 6)"
 for s in a b c d e f g; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${P}/docs/stories/${s}.md"; done
 for s in a b c d; do printf '2020-01-01\tcode\t%s\tclaude\topus\thigh\t-\n' "${s}"; done > "${P}/.swarm/agents.tsv"
@@ -173,7 +176,10 @@ L1="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
 check "once the hourly rate limit is spent, flow makes no more gh calls and names that error for each PR" "$(RATELIMIT=1 flow "${W[@]}" | ci)" \
   "${H}"$'\n0\t0\t\t\t0\n'"ci health: gh could not read 3 of 3 PRs, left out$(left "ci health" "gh api repos/o/r/pulls/1: ${L1}" 1)$(left "ci health" "gh api repos/o/r/pulls/%: not tried: ${L1}" 2 3)"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out$(left "ci time" "gh api repos/o/r/pulls/1: ${L1}" 1)$(left "ci time" "gh api repos/o/r/pulls/%: not tried: ${L1}" 2 3)"
 check "one REST call, the first" "$(grep -cE '^(api|run) ' "${G}/gh.log" || true)" 1
-check "with no --since, the PRs of the last 30 days, and a line that says so" "$(flow | ci)" \
+# flow counts the 30 days from its own today: should the day turn after T0, its start is a day later.
+got="$(flow | ci)"; late="$(ago 30 "$(date +%s)")"
+[[ "${got}" != "PRs from the last 30 days, ${late} on;"* ]] || start="${late}"
+check "with no --since, the PRs of the last 30 days, and a line that says so" "${got}" \
   "PRs from the last 30 days, ${start} on; --since sets the start"$'\n'"${H}"$'\n3\t5\t19.0\t0.00\t0\n'"${T}"$'\no/r\t3\t13.0\ttest\t10.0\t0\t\t\t\t'
 now="$(flow --since "${week}" | ci)"
 check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, against 13.0 and 10.0, so -1.5" \
@@ -183,6 +189,11 @@ check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, agai
 # then the next dash (past its one-minute cache) shows it. One that fails (flow prints no ci time
 # table, or gh reads none of the PRs) writes none and stamps <cache>.failed, and the next dash starts
 # another only once that is 10 minutes old. A refresh holds an flock on <cache>.run until it ends.
+# dash's refresh counts its 7 days from its own today, which may be a day after T0's. So f's build on
+# the first day of the last 7 moves a day in: on either day, this week holds e and f and the week
+# before g, as flow's figures above have them (a PR's minutes come from its runs, not its day).
+awk -F'\t' -v OFS='\t' -v w="${week}" -v d="$(ago 5)" '$3 == "f" && $1 == w { $1 = d } 1' "${P}/.swarm/agents.tsv" > "${dir}/agents.tsv"
+mv "${dir}/agents.tsv" "${P}/.swarm/agents.tsv"
 git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
