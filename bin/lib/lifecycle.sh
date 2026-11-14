@@ -3132,7 +3132,7 @@ plan_lines() {
   for f in "${PROJECT_DIR}"/.swarm/*/started; do
     [[ -d "${f}" ]] || continue
     slug="${f%/started}"; slug="${slug##*/}"
-    [[ $'\n'"${groups}" != *$'\n'"scope ${slug}"$'\n'* && $'\n'"${groups}" != *$'\n'"plan ${slug}"$'\n'* ]] || continue
+    ! grep -qxF -e "scope ${slug}" -e "plan ${slug}" <<< "${groups}" || continue
     if [[ -f "${BOARD}/epics/${slug}.md" ]]; then groups+="scope ${slug}"$'\n'
     elif [[ -f "${BOARD}/hld/${slug}.md" ]]; then groups+="plan ${slug}"$'\n'; fi
   done
