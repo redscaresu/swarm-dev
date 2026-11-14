@@ -139,6 +139,7 @@ once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an e
 | `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference-models.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference-models.md § Settings) |
 | `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference-models.md § Settings) |
+| `usage_warn_percent` | empty | a whole number from 1 to 100: `wait --lead` prints one `usage:` line the first time a usage week's estimate reaches it. It is only an estimate, from the session logs, and it counts Fable low until you give it a `/usage` reading; `/usage` is the only truth. A warning, never a gate. Empty is off (reference-models.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`,
 else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a

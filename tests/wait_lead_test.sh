@@ -1385,6 +1385,41 @@ check "restart: a second list that shows the review agent the poll started keeps
 recheck_end
 firstlist
 
+# --- usage_warn_percent: one usage: line the first time the usage estimate (usage_estimate_test.sh) reaches
+# it in a usage week, from fixture session logs under a stand-in CLAUDE_PROJECTS_DIR. A reading taken a
+# minute ago, with the reset three days off, puts the estimate at the reading: 30% of the week, 20% of Fable's.
+UC="${ROOT}/usage-projects"
+# uturn <seconds ago> <message id> <model> — a turn of 1M input tokens, that long ago.
+uturn() {
+  python3 -c 'import datetime, sys; t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=int(sys.argv[1]))
+print("{\"timestamp\":\"%s\",\"message\":{\"id\":\"%s\",\"model\":\"%s\",\"usage\":{\"input_tokens\":1000000}}}" % (t.strftime("%Y-%m-%dT%H:%M:%S.000Z"), sys.argv[2], sys.argv[3]))' "$@"
+}
+usage_fixture() {
+  rm -rf "${UC}"; mkdir -p "${UC}/-proj"
+  { uturn 120 o1 claude-opus-5-5; uturn 110 f1 claude-fable-5-2; } > "${UC}/-proj/s.jsonl"
+  python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); f = "%Y-%m-%dT%H:%M:%SZ"
+print((n - datetime.timedelta(seconds=60)).strftime(f), (n + datetime.timedelta(days=3)).strftime(f), 30, 20)' > "${P}/.swarm/usage-reading"
+}
+ulead() { lead CLAUDE_PROJECTS_DIR="${UC}" SWARM_USAGE_EVERY=0 0; }
+fresh "usage_warn_percent = 25"; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+at="$(python3 -c 'import sys; print(sys.argv[1][:16] + "+00:00")' "$(cut -d' ' -f1 "${P}/.swarm/usage-reading")")"
+# The week's start, which the line names: the reset, less a week.
+wk="$(python3 -c 'import datetime, sys; print((datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")) - datetime.timedelta(days=7)).date())' "$(cut -d' ' -f2 "${P}/.swarm/usage-reading")")"
+check "usage: past usage_warn_percent, one usage: line prints" test "$(out)|$(rc)" == \
+  "usage: estimate 30% of the week from ${wk} and 20% of Fable's own limit, at or past usage_warn_percent 25 (calibrated ${at}; /usage is the truth), exit: check /usage, as nothing stops on this|0"
+# More usage since: a line that is new to the queue, which a run without the week's record would print.
+uturn 30 o2 claude-opus-5-5 >> "${UC}/-proj/s.jsonl"
+again; ulead
+check "usage: a second poll in the same week prints none, though the estimate grew" test "$(out)|$(rc)" == "|1"
+fresh; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+check "usage: with usage_warn_percent unset, no line prints" test "$(out)|$(rc)" == "|1"
+check "usage: and the session logs are never read" test ! -e "${P}/.swarm/lead/usage-at"
+rm -rf "${UC}" "${P}/.swarm/usage-reading"
+
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
 check "the wait arm names wait --lead" grep -q 'swarm.sh wait --lead' <<< "${arm}"
