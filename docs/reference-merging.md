@@ -223,7 +223,12 @@ first lists the PR's commits through gh, every page, within 60 seconds (`BASE_MO
 list holds that head and none of them is a merge commit, there is nothing to check. A list that lacks
 the head belongs to another head or is stale. When the PR now has another head, `merge` goes on, and
 its pinned `gh pr merge` refuses that head; otherwise the PR is held, unchecked. When the list holds a merge commit,
-`merge` runs `swarm.sh dropped-lines` on that head (§ Commands). When that prints lines, `merge` holds the PR for you, with the count and the first
+`merge` runs `swarm.sh dropped-lines` on that head (§ Commands). A line both sides added is expected
+once when the merge base's file has no copy of it, as when one change reaches the base by a squash
+merge and the branch by its own commit. The merge then owes as many copies as the side with more of
+them, so a resolution that keeps one copy has dropped nothing. If the merge base's file already has
+the line, each side's new copy is still owed, since two new copies of a `}` or a `fi` can be two
+separate additions. When `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
 holds the PR too and says why: `held: <slug> (dropped base lines unchecked: <why>); the user checks the

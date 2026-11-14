@@ -181,6 +181,49 @@ echo n-pr | put "${R}" n; M="$(git -C "${R}" rev-parse HEAD)"
 check "a base line of a file the merge base lacks, which the resolution dropped, prints" \
   "${M:0:7} n: n-main"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
+# at_seven [<line>...] — BASE0 with these lines after seven
+at_seven() { printf '%s\n' "${BASE0[@]:0:7}" "$@" "${BASE0[@]:7}"; }
+
+# A line both sides added, new to f: pr commits added-line after two, and main gets the same change as
+# its squash merge, a commit of its own (the same tree, parent and message in the same second would be
+# pr's commit). pr then replaces three and moves added-line after seven, so main's copy sits in main's
+# conflict section; the resolution follows the PR and keeps one copy.
+R="$(new_repo bothadded)"; on "${R}" pr; lines added-line three | put "${R}" f
+on "${R}" main; lines added-line three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; printf '%s\n' one two three-pr "${BASE0[@]:3:4}" added-line "${BASE0[@]:7}" | put "${R}" f
+printf '%s\n' one two three-pr "${BASE0[@]:3:4}" added-line "${BASE0[@]:7}" | merge "${R}" main - >/dev/null
+check "a line both sides added, new to the file (main's squash, the PR's own commit), kept once: nothing" \
+  "exit 0" "$(scan "${R}" main pr)"
+
+# The same with no conflict: main has added-line after two and pr after seven, so git's own merge keeps
+# both, outside any conflict section, and the resolution drops main's by hand.
+R="$(new_repo bothclean)"; lines added-line three | put "${R}" f; on "${R}" pr; at_seven added-line | put "${R}" f
+at_seven added-line | merge "${R}" main - >/dev/null
+check "a line both sides added in two places, which git's merge keeps twice, kept once: nothing" \
+  "exit 0" "$(scan "${R}" main pr)"
+
+# main adds added-line after two and pr does not; the resolution drops it.
+R="$(new_repo mainadded)"; lines added-line three | put "${R}" f
+on "${R}" pr; printf '%s\n' "${BASE0[@]:0:6}" seven-pr "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' "${BASE0[@]:0:6}" seven-pr "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a line main added and the PR did not, dropped by the resolution, prints" \
+  "${M:0:7} f: added-line"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# main adds added-line twice (after two and after five), pr once (after seven), and the resolution keeps
+# pr's copy alone: one short of main's two.
+R="$(new_repo addedtwice)"; printf '%s\n' one two added-line three four five added-line "${BASE0[@]:5}" | put "${R}" f
+on "${R}" pr; at_seven added-line | put "${R}" f
+M="$(at_seven added-line | merge "${R}" main -)"
+check "a line main added twice and the PR once, kept once: it prints once" \
+  "${M:0:7} f: added-line"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# '}', which the merge base's f has once: main adds a copy after two, pr one after seven, and the
+# resolution drops main's. With a copy in the merge base, the two can be separate additions.
+R="$(new_repo bracebothadded)"; lines '}' three | put "${R}" f; on "${R}" pr; at_seven '}' | put "${R}" f
+M="$(at_seven '}' | merge "${R}" main -)"
+check "a line the merge base had, a copy each side added, main's dropped by the resolution: it prints" \
+  "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # An octopus merge on the PR branch.
 R="$(new_repo octopus)"; git -C "${R}" branch b1; git -C "${R}" branch b2
 on "${R}" b1; echo g1 | put "${R}" g; on "${R}" b2; echo h1 | put "${R}" h; on "${R}" pr; echo p1 | put "${R}" p
