@@ -1206,17 +1206,25 @@ dep_holds() {
 # commits since it change a file outside the board (when the board is in the repo; at the root, outside
 # its own paths, board_paths); else nothing. Local refs only: reconcile has just pulled.
 release_due() {
-  local base version rel q ex=() n
+  local base version q ex=() n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
   version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
-  # An empty :(exclude) would exclude every path, so a board at the root excludes its own paths.
-  rel="$(board_rel)"
-  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then ex=(":(exclude)${rel}")
-  else while IFS= read -r q; do ex+=(":(exclude)${q}"); done < <(board_paths); fi
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex[@]+"${ex[@]}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
+}
+
+# board_excludes — the :(exclude) pathspecs, one a line, that leave the board's files out of a git
+# walk over the repo from its root: the board's folder (board_rel), or for a board at the root its own
+# paths (board_paths), since an empty :(exclude) would exclude every path; nothing for a board outside
+# the repo. release_due and non_fix_change both read them, so the two agree on what is a board file.
+board_excludes() {
+  local rel q
+  rel="$(board_rel)"
+  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then echo ":(exclude)${rel}"
+  else while IFS= read -r q; do echo ":(exclude)${q}"; done < <(board_paths); fi
 }
 
 # release_stage <tag> <base> — which release the commits since <tag> (v<x.y.z>) on origin/<base> make,
@@ -1317,6 +1325,124 @@ staged_chain() {
     e="${p}"
   done
   return 1
+}
+
+# non_fix_change <owner/repo> <from> <ref> — the one definition of a fix, for next and merge --release:
+# each change in <from>..<ref> (a commit, or a ref git reads) that no fix made, one line each, oldest
+# first; nothing when every change is a fix. A change is a commit on the first-parent line that touches
+# a file outside the board (board_excludes, as release_due counts). --full-history keeps a --no-ff merge
+# that is TREESAME to its second parent; today's git compares a first-parent walk's merge with its first
+# parent alone, so the flag guards a git that does not. Its PR is the merged PR whose mergeCommit is that
+# commit, from one gh pr list --repo <owner/repo> --state merged of the PRs merged from the day before
+# <from>'s commit date (UTC), <limit> at most: a change whose PR is past that prints as having none.
+# The change is a fix when that PR's head is story/fix-main-<sha7> exactly (a fix-main build: fix_main
+# writes no other name, so a planner's slug such as fix-main-docs is no fix), or story/<slug> whose
+# <board>/stories/<slug>.md, read at the
+# commit's first parent, has fix: true in its first front matter (fm_text; a trailing # comment and
+# whitespace off, as stage_of takes them). The parent is the base as the planner left it, so a PR cannot
+# make its own feature a fix by adding fix: true in its own diff, and a PR that deleted its own file is
+# read too. Every other change prints one of
+#   <sha7> #<n> <head>: <why>                its story is no fix, its file is missing, or its head is no story branch
+#   <sha7>: no merged PR has this commit     a direct push, a rebase merge's earlier commits, or a PR the list missed
+# It reads git at those commits alone, never the checkout or the board's state, so a local edit changes
+# nothing. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
+# <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails or gives no list. A caller counts
+# exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE; SWARM_GH_FRESH set skips
+# the cached read) under <rule>, the board's path and both SHAs, written only once git and gh both
+# answered and no line says no merged PR (gh's search can lag a fresh merge): a merged commit's PR and a
+# file at a commit never change, so next, which dash runs every frame, pays one gh call per base move.
+non_fix_change() {
+  # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
+  # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
+  local rule=1 limit=1000
+  local repo="$1" from="" to="" rel q ex=() changes day json map c n head p txt v line out="" keep=1
+  [[ ${BOARD_IN_REPO} == 1 ]] || { echo "non_fix_change: the board is outside the repo, so git holds no story history to read" >&2; return 1; }
+  [[ "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "non_fix_change: '${repo}' is not <owner>/<repo>" >&2; return 1; }
+  for q in "$2" "$3"; do
+    if [[ "${q}" == -* ]] || ! c="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "${q}^{commit}" 2>/dev/null)"; then
+      echo "non_fix_change: git cannot read the commit '${q}'" >&2; return 1
+    fi
+    if [[ -z "${from}" ]]; then from="${c}"; else to="${c}"; fi
+  done
+  rel="$(board_rel)"
+  if out="$(non_fix_cache get "${rule}" "${repo}" "${rel}" "${from}" "${to}" < /dev/null)"; then
+    [[ -z "${out}" ]] || printf '%s\n' "${out}"
+    return 0
+  fi
+  out=""
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
+  changes="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --full-history "${from}..${to}" -- . ${ex[@]+"${ex[@]}"} 2>/dev/null)" \
+    || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
+  [[ -n "${changes}" ]] || return 0
+  day="$(git -C "${PROJECT_DIR}" show -s --format=%ct "${from}" 2>/dev/null)" || day=""
+  [[ "${day}" =~ ^[0-9]+$ ]] || { echo "non_fix_change: git cannot read the date of ${from:0:7}" >&2; return 1; }
+  day="$(perl -MPOSIX -e 'print POSIX::strftime("%Y-%m-%d", gmtime($ARGV[0] - 86400))' "${day}")"
+  json="$(gh pr list --repo "${repo}" --state merged --search "merged:>=${day}" --json number,headRefName,mergeCommit \
+    --limit "${limit}" < /dev/null 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} --state merged failed" >&2; return 1; }
+  # One "<mergeCommit> <number> <head>" line per merged PR; one that does not read is left out, so its
+  # commit prints as having no PR, and the answer is not cached.
+  map="$(python3 -I -c '
+import json, re, sys
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    m = p.get("mergeCommit") if isinstance(p, dict) else None
+    oid, n, head = m.get("oid") if isinstance(m, dict) else None, p.get("number"), p.get("headRefName")
+    if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) and type(n) is int \
+       and isinstance(head, str) and re.fullmatch(r"[^\s\x00-\x1f\x7f]+", head):
+        print(oid, n, head)
+' <<< "${json}" 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} gave no list of merged PRs" >&2; return 1; }
+  while IFS= read -r c; do
+    n=""; head=""
+    read -r _ n head <<< "$(awk -v c="${c}" '$1 == c { print; exit }' <<< "${map}")"
+    if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
+    line="${c:0:7} #${n} ${head}:"
+    [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
+    if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
+    p="${rel}stories/${BASH_REMATCH[1]}.md"
+    if ! txt="$(git -C "${PROJECT_DIR}" show "${c}^:${p}" 2>/dev/null)"; then
+      # A parent git cannot read (a shallow clone) is no answer: printed, but not cached.
+      if git -C "${PROJECT_DIR}" rev-parse -q --verify "${c}^^{commit}" > /dev/null 2>&1; then out+="${line} no ${p} before the merge"$'\n'
+      else out+="${line} git cannot read the commit before it"$'\n'; keep=""; fi
+      continue
+    fi
+    v="$(fm_text fix <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+    [[ "${v}" != true ]] || continue
+    if [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true before the merge"$'\n'
+    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} before the merge, not true"$'\n'; fi
+  done <<< "${changes}"
+  out="${out%$'\n'}"
+  if [[ -n "${keep}" ]]; then non_fix_cache put "${rule}" "${repo}" "${rel}" "${from}" "${to}" <<< "${out}" || true; fi
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+  return 0
+}
+
+# non_fix_cache get|put <rule> <owner/repo> <board rel> <from> <to> — non_fix_change's cached answer, through
+# gh_cache.py: get prints it and fails when there is none (or SWARM_GH_FRESH is set); put writes stdin,
+# its last newline off. The file is <GH_CACHE>/<owner--repo>/non-fix/rule<rule>-<board>-<from>-<to>.json,
+# <board> the board's path from the repo root (board_rel, which swarm.sh resolves from board_dir) with
+# every byte but a-z, 0-9, ., _ and - as %XX. So it stays one file name, and two paths that differ only
+# in case stay two files on a disk that ignores case. With no cache (GH_CACHE empty), or a get under
+# SWARM_GH_FRESH, it fails at once, as gh_cache.py would, without starting python.
+non_fix_cache() {
+  local fresh="${SWARM_GH_FRESH:-${GH_FRESH:-}}"
+  [[ -n "${GH_CACHE:-}" && ( "$1" == put || -z "${fresh}" ) ]] || return 1
+  SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${fresh}" python3 -I -c '
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import gh_cache
+op, rule, repo, rel, a, b = sys.argv[2:8]
+board = "".join(chr(c) if re.fullmatch(rb"[a-z0-9._-]", bytes([c])) else "%%%02X" % c for c in rel.encode("utf-8", "surrogateescape"))
+name = "non-fix/rule%s-%s-%s-%s" % (rule, board, a, b)
+if op == "put":
+    gh_cache.put(repo, name, sys.stdin.read()[:-1])
+    sys.exit(0)
+got = gh_cache.get(repo, name)
+if not isinstance(got, str):
+    sys.exit(1)
+sys.stdout.write(got)
+' "${SWARM_HOME}/bin/lib" "$@" 2>/dev/null
 }
 
 # stage_of <stage: value> — x.y.z for v<x.y.z> (a trailing # comment and whitespace off, as slug_list
