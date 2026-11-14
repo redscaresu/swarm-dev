@@ -18,6 +18,7 @@
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh retro [--since <tag>] [--memory <dir>]        the release retro's report, read-only, with no gh call: the tag (default the newest v<x.y.z> tag on origin's default branch, the local origin/HEAD, with no fetch) and its commit's day, the swarm.sh that wrote it (its commit, or its version when not a git checkout), then one section per bin/lib/retro_<name>.py: findings (the declined out-of-scope and deferred findings since the tag that no story carries), incidents (each lead-hand and user-caught line since the tag in full, and the other incident lines), memories (the lead's swarm-dev memory notes in --memory <dir>, by default Claude Code's memory folder for this project, each with its name and description, then a count of the other notes it skipped), reaped (each reap line in events.tsv since the window's day, a count per target, and that a fallback reviewer killed on its timeout writes none)
+#   swarm.sh handover <dir> [--memory <dir>]             write into <dir> (new or empty, outside the repo) what another machine needs that git does not carry: swarm/ (.swarm/ without session logs, agent session ids, this machine's pane and workspace records, launch wrappers, locks, pid files and auto-mode-done, or files named like a token, key or secret), board.patch (the main checkout's uncommitted board edits), snapshot.md (open PRs and this project's agents) and RESTORE.md (how to restore each into a fresh clone, and what it skipped); the lead's memory folder only with --memory
 #   swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred, with --because the builder's own reason in one line; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
 #   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
@@ -570,6 +571,8 @@ source "${SWARM_HOME}/bin/lib/merge.sh"
 source "${SWARM_HOME}/bin/lib/lifecycle.sh"
 # shellcheck source=bin/lib/dash.sh
 source "${SWARM_HOME}/bin/lib/dash.sh"
+# shellcheck source=bin/lib/handover.sh
+source "${SWARM_HOME}/bin/lib/handover.sh"
 # agent_env's names, each checked for its form by load_config, which runs before agents.sh is loaded.
 for _key in ${CFG_agent_env}; do
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
@@ -657,6 +660,7 @@ dispatch() {
     flow)   flow_report "$@" ;;
     dataset) dataset_report "$@" ;;
     retro)  retro_report "$@" ;;
+    handover) handover_report "$@" ;;
     review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
