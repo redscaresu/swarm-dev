@@ -61,6 +61,12 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
 
+**Retro files.** A retro's file is `<board>/retros/v<version>.md`, named for the version being released.
+Its front matter holds `covers: v<from>..v<to>` and `done: YYYY-MM-DD`, each on one line with no quotes.
+A file in `retros/` that lacks either field is a note, and no check reads it as a retro.
+[templates/docs/retros/README.md](../templates/docs/retros/README.md) gives the format, the `retro-<version>` lead story and how the file lands, and `swarm.sh init` copies it to the board.
+The Retros view in `Board.base` lists every file whose `covers:` is set.
+
 **Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
 alone. Only a plan or an agreement PR gets a codex review, and only when its name names an HLD or
 epic in the PR's worktree (by the file name lower-cased, each run of characters other than `a-z`
