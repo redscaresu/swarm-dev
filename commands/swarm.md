@@ -370,7 +370,7 @@ Repeat until a step below says stop:
      line names a builder with an open PR and a pending item: findings it was told, or a conflict with
      the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
      otherwise), with no background task launched less than 3 times `stall_minutes` ago and no test
-     run. It is not `wait`'s `stuck: api error` or
+     run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
      `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
      quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
      asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
@@ -385,6 +385,10 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` line means every agent
+     open in that plan's tab has written its output, so the step they ran is over. Run the exit
+     (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
+     plan's next step. The line comes again at the end of each later step, since its names change. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
      next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
@@ -470,7 +474,9 @@ Repeat until a step below says stop:
 
      If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
      API error three times in a row, and `wait` already told it to carry on each time), restart the
-     agent as the restart rule under "Three more rules for the lead" says. If it prints `stuck: no output for <N>m
+     agent as the restart rule under "Three more rules for the lead" says. Do the same for
+     `stuck: model error (<line>)` (exit 4: the provider refused the model the session asks for, so
+     `wait` sent no resume). If it prints `stuck: no output for <N>m
      (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it shows, and stop
      for them.
 
@@ -773,14 +779,17 @@ Three more rules for the lead:
   PR with `swarm.sh board-pr`, as for every board edit of yours.
 - Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
   clear. `wait` telling it to carry on counts as its retries, so a `stuck: api error` line is
-  that stop. With `goal` on, a builder is never restarted: its conductor closes it
+  that stop. So is a `stuck: model error (<line>)` line, which `wait` prints at once with no resume:
+  the same session would send the same model ID again, and only a fresh one picks up corrected settings. With `goal` on, a builder is never restarted: its conductor closes it
   `cleared-on-error`, which holds the story for you. The route depends on the agent:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
   - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
     it a file asking it to carry on, with `swarm.sh tell <slug> resume <file>`. Its turn ended on the
     API error, which `tell` reads as idle, so the resume goes at once. A wait first would only return
-    `stuck: api error` again.
+    `stuck: api error` again. On `stuck: model error` send it nothing, since a resume in that session
+    sends the refused model again, and no command starts a fresh builder for a story in review. List
+    it for the user with the line `wait` printed.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.

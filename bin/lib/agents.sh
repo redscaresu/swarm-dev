@@ -1285,9 +1285,11 @@ PANE_DIR="${PROJECT_DIR}/.swarm/panes"
 # pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<prompt>\t<line>" for the stop
 # its last turn ended on: no reply (⏺ or ●) and no submitted prompt (`> text`) after it. <prompt> is
 # the line number of the last submitted prompt above it, 0 for none. The stop is Claude Code's own
-# `API Error:` line, after ⏺ or ● at the margin (api-error), or the tool result Claude Code gives for a
-# denial, `Error: Permission for this action was denied by the Claude Code auto mode classifier.`
-# (auto-denied). An agent's own indented text, or a tool's output (⎿) that prints `API Error:` or
+# `API Error:` line (or `API Error (<model>):`), after ⏺ or ● at the margin (api-error), or the tool
+# result Claude Code gives for a denial, `Error: Permission for this action was denied by the Claude
+# Code auto mode classifier.` (auto-denied). An API error whose status is 400 or 404 and whose text
+# names the model (model ID, model identifier, inference profile, model_not_found) is model-error: the
+# provider refused the model the session asks for, so a resume in that session fails the same way. An agent's own indented text, or a tool's output (⎿) that prints `API Error:` or
 # quotes the denial, is neither. The input box at the bottom is not read: a suggestion or half-typed text
 # there is no prompt. It is the last two border lines (─ at the margin) with no reply from the upper
 # one down; a box higher up (a banner, a dialog) is read as any line.
@@ -1297,7 +1299,10 @@ pane_stop() {
       n = NR; if (!t) t = b
       if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
       for (i = 1; i <= n; i++) {
-        if (l[i] ~ /^(⏺|●)[[:space:]]*API Error:/) { s = i; k = "api-error" }
+        if (l[i] ~ /^(⏺|●)[[:space:]]*API Error( \([^)]*\))?:/) {
+          s = i; e = l[i]; sub(/^(⏺|●)[[:space:]]*API Error( \([^)]*\))?:[[:space:]]*/, "", e)
+          k = (e ~ /^40[04]([^0-9]|$)/ && tolower(e) ~ /model id([^a-z]|$)|model identifier|inference profile|model_not_found/) ? "model-error" : "api-error"
+        }
         else if (l[i] ~ /^[[:space:]]*(⏺|●)/) s = 0
         else if (l[i] ~ /^(>|❯) +[^ ]/) { s = 0; q = i }
         else if (l[i] ~ /^[[:space:]]*⎿[[:space:]]*Error: Permission for this action was denied by the Claude Code auto mode classifier/) { s = i; k = "auto-denied" }
@@ -1320,10 +1325,11 @@ stop_id() {
 }
 
 # pane_check <name> <target> [<sum>] — read <target>'s pane once, keep PANE_DIR/<name>, and set the
-# caller's pane_at (when the pane last changed; with no file yet, when the wait began, or now) and
-# pane_kind (the stop its turn ended on, pane_stop, once turn_ended; else empty). With <sum> (the pane's
+# caller's pane_at (when the pane last changed; with no file yet, when the wait began, or now),
+# pane_kind (the stop its turn ended on, pane_stop, once turn_ended; else empty) and pane_line (that
+# stop's line). With <sum> (the pane's
 # checksum when wait last resumed it, pane_sum), a pane still that same text is no new stop: the resume
-# has not shown yet. A stop is logged as an api-error or auto-denied incident for <name> with its line
+# has not shown yet. A stop is logged as an api-error, model-error or auto-denied incident for <name> with its line
 # (record_incident, so with <name>'s slug= and role=)
 # unless the record holds it already: the record keeps the stop's id (stop_id) until a read finds no
 # stop. It is the same stop when its turn is, or, with no prompt above it left in the window (the
@@ -1334,7 +1340,7 @@ stop_id() {
 # ponytail: a lock a killed reader left is broken after a minute.
 pane_check() {
   local f="${PANE_DIR}/$1" lock="${PANE_DIR}/$1.lock" text sum seen="" logged="" hit n p line now t new=""
-  pane_kind="" pane_at=""
+  pane_kind="" pane_at="" pane_line=""
   [[ -n "$1" ]] || return 0
   mkdir -p "${PANE_DIR}" 2>/dev/null || true
   perl -e 'mkdir shift or exit 1' "${lock}" || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; perl -e 'mkdir shift or exit 1' "${lock}"; } || lock=""
@@ -1346,7 +1352,7 @@ pane_check() {
     elif [[ "${sum}" != "${seen}" || -z "${pane_at}" ]]; then pane_at="$(date +%s)"; fi
     hit="$(pane_stop <<< "${text}")"; now="${logged}"; [[ -n "${hit}" ]] || now=""
     if [[ -n "${hit}" ]] && turn_ended "$1" && [[ -z "${3:-}" || "${sum}" != "$3" ]]; then
-      IFS=$'\t' read -r n pane_kind p line <<< "${hit}"; now="$(stop_id "${text}" "${n}" "${p}" "${line}")"
+      IFS=$'\t' read -r n pane_kind p line <<< "${hit}"; pane_line="${line}"; now="$(stop_id "${text}" "${n}" "${p}" "${line}")"
       [[ -n "${logged}" && ( ( "${now%/*}" != - && "${now%/*}" == "${logged%/*}" ) || ( "${now%/*}" == - && "${now#*/}" == "${logged#*/}" ) ) ]] || new=1
     fi
     if [[ -n "${lock}" ]]; then
@@ -1357,9 +1363,20 @@ pane_check() {
   [[ -z "${lock}" ]] || rmdir "${lock}" 2>/dev/null || true
 }
 
-# api_stopped <name> <target> — succeed when <name>'s turn ended (turn_ended) on an `API Error:` line
-# (pane_stop). It only reads, for next and tell; wait reads through pane_check, which logs the stop.
-api_stopped() { [[ "$(pane_text "$2" | pane_stop | cut -f2)" == api-error ]] && turn_ended "$1"; }
+# stop_kind <name> <target> — print pane_stop's api-error or model-error when <name>'s turn ended
+# (turn_ended) on that `API Error` line; else print nothing and fail. api_stopped succeeds on either.
+# They only read, for next and tell; wait reads through pane_check, which logs the stop.
+stop_kind() {
+  local k
+  k="$(pane_text "$2" | pane_stop | cut -f2)"
+  [[ "${k}" =~ ^(api|model)-error$ ]] && turn_ended "$1" && echo "${k}"
+}
+api_stopped() { stop_kind "$1" "$2" > /dev/null; }
+
+# MODEL_ERROR_CHARS: how much of a model-error stop's line `stuck: model error (<line>)` keeps.
+MODEL_ERROR_CHARS=200
+# model_stuck <line> — wait's line for a model-error stop (pane_stop), its line cut to MODEL_ERROR_CHARS.
+model_stuck() { echo "stuck: model error (${1:0:${MODEL_ERROR_CHARS}})"; }
 
 # resume_agent <name> <target> — send API_RESUME_MSG once through deliver_prompt (once: no retry,
 # which would send it twice when the resumed turn errors before herdr shows it working); succeed when
@@ -1733,7 +1750,7 @@ past_pushed() {
 # step that failed (why) and the last. On a wait --past, after every step, the last too, a builder that
 # pushed past PAST_SHA (past_pushed) ends it first, with "pushed <sha>".
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end why="" pane_kind="" pane_at="" out pushed
+  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end why="" pane_kind="" pane_at="" pane_line="" out pushed
   end=$(($(now_ms) + left))
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
@@ -1785,8 +1802,9 @@ poll_while() {
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
 # A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit <usage_state>",
 # before any other pane check. Each other busy read also reads the pane once (pane_check, past the
-# caller's resumed_sum): a turn that stopped on an API error ends it with "api error", and a pane that
-# has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
+# caller's resumed_sum): a turn that stopped on an API error ends it with "api error", one that stopped
+# on a model error (pane_stop's model-error) with "model error <line>", and a
+# pane that has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ..."
 # (stalled_state). Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
@@ -1797,7 +1815,7 @@ poll_while() {
 # past PAST_SHA ends the wait with "pushed <sha>", whatever its session says. herdr_wait asks it after each step.
 settle() {
   local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0 lim pushed
-  local pane_kind="" pane_at=""
+  local pane_kind="" pane_at="" pane_line=""
   state="$(session_state "${name}")"
   if [[ -n "${PAST_SHA}" ]] && pushed="$(past_pushed "$(($(now_ms) + $3))")"; then echo "pushed ${pushed}"; return 0; fi
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
@@ -1819,6 +1837,7 @@ settle() {
     if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
+    if [[ "${state}" == busy && "${pane_kind}" == model-error ]]; then state="model error ${pane_line}"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       state="$(stalled_state "${min}")"; break
     fi
@@ -1857,6 +1876,10 @@ settle() {
 # from the transcript, which must still end on the error (goal_rule's cleared-on-error), so it returns
 # stuck at once. A conductor or review agent is resumed as with goal off. An expired login
 # (login_expired) on a busy session's API-error stop is auth, as on an idle one, and never resumed.
+# A model error (pane_stop's model-error: a 400 or 404 naming the model) is never resumed, as the same
+# session would send the same model again: wait returns "stuck: model error (<line>)" (model_stuck) and
+# WAIT_STUCK at once, busy (settle's "model error <line>") or idle, goal on or off; the lead restarts the
+# agent in a fresh session. An expired login behind it is auth first, as behind an API error.
 # An agent whose pane is on Claude Code's usage limit (settle's "usage-limit", or idle or waiting and
 # usage_state; an idle session under the waiting line is idle) is neither a stop nor a stall: on its
 # dialog wait sends the option "Wait here, then continue automatically" (the user's standing choice)
@@ -1873,7 +1896,7 @@ settle() {
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen story began act reads=()
+  local answered="" resumed_sum="" pane_kind pane_at pane_line hung seen story began act reads=()
   deadline=$(($(now_ms) + timeout)); began="${SWARM_WAIT_STARTED:-$(date +%s)}"
   [[ -z "${stall}" ]] || since="${began}"
   target="$(own_target "${name}")" || return 1
@@ -1929,12 +1952,14 @@ wait_agent() {
       sleep_ms $((t0 < STALL_POLL_MS ? t0 : STALL_POLL_MS)); continue
     fi
     limited=""; answered=""
-    if [[ "${status}" == idle || "${status}" == "api error" ]] && login_expired "${name}"; then
+    if [[ "${status}" == idle || "${status}" == "api error" || "${status}" == "model error"* ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
       login_incident "${name}"
       echo auth; return 0
     fi
     pane_kind=""; [[ "${status}" != idle ]] || pane_check "${name}" "${target}"
+    if [[ "${status}" == "model error"* ]]; then pane_kind="model-error"; pane_line="${status#model error}"; pane_line="${pane_line# }"; fi
+    if [[ "${pane_kind}" == model-error ]]; then model_stuck "${pane_line}"; return "${WAIT_STUCK}"; fi
     if [[ "${status}" == "api error" || "${pane_kind}" == api-error ]]; then
       # Idle on the very pane it was resumed from (settle held a slice): the resume was not taken up.
       [[ -z "${resumed_sum}" || "$(pane_sum "${target}")" != "${resumed_sum}" ]] || { echo "stuck: api error"; return "${WAIT_STUCK}"; }
@@ -1967,7 +1992,7 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name> (record_incident), once per expired login: not when its last
-# incident in events.tsv (an api-error, auto-denied, stalled, sign-blocked or sign-clear one aside) is
+# incident in events.tsv (an api-error, model-error, auto-denied, stalled, sign-blocked or sign-clear one aside) is
 # one already and no ok tell that sends a prompt (findings, nudge, resume, or a bare tell from before
 # kinds) nor a start of <name> (story, agent, conduct, review-agent) came after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
@@ -1975,7 +2000,7 @@ login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" "${EVENT_OUTCOME_AWK}"'
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
     { o = outcome($5) }
-    $2 == "incident" && $3 == n && o !~ /^(api-error|auto-denied|stalled|sign-blocked|sign-clear):/ { login = o ~ /^login:/ }
+    $2 == "incident" && $3 == n && o !~ /^(api-error|model-error|auto-denied|stalled|sign-blocked|sign-clear):/ { login = o ~ /^login:/ }
     o == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     o == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
