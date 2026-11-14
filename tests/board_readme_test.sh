@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# board_readme_test.sh — swarm-dev's own board/stories/, board/epics/ and board/hld/ READMEs match the
-# templates a project copies under templates/docs/. A change to one without the other fails here.
+# board_readme_test.sh — swarm-dev's own board/stories/, board/epics/, board/hld/ and board/retros/ READMEs
+# match the templates a project copies under templates/docs/. A change to one without the other fails here.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -21,7 +21,7 @@ if same "${tmp}/a" "${tmp}/b"; then
 fi
 echo "ok   the compare tells two files one line apart"
 
-for kind in stories epics hld; do
+for kind in stories epics hld retros; do
   board="board/${kind}/README.md" template="templates/docs/${kind}/README.md"
   if ! same "${board}" "${template}"; then
     echo "FAIL ${board} and ${template} differ; change both:"
@@ -36,4 +36,12 @@ if ! awk '/^```$/{n++} n==1 && /^stage:/{f=1} END{exit !f}' board/epics/README.m
   echo "FAIL board/epics/README.md front-matter block has no stage: line"; exit 1
 fi
 echo "ok   board/epics/README.md documents stage:"
+# The retros README's front-matter block must show covers: and done:, the two fields that make a file in
+# retros/ a retro rather than a note. Goes red if someone drops either line from the block.
+for field in covers "done"; do
+  if ! awk -v f="^${field}:" '/^```$/{n++} n==1 && $0 ~ f{found=1} END{exit !found}' board/retros/README.md; then
+    echo "FAIL board/retros/README.md front-matter block has no ${field}: line"; exit 1
+  fi
+  echo "ok   board/retros/README.md documents ${field}:"
+done
 echo "all passed"

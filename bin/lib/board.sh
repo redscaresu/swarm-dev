@@ -2,10 +2,129 @@
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
 # <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
-# (item_gone); one that is there but cannot be read fails, with sed's error.
+# (item_gone); one that is there but cannot be read fails, with sed's error. During a report it answers
+# from the board's snapshot when it can (board_snap_read), starting no process.
 fm() {
+  board_snap_read F "$1" "$2" && return 0
   state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
     || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
+
+# BOARD_SNAP: while a report's snapshot of the board stands (board_snapshot), the BOARD and
+# BOARD_STATE_DIR it was taken of, joined by a tab; empty when there is none. Not exported: a swarm.sh
+# a report starts reads the board for itself.
+BOARD_SNAP=""
+# BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
+# shell that took the snapshot drops it, a write in a $( ) subshell included; report_cleanup removes it on exit.
+BOARD_SNAP_MARK=""
+# BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
+# before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
+# value) or __G_<key> (get_fm's) after it for a key's value.
+BOARD_SNAP_RE='^_BS_[seh]_[A-Za-z0-9_]+$'
+
+# board_snapshot <mark-file> — report_start's one read of the board: every story, epic and HLD file
+# and its state file (BOARD_STATE_DIR), in one awk, into shell variables that fm and get_fm_or_gone
+# answer from (board_snap_read) until the report ends or a board-state write drops them. Per file it
+# keeps each key's first line anywhere (fm's rule) and its front-matter value (get_fm's), with a
+# SET_FM_KEYS value from the state file over both where state_read would take it (its @base rule).
+# bash 3.2 has no associative arrays, so each value is a variable of its own, named for the file and
+# key (BOARD_SNAP_RE): _ - and . in a file's name are encoded as _5f, _2d and _2e. A file whose name
+# has any other character, or that cannot be read, and an item whose state file cannot be read, are
+# left out, so they are read as before (and fail as before). <mark-file> becomes BOARD_SNAP_MARK.
+# Fails, with no snapshot, when awk does; every read then goes to the files.
+board_snapshot() {
+  local d f s line out files=()
+  board_snap_drop
+  [[ -z "${BOARD_SNAP_MARK}" || ! -e "${BOARD_SNAP_MARK}" ]] || rm -f "${BOARD_SNAP_MARK}"
+  BOARD_SNAP_MARK="$1"
+  # awk takes an operand like k=v for an assignment; one that starts with / never is.
+  [[ "${BOARD}" == /* && "${BOARD_STATE_DIR}" == /* ]] || return 1
+  for d in stories epics hld; do
+    for f in "${BOARD}/${d}"/*.md; do
+      [[ -f "${f}" && -r "${f}" && "${f##*/}" =~ ^[A-Za-z0-9._-]+\.md$ ]] || continue
+      s="${BOARD_STATE_DIR}/${d}/${f##*/}"; s="${s%.md}"
+      if [[ "${d}" == hld || ! -f "${s}" ]]; then files+=("${f}")
+      elif [[ -r "${s}" ]]; then files+=("${f}" "${s}"); fi
+    done
+  done
+  # With no file, awk would read stdin: a report's caller's input, or the terminal.
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  # shellcheck disable=SC2016 # $0 is awk's
+  out="$(SNAP_BOARD="${BOARD}" SNAP_STATE="${BOARD_STATE_DIR}" SNAP_KEYS="${SET_FM_KEYS}" awk '
+    function val(l, p) { l = substr(l, p + 1); sub(/^ +/, "", l); return l }
+    function put(k, v) { print k0 "__" k "=" v }
+    BEGIN { split(ENVIRON["SNAP_KEYS"], K, " "); for (j in K) setk[K[j]] = 1
+      B = ENVIRON["SNAP_BOARD"]; S = ENVIRON["SNAP_STATE"]
+      t["stories"] = "s"; t["epics"] = "e"; t["hld"] = "h"
+      for (j = 1; j < ARGC; j++) { f = ARGV[j]; d = f; sub(/\/[^\/]*$/, "", d); n = substr(f, length(d) + 2)
+        x = d; sub(/^.*\//, "", x); r = substr(d, 1, length(d) - length(x) - 1)
+        if (r == B && n ~ /^[A-Za-z0-9._-]+\.md$/) { sub(/\.md$/, "", n); st[f] = 0 }
+        else if (r == S && n ~ /^[A-Za-z0-9._-]+$/) st[f] = 1
+        else { ARGV[j] = ""; continue }
+        gsub(/_/, "_5f", n); gsub(/-/, "_2d", n); gsub(/\./, "_2e", n); key[f] = "_BS_" t[x] "_" n
+        if (!st[f]) { items[++ni] = key[f]; print key[f] "=1" } } }
+    FNR == 1 { m = 0; k0 = key[FILENAME] }
+    st[FILENAME] { if ((p = index($0, ":")) > 1) { k = substr($0, 1, p - 1)
+        if (k ~ /@base$/) { k = substr(k, 1, length(k) - 5); if (!((k0, k) in b)) b[k0, k] = val($0, p) }
+        else if (!((k0, k) in sv)) { sv[k0, k] = val($0, p); hs[k0] = hs[k0] " " k } }
+      next }
+    $0 ~ /^---$/ { m++; next }
+    match($0, /^[A-Za-z_][A-Za-z0-9_]*:/) { k = substr($0, 1, RLENGTH - 1)
+      if (!((k0, k) in fa)) { fa[k0, k] = val($0, RLENGTH); ks[k0] = ks[k0] " " k }
+      if (m == 1 && !((k0, k) in fv)) fv[k0, k] = val($0, RLENGTH) }
+    END { for (i = 1; i <= ni; i++) { k0 = items[i]; delete used; n = split(ks[k0] hs[k0], L, " ")
+        for (j = 1; j <= n; j++) { k = L[j]; if (k in used) continue; used[k] = 1
+          if ((k0, k) in sv && k in setk && k0 !~ /^_BS_h_/ && !((k0, k) in b && b[k0, k] != fv[k0, k])) {
+            if (sv[k0, k] != "") { put("F_" k, sv[k0, k]); put("G_" k, sv[k0, k]) } }
+          else { if ((k0, k) in fa) put("F_" k, fa[k0, k]); if ((k0, k) in fv) put("G_" k, fv[k0, k]) } } } }' \
+    "${files[@]}" < /dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "${line%%=*}" =~ ${BOARD_SNAP_RE} ]] || { board_snap_drop; return 1; }  # loose-match: ok BOARD_SNAP_RE is a fixed regex, meant to be read as one
+    printf -v "${line%%=*}" '%s' "${line#*=}"
+  done <<< "${out}"
+  BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"
+}
+
+# board_snap_read <F|G> <file> <key> — print <key>'s value for <file> from the report's snapshot (F:
+# fm's rule, G: get_fm's) and succeed, starting no process: only builtins and parameter expansion.
+# Fails, so the caller reads <file> itself, with no snapshot (or one of another board), for a <file>
+# not in it (made after it, or not a story, epic or HLD file named as board_snapshot lists them), a
+# <file> now gone (its caller reads that as no value), or a <key> that is not a plain name. When a
+# board-state write made the mark (board_snap_written), in this shell or a subshell, it drops the
+# snapshot first, so every read after the write sees it.
+board_snap_read() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 1
+  if [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]]; then board_snap_drop; return 1; fi
+  local n="${2##*/}" t
+  case "${2%/*}" in
+    "${BOARD}/stories") t=s ;;
+    "${BOARD}/epics") t=e ;;
+    "${BOARD}/hld") t=h ;;
+    *) return 1 ;;
+  esac
+  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${n}" =~ ^[A-Za-z0-9._-]+\.md$ && -e "$2" ]] || return 1
+  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; n="_BS_${t}_${n//./_2e}"
+  [[ -n "${!n:-}" ]] || return 1
+  n+="__$1_$3"
+  [[ -z "${!n+x}" ]] || printf '%s\n' "${!n}"
+}
+
+# board_snap_drop — end the snapshot in this shell: its variables go, and every read goes to the files.
+board_snap_drop() {
+  BOARD_SNAP=""
+  # shellcheck disable=SC2046 # the names split on purpose; BOARD_SNAP_RE allows no space
+  unset $(compgen -v _BS_ || true)
+}
+
+# board_snap_written — after a board-state write (state_set, state_drop) during a report: make the mark,
+# so every shell that holds the snapshot drops it at its next read, and drop it here. A mark that cannot
+# be made is said on stderr: a shell that took the snapshot before this one could then still read the
+# value from before the write.
+board_snap_written() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 0
+  : 2>/dev/null > "${BOARD_SNAP_MARK}" \
+    || echo "warning: board state written, but ${BOARD_SNAP_MARK} could not be made: reads later in this run may show the value from before" >&2
+  board_snap_drop
 }
 
 # ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
@@ -51,8 +170,10 @@ state_name() {
 }
 
 # state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
-# escalated block (escalated_file), so a later item with its slug starts with no state.
+# escalated block (escalated_file), so a later item with its slug starts with no state. During a report
+# it ends the board's snapshot first (board_snap_written), as state_set does.
 state_drop() {
+  board_snap_written
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
   [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
@@ -665,25 +786,23 @@ idle_lines() {
   printf '%s\n' "${found}" | awk '{ sub(/\t/, " finding: "); print "  " $0 }'
 }
 
-# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
-# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
-# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
-# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
-# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
-# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
-# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
-# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, are
+# report_wrappers' (merge.sh), so each read runs within the report's deadline and a cut one is named as
+# status and dash name it. Inside herdr, `herdr agent list` is answered from the one list next_report
+# read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a later list cut
+# at the deadline cannot hide a conductor an earlier one showed; herdr's other reads go on to
+# report_herdr. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # herdr is called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  report_wrappers
   herdr() {
     if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
       [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
       printf '%s\n' "${LEAD_AGENTS}"; return 0
     fi
-    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+    report_herdr "$@"
   }
-  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
@@ -757,8 +876,8 @@ next_report() {
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
-  # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'; report_cleanup" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).
@@ -869,6 +988,13 @@ lead_blocked() {
   done
 }
 
+# reopened_ready <story-file> — true for a ready story whose last event is reconcile's reopen, after its
+# PR closed unmerged: the lead's, not an agent's. agent_work_left skips it, and lead_held reads a story
+# blocked only on it as the lead's too.
+reopened_ready() {
+  [[ "$(fm "$1" status)" == ready && "$(last_event "$(basename "$1" .md)")" == $'reconcile\tok (reopened)' ]]
+}
+
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
 # open and not yet in review), unless reconcile reopened it after its PR closed unmerged (the lead's);
@@ -890,7 +1016,7 @@ agent_work_left() {
     else
       [[ "${e:--}" == "$1" ]] || continue
       case "$(fm "${f}" status)" in
-        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        ready) ! reopened_ready "${f}" || continue ;;
         blocked) ! lead_held "${f}" || continue ;;
         review) review_agent_owns "${f}" || continue ;;
         *) continue ;;
@@ -928,7 +1054,8 @@ note_group() {
 # lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
 # blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
 # reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
-# that is itself lead_held, so a chain of agent stories under a lead story waits too. A depends_on
+# that is itself lead_held, so a chain of agent stories under a lead story waits too, or a ready story
+# reconcile reopened (reopened_ready), which the lead restarts. A depends_on
 # cycle ([seen], space-separated slugs) waits on the lead as well: no merge can break it.
 lead_held() {
   local p f open seen
@@ -942,19 +1069,23 @@ lead_held() {
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     agent_kind "$(fm "${f}" kind)" || continue
+    ! reopened_ready "${f}" || continue
     lead_held "${f}" "${seen}" || return 1
   done
 }
 
-# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:) with one PR (story_prs), which waits for its review agent (one
-# with several is the lead's, as review_rule says), or one its review agent merges next, under merge =
-# agent or an HLD merge grant (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge
-# has handed it to the user or the lead since its last review (merge_refused).
+# review_agent_owns <story-file> — true for a story in review that a review agent has still to act on.
+# A story with several PRs (story_prs) is the lead's, kept or not, as review_rule says: no review agent
+# acts on it. Otherwise: one a close kept unreviewed (kept:) with one PR, which waits for its review
+# agent, or one its review agent merges next, under merge = agent or an HLD merge grant
+# (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge has handed it to the user or
+# the lead since its last review (merge_refused).
 review_agent_owns() {
-  local slug
+  local slug n
   slug="$(basename "$1" .md)"
-  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(story_prs "$1" | wc -w)" -eq 1 ]]; return; fi
+  n="$(story_prs "$1" | wc -w)"
+  [[ ${n} -le 1 ]] || return 1
+  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ ${n} -eq 1 ]]; return; fi
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   [[ "${CFG_merge}" == agent ]] || no_agent_granted "${slug}" || return 1
   [[ -z "$(costs_tag "$1")" ]] || return 1
@@ -1075,17 +1206,25 @@ dep_holds() {
 # commits since it change a file outside the board (when the board is in the repo; at the root, outside
 # its own paths, board_paths); else nothing. Local refs only: reconcile has just pulled.
 release_due() {
-  local base version rel q ex=() n
+  local base version q ex=() n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
   version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
-  # An empty :(exclude) would exclude every path, so a board at the root excludes its own paths.
-  rel="$(board_rel)"
-  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then ex=(":(exclude)${rel}")
-  else while IFS= read -r q; do ex+=(":(exclude)${q}"); done < <(board_paths); fi
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex[@]+"${ex[@]}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
+}
+
+# board_excludes — the :(exclude) pathspecs, one a line, that leave the board's files out of a git
+# walk over the repo from its root: the board's folder (board_rel), or for a board at the root its own
+# paths (board_paths), since an empty :(exclude) would exclude every path; nothing for a board outside
+# the repo. release_due and non_fix_change both read them, so the two agree on what is a board file.
+board_excludes() {
+  local rel q
+  rel="$(board_rel)"
+  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then echo ":(exclude)${rel}"
+  else while IFS= read -r q; do echo ":(exclude)${q}"; done < <(board_paths); fi
 }
 
 # release_stage <tag> <base> — which release the commits since <tag> (v<x.y.z>) on origin/<base> make,
@@ -1188,6 +1327,174 @@ staged_chain() {
   return 1
 }
 
+# non_fix_change <owner/repo> <from> <ref> — the one definition of a fix, for next and merge --release:
+# each change in <from>..<ref> (a commit, or a ref git reads) that no fix made, one line each, oldest
+# first; nothing when every change is a fix. A change is a commit on the first-parent line that touches
+# a file outside the board (board_excludes, as release_due counts). --full-history keeps a --no-ff merge
+# that is TREESAME to its second parent; today's git compares a first-parent walk's merge with its first
+# parent alone, so the flag guards a git that does not. Its PR is the merged PR whose mergeCommit is that
+# commit, from one gh pr list --repo <owner/repo> --state merged of the PRs merged from the day before
+# <from>'s commit date (UTC), <limit> at most: a change whose PR is past that prints as having none.
+# That call ends at the report's deadline (REPORT_END) under a report (next, dash), else after <wait>
+# seconds (SWARM_NON_FIX_WAIT, for tests); a call cut there is a failing gh.
+# The change is a fix when that PR's head is story/fix-main-<sha7> exactly (a fix-main build: fix_main
+# writes no other name, so a planner's slug such as fix-main-docs is no fix), or story/<slug> whose
+# <board>/stories/<slug>.md has fix: true in its first front matter (fm_text; a trailing # comment and
+# whitespace off, as stage_of takes them), read at the base the PR merged onto. For a merge commit (two
+# parents or more) that is its first parent, which git names. Else it is the nearest commit before it
+# on the first-parent line that is a merged PR's mergeCommit, else <from> when gh lists it as one (a
+# release tag's commit is): for a squash, its parent; for a rebase merge, whose earlier commits no PR
+# lists, the commit before the PR's first. With neither, <from> may sit inside the PR, so the base is
+# not known: the change is no fix, and the answer is not cached. Other commits
+# between that base and the commit's parent (a rebase merge's earlier ones, a direct push, or a PR gh's
+# search has not listed yet) may not touch the file, save one that only deletes it: any other change
+# to it there, adding fix: true or taking it away, makes the change no fix, and such an answer is not
+# cached, as it rests on gh's list being whole. So the board is read as the planner left it: a PR
+# cannot make its own feature a fix in any of its commits, and a PR that deleted its own file is read
+# too. Every other change prints one of
+#   <sha7> #<n> <head>: <why>                its story is no fix, its file is missing, or its head is no story branch
+#   <sha7>: no merged PR has this commit     a direct push, a rebase merge's earlier commits, or a PR the list missed
+# It reads git at those commits alone, never the checkout or the board's state, so a local edit changes
+# nothing. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
+# <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails, is cut or gives no list. A
+# caller counts exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE;
+# SWARM_GH_FRESH set skips the cached read) under <rule>, the board's path and both SHAs, written only
+# once git and gh both answered, no line says no merged PR, no read passed a commit no PR lists (gh's
+# search can lag a fresh merge) and no change sits at a shallow clone's edge, which prints whatever its
+# head: a merged commit's PR and a file at a commit never change, so next, which dash runs every frame,
+# pays one gh call per base move. A repo that merges PRs of several commits by rebase passes such
+# commits, so there it pays one per call.
+non_fix_change() {
+  # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
+  # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
+  # wait: how long that call may take outside a report.
+  local rule=1 limit=1000 wait="${SWARM_NON_FIX_WAIT:-60}"
+  local repo="$1" from="" to="" rel q ex=() changes all day bound rc json map rows c base prev n head p txt v b at line out="" keep=1
+  [[ "${wait}" =~ ^[1-9][0-9]*$ ]] || wait=60
+  [[ ${BOARD_IN_REPO} == 1 ]] || { echo "non_fix_change: the board is outside the repo, so git holds no story history to read" >&2; return 1; }
+  [[ "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "non_fix_change: '${repo}' is not <owner>/<repo>" >&2; return 1; }
+  for q in "$2" "$3"; do
+    if [[ "${q}" == -* ]] || ! c="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "${q}^{commit}" 2>/dev/null)"; then
+      echo "non_fix_change: git cannot read the commit '${q}'" >&2; return 1
+    fi
+    if [[ -z "${from}" ]]; then from="${c}"; else to="${c}"; fi
+  done
+  rel="$(board_rel)"
+  if out="$(non_fix_cache get "${rule}" "${repo}" "${rel}" "${from}" "${to}" < /dev/null)"; then
+    [[ -z "${out}" ]] || printf '%s\n' "${out}"
+    return 0
+  fi
+  out=""
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
+  changes="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --full-history "${from}..${to}" -- . ${ex[@]+"${ex[@]}"} 2>/dev/null)" \
+    || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
+  [[ -n "${changes}" ]] || return 0
+  # Every commit on the first-parent line, each with its parents, to find each change's base in.
+  all="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --parents "${from}..${to}" 2>/dev/null)" \
+    || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
+  day="$(git -C "${PROJECT_DIR}" show -s --format=%ct "${from}" 2>/dev/null)" || day=""
+  [[ "${day}" =~ ^[0-9]+$ ]] || { echo "non_fix_change: git cannot read the date of ${from:0:7}" >&2; return 1; }
+  day="$(perl -MPOSIX -e 'print POSIX::strftime("%Y-%m-%d", gmtime($ARGV[0] - 86400))' "${day}")"
+  bound="${wait}"; [[ -z "${REPORT_END:-}" ]] || bound="@${REPORT_END}"
+  rc=0; json="$(within "${bound}" gh pr list --repo "${repo}" --state merged --search "merged:>=${day}" \
+    --json number,headRefName,mergeCommit --limit "${limit}" < /dev/null 2>/dev/null)" || rc=$?
+  if (( rc == 142 )) && [[ -n "${REPORT_END:-}" ]]; then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged was cut at the report's ${REPORT_SECONDS:-} s deadline" >&2; return 1
+  elif (( rc == 142 )); then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged gave no answer within ${wait} s" >&2; return 1
+  elif (( rc != 0 )); then
+    echo "non_fix_change: gh pr list --repo ${repo} --state merged failed" >&2; return 1
+  fi
+  # One "<mergeCommit> <number> <head>" line per merged PR; one that does not read is left out, so its
+  # commit prints as having no PR, and the answer is not cached.
+  map="$(python3 -I -c '
+import json, re, sys
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    m = p.get("mergeCommit") if isinstance(p, dict) else None
+    oid, n, head = m.get("oid") if isinstance(m, dict) else None, p.get("number"), p.get("headRefName")
+    if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) and type(n) is int \
+       and isinstance(head, str) and re.fullmatch(r"[^\s\x00-\x1f\x7f]+", head):
+        print(oid, n, head)
+' <<< "${json}" 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} gave no list of merged PRs" >&2; return 1; }
+  # "<change> <base> <parent> [<number> <head>]", oldest first: the parent is its first parent, - for
+  # none (a shallow clone's edge); the base is that parent for a merge commit, else the last commit
+  # before it, on the first-parent line, that the map names, else <from> when the map names it, else -.
+  # Each input ends in a newline, so an empty one is still one line and its file is still counted.
+  rows="$(awk -v from="${from}" 'FNR == 1 { f++ }
+    f == 1 { if (NF == 3) { n[$1] = $2; h[$1] = $3 }; next }
+    f == 2 { if (!seen++) last = (from in n) ? from : "-"; if (NF) ch[$1] = 1; next }
+    NF { p = (NF > 1) ? $2 : "-"
+         if ($1 in ch) print $1, ((NF > 2) ? p : last), p, (($1 in n) ? n[$1] " " h[$1] : "")
+         if ($1 in n) last = $1 }' \
+    <(printf '%s\n' "${map}") <(printf '%s\n' "${changes}") <(printf '%s\n' "${all}"))"
+  while read -r c base prev n head; do
+    [[ -n "${c}" ]] || continue
+    if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
+    line="${c:0:7} #${n} ${head}:"
+    # A commit with no parent to read is a shallow clone's edge: the commits the clone never fetched,
+    # between <from> and it, may hold non-fixes, so it prints whatever its head, and is not cached.
+    if [[ "${prev}" == - ]]; then out+="${line} git cannot read the commit before it"$'\n'; keep=""; continue; fi
+    [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
+    if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
+    p="${rel}stories/${BASH_REMATCH[1]}.md"
+    # No listed PR's commit to stand on: <from> may be one of this PR's own commits.
+    if [[ "${base}" == - ]]; then out+="${line} its base is not known: ${from:0:7} is no listed PR's commit"$'\n'; keep=""; continue; fi
+    # A read that passes commits no PR lists rests on gh's list being whole: never cached.
+    at="before the merge"; [[ "${prev}" == "${base}" ]] || { at="at ${base:0:7}, the last listed PR before it"; keep=""; }
+    if ! txt="$(git -C "${PROJECT_DIR}" show "${base}:${p}" 2>/dev/null)"; then
+      # A base git cannot read (a shallow clone) is no answer: printed, but not cached.
+      if git -C "${PROJECT_DIR}" rev-parse -q --verify "${base}^{commit}" > /dev/null 2>&1; then out+="${line} no ${p} ${at}"$'\n'
+      else out+="${line} git cannot read the commit before it"$'\n'; keep=""; fi
+      continue
+    fi
+    v="$(fm_text fix <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+    if [[ "${v}" == true ]]; then
+      # The base's answer stands when no commit after it touched the file, or one did and deleted it.
+      [[ "${prev}" != "${base}" ]] || continue
+      b="$(git -C "${PROJECT_DIR}" rev-list --first-parent --full-history "${base}..${prev}" -- "${p}" 2>/dev/null)" \
+        || { out+="${line} git cannot read ${p}'s history before the merge"$'\n'; continue; }
+      [[ -n "${b}" ]] || continue
+      [[ "${b}" == *$'\n'* ]] || git -C "${PROJECT_DIR}" rev-parse -q --verify "${b}:${p}" > /dev/null 2>&1 || continue
+      out+="${line} ${p} changed between ${base:0:7} and the merge"$'\n'
+    elif [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true ${at}"$'\n'
+    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} ${at}, not true"$'\n'; fi
+  done <<< "${rows}"
+  out="${out%$'\n'}"
+  if [[ -n "${keep}" ]]; then non_fix_cache put "${rule}" "${repo}" "${rel}" "${from}" "${to}" <<< "${out}" || true; fi
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+  return 0
+}
+
+# non_fix_cache get|put <rule> <owner/repo> <board rel> <from> <to> — non_fix_change's cached answer, through
+# gh_cache.py: get prints it and fails when there is none (or SWARM_GH_FRESH is set); put writes stdin,
+# its last newline off. The file is <GH_CACHE>/<owner--repo>/non-fix/rule<rule>-<board>-<from>-<to>.json,
+# <board> the board's path from the repo root (board_rel, which swarm.sh resolves from board_dir) with
+# every byte but a-z, 0-9, ., _ and - as %XX. So it stays one file name, and two paths that differ only
+# in case stay two files on a disk that ignores case. With no cache (GH_CACHE empty), or a get under
+# SWARM_GH_FRESH, it fails at once, as gh_cache.py would, without starting python.
+non_fix_cache() {
+  local fresh="${SWARM_GH_FRESH:-${GH_FRESH:-}}"
+  [[ -n "${GH_CACHE:-}" && ( "$1" == put || -z "${fresh}" ) ]] || return 1
+  SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${fresh}" python3 -I -c '
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import gh_cache
+op, rule, repo, rel, a, b = sys.argv[2:8]
+board = "".join(chr(c) if re.fullmatch(rb"[a-z0-9._-]", bytes([c])) else "%%%02X" % c for c in rel.encode("utf-8", "surrogateescape"))
+name = "non-fix/rule%s-%s-%s-%s" % (rule, board, a, b)
+if op == "put":
+    gh_cache.put(repo, name, sys.stdin.read()[:-1])
+    sys.exit(0)
+got = gh_cache.get(repo, name)
+if not isinstance(got, str):
+    sys.exit(1)
+sys.stdout.write(got)
+' "${SWARM_HOME}/bin/lib" "$@" 2>/dev/null
+}
+
 # stage_of <stage: value> — x.y.z for v<x.y.z> (a trailing # comment and whitespace off, as slug_list
 # takes them, then a matching pair of quotes), - for none, bad for any other value, one with a quote
 # and no match included.
@@ -1222,6 +1529,49 @@ version_gt() {
     if ((10#${a[i]} < 10#${b[i]})); then return 1; fi
   done
   return 1
+}
+
+# retro_done <ref> <version> <tag> — true when <board_rel>retros/v<version>.md at git <ref> is a done
+# retro covering <version>: its first front-matter block (from line 1 to the next ---) has
+# `done: YYYY-MM-DD` and `covers: v<a.b.c>..v<x.y.z>`, one line each, no quotes, nothing after the
+# value, with x.y.z equal to <version> and a.b.c at or before <tag>. It reads the file with one git
+# show at <ref> (next passes origin/<base>, merge --release RELEASE_BASE), never the checkout. On a pass
+# it prints 'covers v<a.b.c>..v<x.y.z>, done <date>' on stdout; otherwise it prints why on one line,
+# also on stdout, and fails. A board outside the repo has no retro file at any ref, so it always fails
+# there. A file in retros/ with neither field is a note, and fails as one.
+retro_done() {
+  local ref="$1" ver="$2" tag="$3" path text d c
+  [[ -n "${ref}" && "${ref}" != -* ]] || { echo "retro_done: '${ref}' is not a git ref"; return 1; }
+  [[ "${ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || { echo "retro_done: '${ver}' and '${tag}' must each be x.y.z"; return 1; }
+  [[ ${BOARD_IN_REPO} == 1 ]] \
+    || { echo "no retro file can be read at ${ref}: the board (${BOARD}) is outside the project's repo"; return 1; }
+  path="$(board_rel)retros/v${ver}.md"
+  text="$(git -C "${PROJECT_DIR}" show "${ref}:${path}" 2> /dev/null)" || { echo "no ${path} at ${ref}"; return 1; }
+  d="$(retro_fm "done" <<< "${text}")"; c="$(retro_fm covers <<< "${text}")"
+  if [[ -z "${d}" && -z "${c}" ]]; then
+    echo "${path} at ${ref} has neither done: nor covers: in its front matter, so it is a note, not a retro"; return 1
+  fi
+  [[ -n "${d}" ]] || { echo "${path} at ${ref} has no done: in its front matter"; return 1; }
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "${path} at ${ref}: done: '${d}' is not YYYY-MM-DD"; return 1; }
+  [[ -n "${c}" ]] || { echo "${path} at ${ref} has no covers: in its front matter"; return 1; }
+  [[ "${c}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\.\.v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+    || { echo "${path} at ${ref}: covers: '${c}' is not v<a.b.c>..v<x.y.z>"; return 1; }
+  [[ "${BASH_REMATCH[2]}" == "${ver}" ]] \
+    || { echo "${path} at ${ref}: covers: ${c} ends at v${BASH_REMATCH[2]}, not v${ver}"; return 1; }
+  ! version_gt "${BASH_REMATCH[1]}" "${tag}" \
+    || { echo "${path} at ${ref}: covers: ${c} starts at v${BASH_REMATCH[1]}, after the last tag v${tag}"; return 1; }
+  echo "covers ${c}, done ${d}"
+}
+
+# retro_fm <key> — <key>'s value in the front matter of the text on stdin: the block from a --- on line
+# 1 to the next ---, its first line starting <key>:, the spaces after the colon off. Nothing when line 1
+# is not ---, the block never closes, or no line in it has <key>.
+retro_fm() {
+  awk -v k="$1" 'NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { closed = 1; exit }
+    !seen && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^[ \t]+/, "", v); seen = 1 }
+    END { if (closed && seen) print v }'
 }
 
 # staged_draft <epic file> — "<stage> <prev>" (x.y.z each) for a staged draft: status: draft, a
@@ -2478,11 +2828,14 @@ set_fm() {
 # value now, which state_value compares. A value <file> already has needs no line, so its lines go and
 # the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
 # left with no line goes. It holds the item's lock (state_lock) from its read to its write, so two
-# writers to one item keep each other's keys. Dies naming the state file when any step fails.
+# writers to one item keep each other's keys. Dies naming the state file when any step fails. During a
+# report it first ends the board's snapshot (board_snap_written), in every shell that holds it, so the
+# next read of the item sees the write.
 state_set() {
   local f="$1" s pairs="" rc=0
   state_path "${f}"; s="${STATE_PATH}"
   [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
+  board_snap_written
   shift
   while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
   # Checked first, or the lock's mkdir would fail as if it were held.
@@ -2542,16 +2895,21 @@ state_write() {
 get_fm() { get_fm_or_gone "$1" "$2" || gone_ok $?; }
 
 # get_fm_or_gone <file> <key> — get_fm, but failing with ITEM_GONE for a <file> that is gone
-# (item_read), so pr_stories can list the board again.
+# (item_read), so pr_stories can list the board again. During a report it answers from the board's
+# snapshot when it can (board_snap_read), starting no process.
 get_fm_or_gone() {
+  board_snap_read G "$1" "$2" && return 0
   # shellcheck disable=SC2016 # $0 is awk's
   state_value "$1" "$2" || item_read "$1" awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 
 # review <slug> [--head <sha>] <pr-url>... — the item's PRs are green and reviewed and wait on a human
-# merge. With --head, each PR's head must still be <sha>, the head its review passed, and the item's
-# prs: line may list no PR it does not name (review_heads), else it changes nothing. A story whose
+# merge. With --head, each PR's head must still be <sha>, the head its review passed, or a head that
+# adds to <sha> only git's own clean merges of the base and is green, and the item's prs: line may list no PR it does
+# not name (review_heads), else it changes nothing. Each head taken that way, once the review is not
+# held, writes base-accepted <slug> <head> from <sha>, which review_pass follows, and prints an
+# accepted: line. A story whose
 # depends_on parents are still open is held instead: back to
 # blocked with held_by: <parents> and its prs: line, its builder, worktree and branch kept, so no merge
 # reaches a child before its parents.
@@ -2564,7 +2922,8 @@ get_fm_or_gone() {
 # review-finished <slug> ok with the review line's fields; a review held writes none. A failed read of
 # decline_only_round is a pass, never a failed review.
 mark_review() {
-  local f url held want="" slug round="" verdict=pass n=""
+  local f url held want="" slug round="" verdict=pass n="" head base merges
+  REVIEW_ACCEPTED=""
   f="$(item_file "${1:?slug}")"; shift
   if [[ "${1:-}" == --head ]]; then
     want="${2:-}"; shift; [[ $# -eq 0 ]] || shift
@@ -2584,6 +2943,12 @@ mark_review() {
     event_fields ${round:+"round=${round}"} verdict=held
     die "held: ${slug} waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
+  # A head past <sha> that adds only clean merges of the base carries the pass on <sha> (review_pass).
+  while read -r url head base merges; do
+    [[ -n "${url}" ]] || continue
+    record_event base-accepted "${slug}" "${head} from ${want}"
+    echo "accepted: ${url}'s head ${head:0:7} adds only clean merges of ${base} (${merges}) to ${want:0:7}, the reviewed head; its pass counts for ${head:0:7}"
+  done <<< "${REVIEW_ACCEPTED}"
   if [[ -n "${want}" ]] && n="$(decline_only_round "${slug}" "${want}")" && [[ -n "${n}" ]]; then
     round="${n}"; verdict=decline-only
     record_event decline-only "${slug}" "ok (round ${n})" "round=${n}" verdict=decline-only
@@ -2603,10 +2968,20 @@ REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may ta
 # one named here: each its prs: line lists, and, for a story, each open PR from its branch story/<slug>
 # in each named PR's repo (one review agent passes one PR, and prs: is often empty until review: a
 # review naming one of two would let the story finish without the other). Then gh must read each named
-# PR's head as <sha>: a head pushed since the review passed has had no review. Each gh read stops after
-# REVIEW_HEAD_SECONDS; one that fails or runs out says to run review again.
+# PR's head as <sha>: a head pushed since the review passed has had no review. One exception: a head
+# that adds to <sha> only git's own clean merges of the PR's base (base_merges_only, as merge --head
+# reads it) brings no code the review did not read, so it is taken, with a line `<pr-url> <head> <base>
+# <merges, short>` added to REVIEW_ACCEPTED for mark_review, once ci_gate head finds it green (the review
+# waited for green on <sha> only), each workflow a pull_request runs there included, as wait-pr reads them
+# (ci_gate head with the PR's base, number and changed file count): one with no run on the head is not
+# finished. Any other head, one whose merges cannot be read, and one whose CI is red,
+# not finished or unread (within REVIEW_HEAD_SECONDS), dies as a moved head does, after a line on stderr
+# saying why it was not taken. Only a moved head's PR has its base branch and changed file count read, a
+# second gh read. Each gh read stops after REVIEW_HEAD_SECONDS; one that fails or runs out says to run
+# review again.
+REVIEW_ACCEPTED=""
 review_heads() {
-  local f="$1" want="$2" slug url head others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head info base changed why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
   pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
   if [[ "${f}" == "${BOARD}/stories/"* ]]; then
@@ -2628,12 +3003,34 @@ review_heads() {
     || die "review: ${slug} also has ${others}, which this review did not cover; ${slug} is unchanged: once each has passed its own review, run swarm.sh review ${slug} with every PR URL"
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]]
-    head="$(within "${secs}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid < /dev/null \
+    repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+    head="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null \
       | json "d['headRefOid']" 2>/dev/null)" || head=""
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
-    [[ "${head}" == "${want}" ]] \
-      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
+    [[ "${head}" != "${want}" ]] || continue
+    # Only a moved head needs the PR's base, for base_merges_only's read of its merges and ci_gate head's of
+    # the workflows a pull_request runs, and its changed file count, for ci_gate's read of its files.
+    info="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName,changedFiles < /dev/null \
+      | json "'%s %d' % (d['baseRefName'], d['changedFiles'])" 2>/dev/null)" || info=""
+    read -r base changed <<< "${info}"
+    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
+      || die "review: gh could not read the base branch and changed file count of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
+    if why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)"; then
+      merges="$(short_shas "${why##*$'\n'}")"
+      # The review waited for green on <sha> only: a merge of the base can still break a check. With the
+      # base, number and file count, as wait-pr passes them, a workflow that has not started yet is not
+      # finished, so one green check alone does not take the head.
+      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" "${base}" "${n}" "${changed}" < /dev/null 2>&1)" || rc=$?
+      if [[ ${rc} -eq 0 ]]; then REVIEW_ACCEPTED+="${url} ${head} ${base} ${merges}"$'\n'; continue; fi
+      case ${rc} in 1) ci="red" ;; 2) ci="not finished" ;; *) ci="unread" ;; esac
+      why="$(tr -d '\000-\037\177' <<< "${why%%$'\n'*}")"
+      echo "review: ${url}'s head ${head:0:7} adds only clean merges of ${base} (${merges}) to ${want:0:7}, but CI on it is ${ci}: ${why:-no answer within ${secs}s}; once swarm.sh wait-pr --head ${head} ${url} exits 0, review --head ${want} takes it" >&2
+    else
+      why="$(tr -d '\000-\037\177' <<< "${why##*$'\n'}")"; why="${why#swarm: }"
+      echo "review: ${url}'s head ${head:0:7} is not ${want:0:7} plus clean merges of ${base}: ${why:-the read of its merges said nothing}" >&2
+    fi
+    die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
   done
 }
 
