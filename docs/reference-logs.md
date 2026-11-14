@@ -961,8 +961,12 @@ A part with no lines prints `no lead-hand or user-caught lines since <day>` or `
 A missing `events.tsv` prints `no incidents: <path> does not exist`.
 `flow`'s `incidents` section counts these kinds and prints no line's text.
 
-**memories.** The lead's memory notes that are not yet placed in a story, a check or a rule.
-It prints one line for each `*.md` note in the memory folder except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
+**memories.** The lead's swarm-dev memory notes that are not yet placed in a story, a check or a rule.
+The memory folder can be a store that also holds notes for other projects, so only swarm-dev notes are listed.
+It prints one line for each swarm-dev note in the folder, `*.md` except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
+A note counts as a swarm-dev note when its front matter has `project: swarm-dev`, at the top level or under `metadata:`, or when its `name:` or `description:` contains `swarm` in any case.
+The filter reads only the front matter, so a note with `swarm` only in its body, or with no front matter, is skipped.
+After the list, one line counts the notes it skipped, `<n> other notes skipped (not tagged project: swarm-dev)`, so a swarm-dev note that lacks the tag still gets noticed.
 It reads only the `*.md` files in that one folder, never a subfolder or a session log.
 `--memory <dir>` names the folder.
 By default it is Claude Code's memory folder for the project: the projects folder (`CLAUDE_PROJECTS_DIR`, or `projects` under the Claude config folder), then the main checkout's path with each character outside `A-Za-z0-9` turned into `-`, then `memory`.
