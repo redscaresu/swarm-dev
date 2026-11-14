@@ -10,7 +10,7 @@ if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
    && paths="$(git diff --name-only --no-renames "${BASE_SHA}...HEAD")" && [[ -n "${paths}" ]]; then
   only=true
   while IFS= read -r p; do
-    case "${p}" in "${BOARD}"stories/*|"${BOARD}"epics/*|"${BOARD}"hld/*|"${BOARD}"Board.base|"${BOARD}".obsidian/*) ;; *) only=false ;; esac
+    case "${p}" in "${BOARD}"stories/*|"${BOARD}"epics/*|"${BOARD}"hld/*|"${BOARD}"Board.base|"${BOARD}".obsidian/*|"${BOARD}"retros/*.md) ;; *) only=false ;; esac
   done <<< "${paths}"
 fi
 echo "board-only: ${only}"

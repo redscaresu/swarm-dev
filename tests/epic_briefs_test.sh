@@ -190,10 +190,12 @@ check "a worktree with scripts/select-tests.sh: before the first push and after 
 # The builder acts when its own background test run ends, stops any run still going before a push by
 # a route the guard allows, and after the PR opens pushes what is ready with further points in the body.
 bgrun="Run a long test run in the background (Bash run_in_background), so its end wakes you, and act on its result when it ends."
-stoprun="Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
+stoprun_own="Before you push, stop any test run of yours still going: kill it by the PID you started (\`kill <pid>\`), or stop its background task (the guard refuses pkill and killall)."
+stoprun="Before you push, stop any test run of yours still going: stop its background task, or kill the select-tests.sh or make you started by its PID (\`kill <pid>\`, never \`-9\`): make passes the TERM to scripts/test.sh, which then stops every job and test of the run (the guard refuses pkill and killall)."
 oncepr="After the PR opens, push what is ready and put further points in the PR body, rather than a push for each: every push restarts CI."
 check "the builder brief runs a long test run in the background and acts when it ends" "yes" "$(has "${bgrun}" "${plain}")"
-check "the builder brief stops its own test run before a push, by PID or its background task, never pkill or killall" "yes" "$(has "${stoprun}" "${plain}")"
+check "the builder brief stops its own test run before a push: with select-tests.sh by its background task or a TERM to its select-tests.sh or make; without, by PID or its background task; never pkill or killall" "yes|yes" \
+  "$(has "${stoprun}" "${withsel}")|$(has "${stoprun_own}" "${plain}")"
 check "the builder brief, after the PR opens, pushes what is ready and puts further points in the PR body" "yes" "$(has "${oncepr}" "${plain}")"
 check "with and without select-tests.sh, the brief forbids a pgrep -f poll that matches itself and points to the bracketed marker" "yes|yes" \
   "$(has "${nopoll}" "${plain}")|$(has "${nopoll}" "${withsel}")"
@@ -299,7 +301,7 @@ report_rules() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|%s|%s|%s|%s\n' "$(has "Never write your report while agent work is left:" "${b}")" \
     "$(has "A merge or handover note that ends \`finish: $2 has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours ${FINISH_CLOSE}" "${b}")" \
-    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
+    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, a story reconcile reopened after its PR closed unmerged, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
     "$(has "only once no agent work is left (the stop rule above): write your report" "${b}")" \
     "$(grep -qF "Write your report only when no story of this epic that is yours to start is ready and none is running" <<< "${b}" && echo there || echo gone)"
 }

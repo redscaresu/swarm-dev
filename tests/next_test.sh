@@ -869,6 +869,9 @@ ROOT_BOARD="mkdir -p .claude/swarm && echo 'board_dir = .' > .claude/swarm/confi
 expect_release "a board at the root, a commit outside its paths: release" release 0 "${ROOT_BOARD}" "echo x > bin/x" "${COMMIT}"
 expect_release "a board at the root, only its own commits: not release" "done" 0 "${ROOT_BOARD}" "echo x > Board.base" "${COMMIT}"
 expect_release "a board at the root, only a commit under its stories/: not release" "done" 0 "${ROOT_BOARD}" "mkdir -p stories && echo x > stories/README.md" "${COMMIT}"
+# retros/*.md is a glob, as git's pathspecs read it: a retro file is the board's, a script beside it is not.
+expect_release "a board at the root, only a retro file: not release" "done" 0 "${ROOT_BOARD}" "mkdir -p retros && echo x > retros/v1.2.0.md" "${COMMIT}"
+expect_release "a board at the root, a script under retros/: release" release 0 "${ROOT_BOARD}" "mkdir -p retros && echo x > retros/x.sh" "${COMMIT}"
 expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
 expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture

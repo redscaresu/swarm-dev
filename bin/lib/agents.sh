@@ -447,7 +447,11 @@ reserved_env() {
 # set up for a provider (Foundry's key, say) still runs from a session without it. With
 # CLAUDE_CODE_USE_FOUNDRY on (1 or true), the session's ANTHROPIC_FOUNDRY_* and ANTHROPIC_DEFAULT_*_MODEL
 # names are added unasked: Foundry's endpoint and key live only in the environment, so without them
-# every agent stops at its first request, and the session has already chosen to use them.
+# every agent stops at its first request, and the session has already chosen to use them. With
+# CLAUDE_CODE_USE_BEDROCK on (1 or true), the session's AWS_BEARER_TOKEN_BEDROCK (Bedrock's API key) and
+# ANTHROPIC_DEFAULT_*_MODEL names are added the same way: without them an agent hangs at its first
+# request. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN are not: profile and SSO
+# logins reach agents through HOME and AWS_PROFILE, and an exported secret stays opt-in through agent_env.
 agent_env_names() {
   local n exported out=""
   exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
@@ -458,6 +462,12 @@ agent_env_names() {
   if [[ "${CLAUDE_CODE_USE_FOUNDRY:-}" == 1 || "${CLAUDE_CODE_USE_FOUNDRY:-}" == true ]]; then
     for n in ${exported}; do
       [[ "${n}" =~ ^ANTHROPIC_FOUNDRY_[A-Z0-9_]+$ || "${n}" =~ ^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$ ]] || continue
+      [[ "${out} " == *" ${n} "* ]] || out+=" ${n}"
+    done
+  fi
+  if [[ "${CLAUDE_CODE_USE_BEDROCK:-}" == 1 || "${CLAUDE_CODE_USE_BEDROCK:-}" == true ]]; then
+    for n in ${exported}; do
+      [[ "${n}" == AWS_BEARER_TOKEN_BEDROCK || "${n}" =~ ^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$ ]] || continue
       [[ "${out} " == *" ${n} "* ]] || out+=" ${n}"
     done
   fi
@@ -2914,7 +2924,7 @@ own_target() {
 # agent_where <agent> — agent_where_in over herdr's lists, each read once: the agent list first, so
 # an unknown agent fails with no other read, then the pane, workspace and tab lists (every workspace's
 # tabs). A list herdr does not give past the first leaves the workspace label - and the tab its record's
-# name: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
+# name, with its tab id when herdr's pane or agent list gave one: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
 # lists no such agent in this project's panes.
 agent_where() {
   local agents out panes workspaces tabs
@@ -2933,8 +2943,9 @@ agent_where() {
 # lists every project's agents, and another project's may hold the name. The labels are panes.py's
 # pane_where over the pane's entries in the pane list and the agent list, as status and dash print them
 # on each agent's row: a workspace herdr gives no label for, or whose list is empty or not JSON (a failed
-# read), is -; a tab is the name swarm-dev gave it, its tab record's. Fails, printing why, when the
-# agent list is not JSON or names no such agent in this project's panes.
+# read), is -; a tab herdr gives no label for is the name swarm-dev gave it, its tab record's, with the
+# tab's id when herdr gave one, `t1 (w1:t3)`. Fails, printing why, when the agent list is not JSON or
+# names no such agent in this project's panes.
 agent_where_in() {
   SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_STATE="${STATE_DIR}" SWARM_PANE_LIST="$3" SWARM_WS="$4" SWARM_TABS="$5" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys

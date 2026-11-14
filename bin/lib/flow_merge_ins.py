@@ -12,8 +12,10 @@
 # counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not list, a
 # sha or commit git cannot read, a merge-in whose git log, merge-tree, diff or merge-base fails, and a
 # one-parent "merge" (a squash, a rebase); a `merge ins: left out <url>: <why>` line names each. TSV
-# cause merge_ins prs, then, after a blank line, file conflicts: the three files conflicts hit most; or
-# none conflicted, or none read when it read no merge-in.
+# cause merge_ins prs reference_docs: reference_docs counts, on the conflict row, the conflict merge-ins
+# whose files include docs/reference.md or a docs/reference-*.md (swarm-dev's own doc layout), once
+# each, and is - on the other rows, which read no files. Then, after a blank line, file conflicts: the
+# three files conflicts hit most; or none conflicted, or none read when it read no merge-in.
 import collections, datetime, os, re
 from report import *
 from gh_cache import commits, pull
@@ -21,6 +23,7 @@ from gh_cache import commits, pull
 DAYS = 30
 CAUSES = ("conflict", "behind", "neither", "unread")
 SHA = re.compile(r"[0-9a-f]{40}")   # a fork's PR is not ours to pass to git as an option
+REFERENCE = re.compile(r"docs/reference(-[^/]*)?\.md")   # matched whole: docs/reference.md, docs/reference-<part>.md
 project = os.path.dirname(os.path.dirname(events))   # events is <project>/.swarm/events.tsv
 repos = {s: d.strip() for s, _, d in (l.partition("\t") for l in os.environ.get("SWARM_REPO_DIRS", "").splitlines())}
 
@@ -115,9 +118,13 @@ if since == "0000-00-00" and not epic:
 last = {pr_key(r["pr"]): r for r in rows if r["pr"] and since <= r["date"] <= until and (not epic or r["epic"] == epic)}
 prs = {k: r for k, r in last.items() if (r["pr_state"] == "MERGED" or r["merged_at"]) and r["main_merges"].isdigit() and int(r["main_merges"]) > 0}
 counts, by_cause, files, notes = collections.Counter(), collections.defaultdict(set), collections.Counter(), []
+reference_docs = 0   # conflict merge-ins with a reference doc among their files, one each
 
 def tally(key, url, c, n=1, conflicted=(), reason=""):
+    global reference_docs
     counts[c] += n
+    if c == "conflict" and any(REFERENCE.fullmatch(f) for f in conflicted):
+        reference_docs += 1   # only cause() tallies a conflict, one merge-in a call
     by_cause[c].add(key)
     files.update(CONTROL.sub("", f) for f in conflicted)   # a fork names its files
     if reason:
@@ -145,9 +152,9 @@ for key, r in sorted(prs.items()):
         c, conflicted, reason = ("unread", [], gone) if gone else cause(root, oid)
         tally(key, url, c, conflicted=conflicted, reason=reason)
 
-print("cause\tmerge_ins\tprs")
+print("cause\tmerge_ins\tprs\treference_docs")
 for c in CAUSES:
-    print(f"{c}\t{counts[c]}\t{len(by_cause[c])}")
+    print(f"{c}\t{counts[c]}\t{len(by_cause[c])}\t{reference_docs if c == 'conflict' else '-'}")
 print("\nfile\tconflicts" if files else "\nnone conflicted" if counts["conflict"] + counts["behind"] + counts["neither"] else "\nnone read")
 for f, k in sorted(files.items(), key=lambda x: (-x[1], x[0]))[:3]:
     print(f"{f}\t{k}")
