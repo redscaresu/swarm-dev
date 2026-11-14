@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # wait_lead_test.sh — swarm.sh wait --lead: it returns once the lead's queue gains a held or escalated
 # story, or with merge = human a review item whose PR head is green, printing one line per new item and
-# logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
-# across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
+# logging one lead-woken line each; at its timeout it prints one timeout: line and exits 1 (wait --lead 0, a
+# single read, prints nothing), and any other failure prints one wait-failed: line. None of those is a queue
+# item. What it last saw is kept across runs, and a new run takes over from an earlier one, which prints one
+# replaced: line. gh is a stub on PATH answering the PR's
 # head and its check runs from ${FX}; herdr is a stub listing a running conductor, or the agents in
 # ${FX}/agents, read once per poll for its agent list (no-agent: lines, no_agent_test.sh), and once more
 # before a poll prints a line that says an agent is missing. Both log each call. A review agent whose
@@ -143,14 +145,14 @@ fresh() {
 }
 # again — forget the last run's output and exit code, keeping what it saw.
 again() { rm -f "${ROOT}/out" "${ROOT}/rc"; }
-# lead [VAR=value]... <timeout-ms> — swarm.sh wait --lead in the foreground, polling every second, inside
-# herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
+# lead [VAR=value]... <timeout-ms> [arg]... — swarm.sh wait --lead in the foreground, polling every second, inside
+# herdr, any further args passed on; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
 # so the gh counts below are a pass's, unless a case sets it longer.
 lead() {
   local envs=()
   while [[ "$1" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
-    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$@" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
 # must <what> <command>... — count a FAIL when the command is false, and say nothing when it is true.
 must() { local what="$1"; shift; "$@" || { echo "FAIL ${what}"; fails=$((fails + 1)); }; }
@@ -229,6 +231,19 @@ events() { awk -F'\t' '{ print $2 " " $3 }' "${P}/.swarm/events.tsv" 2>/dev/null
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
 nothing_yet() { [[ ! -e "${ROOT}/rc" && -z "$(out)" && -z "$(events)" ]]; }
+# timed_out <minutes> — the line a run with no change prints at its timeout.
+timed_out() { echo "timeout: nothing new in $1 min, exit: swarm.sh wait --lead"; }
+# failed_with <rc> — the run printed exactly one wait-failed: line, for <rc>, no timeout: line, and exited <rc>.
+failed_with() {
+  [[ "$(grep -c '^wait-failed: ' "${ROOT}/out")|$(grep -c '^timeout: ' "${ROOT}/out")|$(rc)" == "1|0|$1" ]] \
+    && grep -qxF "wait-failed: exit $1, exit: swarm.sh wait --lead" "${ROOT}/out"
+}
+# no_exit_lines — no timeout:, replaced: or wait-failed: line is in .swarm/lead/seen or logged as lead-woken.
+no_exit_lines() {
+  ! grep -qE '^(timeout|replaced|wait-failed): ' "${P}/.swarm/lead/seen" 2>/dev/null \
+    && ! awk -F'\t' '$2 == "lead-woken" && $5 ~ /^ok \((timeout|replaced|wait-failed)\)/ { f = 1 } END { exit !f }' \
+      "${P}/.swarm/events.tsv" 2>/dev/null
+}
 
 # --- held and escalated stories.
 # The run takes its lock 2.5 s late, so its first read is later than a fixed wait after start would be.
@@ -257,9 +272,10 @@ lead 20000 &
 lpid=$!
 saw() { local i; for ((i = 0; i < 600; i++)); do grep -q "$1" "${ROOT}/out" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 must "the new run took over" saw 'stopping the earlier run'
-for ((i = 0; i < 30; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
-check "a new wait --lead stops the earlier one" test -e "${ROOT}/rc.a"
-check "the earlier one ends with nothing printed" test ! -s "${ROOT}/out.a"
+for ((i = 0; i < 50; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
+check "a new wait --lead stops the earlier one within 5 s" test -e "${ROOT}/rc.a"
+check "the earlier one prints one replaced: line and exits 143, as a TERM would" \
+  test "$(cat "${ROOT}/out.a")|$(cat "${ROOT}/rc.a")" == "replaced: a newer wait --lead watches now|143"
 wait "${apid}" 2>/dev/null || true
 must "the new run read the board once" first_read "$(seen_id)"
 check "the new one says it took over" grep -q 'stopping the earlier run' "${ROOT}/out"
@@ -269,12 +285,25 @@ held z paused
 check "the new one watches" returned 25
 check "the new one prints what landed" test "$(grep -v '^swarm:' "${ROOT}/out")" == "held: z (paused)"
 check "its pid file is gone once it returns" test ! -e "${P}/.swarm/lead/pid"
+check "the replaced: line is no queue item: not in seen, not logged" no_exit_lines
+# A TERM from anything but a newer run (a tool's timeout, a kill by hand) is no replacement: nothing else
+# watches, so the run says it failed, and the lead starts it again.
+fresh
+start 20000
+# A run that never took its lock has no pid file: that is one FAIL below, not an abort of the whole file.
+held_pid="$(cat "${P}/.swarm/lead/pid" 2>/dev/null)" || held_pid=""
+check "the run holds the pid file" test -n "${held_pid}"
+[[ -z "${held_pid}" ]] || kill -TERM "${held_pid}" 2>/dev/null || true
+check "a TERM from outside ends the run within 5 s" returned 50
+check "it prints one wait-failed: exit 143 line, no replaced: line, and exits 143" failed_with 143
+check "it prints no replaced: line" test "$(grep -c '^replaced: ' "${ROOT}/out")" == 0
 
 fresh; touch "${FX}/ln.fail"
 lead 20000 &
 lpid=$!
 check "when the pid file cannot be made, it stops instead of spinning" returned 30
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
+check "a lock it cannot take prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 stop; rm -f "${FX}/ln.fail"
 
 # --- a run's first read with no .swarm/lead/seen: a LEAD_QUIET kind is saved unprinted, any other line prints.
@@ -300,15 +329,27 @@ check "a no-agent: line prints on a run's first read, alone" test "$(out)|$(rc)"
 rm -rf "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${ROOT}/proj-wt"
 
 fresh; lead 0900
-check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" == "|1"
+check "a timeout with a leading zero is decimal, not octal; 900 ms rounds up to 1 min" test "$(out)|$(rc)" == "$(timed_out 1)|1"
+fresh; lead 0; again; lead 0
+check "wait --lead 0 with no change prints nothing and exits 1" test "$(out)|$(rc)" == "|1"
 
 # --- SWARM_LEAD_POLL and the timeout.
 fresh; lead SWARM_LEAD_POLL=0 1000
 check "SWARM_LEAD_POLL=0 is refused" grep -q 'SWARM_LEAD_POLL is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_POLL=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+fresh; lead 12s
+check "a timeout that is no number is refused" grep -q "the timeout is in milliseconds, not '12s'" "${ROOT}/out"
+check "it prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+# The wait command refuses --past with --lead before wait_lead runs: its traps go on first (lead_traps).
+fresh; lead 0 --past abc
+check "--past with --lead is refused by the wait command" grep -q 'it takes no --lead' "${ROOT}/out"
+check "a refusal before wait_lead prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; lead SWARM_LEAD_HEADS_EVERY=0 1000
 check "SWARM_LEAD_HEADS_EVERY=0 is refused" grep -q 'SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_HEADS_EVERY=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; t0=${SECONDS}; lead SWARM_LEAD_POLL=30 2000
 check "the last sleep stops at the timeout, not a full poll later" test $((SECONDS - t0)) -le 4 -a "$(rc)" == 1
+check "it prints the timeout: line" test "$(out)" == "$(timed_out 1)"
 
 fresh; item c "kind: code" "status: ready"
 start 20000
@@ -412,7 +453,7 @@ fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"
 check "with merge = agent, a green review story does not wake it, and it times out" returned 60
-check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
+check "with merge = agent it times out non-zero with one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
 
 fresh "merge = agent"
@@ -710,8 +751,24 @@ rm -rf "${P}/.swarm/briefs" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv" "${P}
 fresh
 start 3000
 check "with no change it returns at its timeout" returned 50
-check "at its timeout it exits non-zero and prints nothing" test "$(out)|$(rc)" == "|1"
+check "at its timeout it exits 1 and prints exactly one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "events.tsv gains no line while it waits" test -z "$(events)"
+check "the timeout: line is no queue item: not in seen, not logged" no_exit_lines
+
+# --- a failed queue read: a copy of the plugin whose lead_queue prints a line, then fails with 7. The run
+# ends on that poll with lead_queue's own status and one wait-failed: line on stdout, never as a timeout,
+# and seen keeps the last good read, not the failed read's line.
+QF="${ROOT}/plugin-qf"; mkdir -p "${QF}"
+cp -R "${SWARM%/bin/swarm.sh}/bin" "${SWARM%/bin/swarm.sh}/.claude-plugin" "${QF}/"
+printf '\nlead_queue() { echo "held: qf (a partial read)"; return 7; }\n' >> "${QF}/bin/lib/lifecycle.sh"
+fresh; lead 0; cp "${P}/.swarm/lead/seen" "${ROOT}/seen.before"; again
+t0=${SECONDS}
+(cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
+  bash "${QF}/bin/swarm.sh" wait --lead 20000 > "${ROOT}/out" 2> "${ROOT}/err") && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+check "a poll whose lead_queue fails ends the run on that poll, with lead_queue's status" test "$(rc)" == 7 -a $((SECONDS - t0)) -le 10
+check "it prints one wait-failed: line on stdout, and nothing else there" test "$(out)" == "wait-failed: exit 7, exit: swarm.sh wait --lead"
+check "seen keeps the last good read, without the failed read's line" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
+check "the wait-failed: line is no queue item: not in seen, not logged" no_exit_lines
 
 # --- a running conductor does not hide a new held story, and a poll asks herdr only for its agent list.
 fresh
@@ -1327,6 +1384,66 @@ check "restart: a second list that shows the review agent the poll started keeps
   test "$(out)|$(rc)" == "$(again_at wl-rs 2)|0"
 recheck_end
 firstlist
+
+# --- usage_warn_percent: one usage: line the first time the usage estimate (usage_estimate_test.sh) reaches
+# it in a usage week, from fixture session logs under a stand-in CLAUDE_PROJECTS_DIR. A reading taken a
+# minute ago, with the reset three days off, puts the estimate at the reading: 30% of the week, 20% of Fable's.
+UC="${ROOT}/usage-projects"
+# uturn <seconds ago> <message id> <model> [monday] — a turn of 1M input tokens, that long ago; with monday, no
+# earlier than this Monday 00:00 UTC, where an uncalibrated week starts, so a run just after it keeps the turn.
+uturn() {
+  python3 -c 'import datetime, sys; n = datetime.datetime.now(datetime.timezone.utc); t = n - datetime.timedelta(seconds=int(sys.argv[1]))
+m = (n - datetime.timedelta(days=n.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+t = max(t, m) if sys.argv[4:] else t
+print("{\"timestamp\":\"%s\",\"message\":{\"id\":\"%s\",\"model\":\"%s\",\"usage\":{\"input_tokens\":1000000}}}" % (t.strftime("%Y-%m-%dT%H:%M:%S.000Z"), sys.argv[2], sys.argv[3]))' "$@"
+}
+usage_fixture() {
+  rm -rf "${UC}"; mkdir -p "${UC}/-proj"
+  { uturn 120 o1 claude-opus-5-5; uturn 110 f1 claude-fable-5-2; } > "${UC}/-proj/s.jsonl"
+  python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); f = "%Y-%m-%dT%H:%M:%SZ"
+print((n - datetime.timedelta(seconds=60)).strftime(f), (n + datetime.timedelta(days=3)).strftime(f), 30, 20)' > "${P}/.swarm/usage-reading"
+}
+ulead() { lead CLAUDE_PROJECTS_DIR="${UC}" SWARM_USAGE_EVERY=0 0; }
+fresh "usage_warn_percent = 25"; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+at="$(python3 -c 'import sys; print(sys.argv[1][:16] + "+00:00")' "$(cut -d' ' -f1 "${P}/.swarm/usage-reading")")"
+# The week's start, which the line names: the reset, less a week.
+wk="$(python3 -c 'import datetime, sys; print((datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")) - datetime.timedelta(days=7)).date())' "$(cut -d' ' -f2 "${P}/.swarm/usage-reading")")"
+check "usage: past usage_warn_percent, one usage: line prints" test "$(out)|$(rc)" == \
+  "usage: estimate 30% of the week from ${wk} and 20% of Fable's own limit, at or past usage_warn_percent 25 (calibrated ${at}; /usage is the truth), exit: check /usage, as nothing stops on this|0"
+# More usage since: a line that is new to the queue, which a run without the week's record would print.
+uturn 30 o2 claude-opus-5-5 >> "${UC}/-proj/s.jsonl"
+again; ulead
+check "usage: a second poll in the same week prints none, though the estimate grew" test "$(out)|$(rc)" == "|1"
+fresh; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+check "usage: with usage_warn_percent unset, no line prints" test "$(out)|$(rc)" == "|1"
+check "usage: and the session logs are never read" test ! -e "${P}/.swarm/lead/usage-at"
+# A line printed uncalibrated holds for the week once a reading is added, though the reading moves the week's
+# start from Monday 00:00 UTC to its reset less a week: 1M tokens on Opus and on Fable are 0.7% of the guessed
+# week and 1.25% of Fable's guessed limit, past 1; with the reading they are 30% and 20%.
+fresh "usage_warn_percent = 1"; rm -rf "${UC}" "${P}/.swarm/usage-reading"; mkdir -p "${UC}/-proj"
+{ uturn 120 o1 claude-opus-5-5 monday; uturn 110 f1 claude-fable-5-2 monday; } > "${UC}/-proj/s.jsonl"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+mon="$(python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); print((n - datetime.timedelta(days=n.weekday())).date())')"
+check "usage: uncalibrated, one usage: line prints" test "$(out)|$(rc)" == \
+  "usage: estimate 1% of the week from ${mon} and 1% of Fable's own limit, at or past usage_warn_percent 1 (uncalibrated, so it counts Fable low; /usage is the truth), exit: check /usage, as nothing stops on this|0"
+python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); f = "%Y-%m-%dT%H:%M:%SZ"
+print((n - datetime.timedelta(seconds=60)).strftime(f), (n + datetime.timedelta(days=3)).strftime(f), 30, 20)' > "${P}/.swarm/usage-reading"
+again; ulead
+check "usage: a reading added later that week, moving its start, prints no second line" test "$(out)|$(rc)" == "|1"
+# Once the week has turned (the line printed eight days ago), the next line prints.
+fresh "usage_warn_percent = 25"; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+echo $(( $(date +%s) - 8 * 86400 )) > "${P}/.swarm/lead/usage-warned"
+ulead
+check "usage: a line printed in an earlier week does not hold this week's" test "$(rc)|$(head -c 25 "${ROOT}/out")" == "0|usage: estimate 30% of th"
+# usage-warned holds the estimate's time unrounded (a float), so the check is python's.
+check "usage: and the week's print is recorded as now" test "$(python3 -c 'import sys, time; print(int(0 <= time.time() - float(sys.argv[1]) < 120))' "$(cat "${P}/.swarm/lead/usage-warned")")" == 1
+rm -rf "${UC}" "${P}/.swarm/usage-reading"
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"

@@ -15,6 +15,10 @@ properties:
     displayName: Kind
   note.date:
     displayName: Started
+  note.covers:
+    displayName: Covers
+  note.done:
+    displayName: Done
 views:
   - type: table
     name: Board
@@ -78,3 +82,12 @@ views:
       - file.name
       - status
       - epic
+  - type: table
+    name: Retros
+    filters:
+      not:
+        - covers.isEmpty()
+    order:
+      - file.name
+      - covers
+      - done

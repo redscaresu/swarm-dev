@@ -88,7 +88,7 @@ has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board P
 has log-declined 'log-finding --declined <reason>'
 has cap-step-2 'capped at one new command or one changed behaviour and about 300 lines' "$step2"
 has cap-step-3 'over the cap of one new command or one changed behaviour and about 300 lines' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
-has output-shape 'depends_on, estimate_lines, easy\}\]' "$flat"
+has output-shape 'depends_on, estimate_lines, easy, fix\}\]' "$flat"
 has front-matter 'front matter .*`estimate_lines`, `easy`' "$approval"
 has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
 has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
