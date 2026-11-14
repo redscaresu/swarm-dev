@@ -359,7 +359,7 @@ STUB_NEXT="resume s" run "lead-stop resume blocked"
 check "resume of a slug the report names only as a prefix blocks" blocked "resume s"
 rm -f "${report}" "${project}/docs/stories/s3.md"
 
-for step in "wait conduct-E" gate "done"; do
+for step in "wait conduct-E" gate "done" "retro v1.3.0"; do
   STUB_NEXT="${step}" run "lead-stop ${step%% *} allowed"
   check "${step} allows" [ -z "${out}" ]
   check "${step} looks up nothing else" [ "${ran}" = "_step " ]

@@ -473,12 +473,21 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
-#                     file outside the board (release_due): the lead cuts a release. With epics that
+#                     file outside the board (release_due) and every change is a fix (non_fix_change,
+#                     release_bare): the lead cuts a patch. A change that is no fix makes a minor:
+#                     `release v<V>` once a done retros/v<V>.md above the tag's minor is on the base
+#                     (retro_done), else `retro v<x.y+1.0>` below. With epics that
 #                     carry stage: (release_stage), `release v<S>` once no epic of the next stage S
-#                     is left on the board; while one is, `release v<x.y.z+1> (patch)` when no
+#                     is left on the board and retros/v<S>.md is done, else `retro v<S>`; while one
+#                     is, `release v<x.y.z+1> (patch)` when no
 #                     staged epic's story merged since the tag, else no release step. A held stage
 #                     sets RELEASE_HELD, its release-held: line, which next_lines and next_report
 #                     print after the step's lines
+#   retro v<x.y.z>    a minor (a stage's release, or a release with a change that is no fix) is due
+#                     and no done retro file covers it (retro_step): the lead opens retro-v<x-y-z>
+#                     (kind: lead) and goes through swarm.sh retro with the user; the patch and the
+#                     held stage never print it. On a board outside the repo, always, as no retro
+#                     file can be read there
 #   plan-epic <epic>  (again) a later epic whose depends_on are listed and all done, with no stories
 #                     and no unasked plan yet (unblocked_epic): planning is read-only and its stories
 #                     wait for approval
@@ -614,10 +623,15 @@ next_step() {
     RELEASE_HELD="$(sed -n 2p <<< "${stage}")"
     since="origin/${base} has ${n} commit(s) since ${tag} that change files outside the board"
     case "${stage%%$'\n'*}" in
-      "") echo "release"; echo "${since}: cut a release"; return ;;
+      "") release_bare "${since}" "${tag}" "${base}"; return ;;
       "release "*)
-        echo "release v${stage#release }"
-        echo "${since}, and no epic of stage v${stage#release } is left on the board: cut v${stage#release }, the stage's release"; return ;;
+        stage="${stage#release }"
+        since="${since}, and no epic of stage v${stage} is left on the board"
+        if line="$(retro_done "origin/${base}" "${stage}" "${tag#v}")"; then
+          echo "release v${stage}"
+          echo "${since}: cut v${stage}, the stage's release ($(board_rel)retros/v${stage}.md ${line})"
+        else retro_step "${since}" "${stage}" "${line}" "${tag}"; fi
+        return ;;
       "patch "*)
         stage="${stage%%$'\n'*}"
         echo "release v${stage#patch } (patch)"
@@ -640,6 +654,117 @@ next_step() {
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# release_bare <since> <tag v<x.y.z>> <base> — next_step's release arm when no epic carries a stage
+# (release_stage printed nothing). non_fix_change from the local tag's commit to origin/<base>, in the
+# repo origin_repo names, tells a patch from a minor: with every change a fix it prints bare `release`,
+# a patch. A change that is no fix, or a failure of either read (a board outside the repo among them),
+# makes it a minor. Then the lowest v<V> whose <board_rel>retros/v<V>.md on origin/<base> (git ls-tree)
+# is above the tag's major.minor and passes retro_done gives `release v<V>`, its why quoting the
+# covers line: a patch-version retro file never selects a release. With none, `retro v<x.(y+1).0>`
+# (retro_step). Its gh calls, origin_nwo's and non_fix_change's, are made only while their caches have
+# no answer, and an answer non_fix_change leaves uncached (a commit no PR lists yet) is kept for
+# NON_FIX_RETRY seconds (release_memo), so dash, which runs next every frame, asks gh at most that often.
+release_bare() {
+  local since="$1" tag="$2" base="$3" ver="${2#v}" repo="" out rc=0 why f v got="" cov="" line
+  if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then
+    rc=1; out="failed: ${repo}"
+  else
+    # On a board outside the repo, non_fix_change fails before it reads the empty repo.
+    if ! out="$(release_memo get "${repo}" "refs/tags/${tag}" "origin/${base}")"; then
+      out="$(release_changes "${repo}" "refs/tags/${tag}" "origin/${base}")" || rc=$?
+      [[ ${rc} != 0 ]] || release_memo put "${repo}" "refs/tags/${tag}" "origin/${base}" <<< "${out}"
+    fi
+  fi
+  if [[ ${rc} == 0 && -z "${out}" ]]; then
+    echo "release"
+    echo "${since}, and every one is a fix: cut v${ver%.*}.$((10#${ver##*.} + 1)), a patch"; return
+  fi
+  line="${out##*$'\n'}"
+  if [[ ${rc} == 0 ]]; then why="${out%%$'\n'*} is no fix"
+  else why="non_fix_change cannot tell the fixes (${line#failed: })"; fi
+  while IFS= read -r f; do
+    [[ "${f##*/}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\.md$ ]] || continue
+    v="${BASH_REMATCH[1]}"
+    version_gt "${v%.*}.0" "${ver%.*}.0" || continue    # a patch of the tag's minor needs no retro
+    [[ -z "${got}" ]] || version_gt "${got}" "${v}" || continue
+    line="$(retro_done "origin/${base}" "${v}" "${ver}")" || continue
+    got="${v}"; cov="${line}"
+  done < <(git -C "${PROJECT_DIR}" ls-tree --full-tree --name-only "origin/${base}" -- "$(board_rel)retros/" 2>/dev/null)
+  if [[ -n "${got}" ]]; then
+    echo "release v${got}"
+    echo "${since}, and ${why}, so the release is a minor: $(board_rel)retros/v${got}.md ${cov}: cut v${got}"; return
+  fi
+  IFS=. read -r f v _ <<< "${ver}"
+  v="$((10#${f})).$((10#${v} + 1)).0"
+  line="$(retro_done "origin/${base}" "${v}" "${ver}")" || true
+  retro_step "${since}, and ${why}, so the release is a minor" "${v}" "${line}" "${tag}"
+}
+
+# origin_nwo — the project's origin as gh names it, owner/name in lower case, as origin_repo (merge.sh)
+# reads it, but through the gh next_reads wraps, so a report's deadline bounds it. The answer is kept in
+# .swarm/origin-repo as "<origin URL> <owner/name>" and read from there while the URL is unchanged.
+# Fails with why on stdout.
+origin_nwo() {
+  local origin cache="${PROJECT_DIR}/.swarm/origin-repo" url own
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || { echo "the project has no origin remote"; return 1; }
+  if read -r url own < "${cache}" 2>/dev/null && [[ "${url}" == "${origin}" && "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
+    echo "${own}"; return 0
+  fi
+  own="$(gh repo view "${origin}" --json nameWithOwner < /dev/null 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" \
+    && [[ "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]] || { echo "gh repo view named no GitHub repo for ${origin}"; return 1; }
+  if [[ -d "${cache%/*}" && "${origin}" != *[[:space:]]* ]]; then printf '%s %s\n' "${origin}" "${own}" > "${cache}" 2>/dev/null || true; fi
+  echo "${own}"
+}
+
+# release_memo get|put <owner/repo> <from> <ref> — next's short-lived copy of non_fix_change's answer
+# for <from>..<ref>, in .swarm/release-memo. Its key is the repo, both refs resolved to SHAs (a moved
+# base is a new key) and the board's path (board_rel), which non_fix_change reads. put writes stdin
+# with the time and the key to a file of its own, then renames it into place, so a reader never sees
+# half of one. get reads the file once and prints the answer while it is under NON_FIX_RETRY seconds
+# old and its key matches, else fails. An answer non_fix_change caches for good is kept here too,
+# harmlessly.
+NON_FIX_RETRY=300
+release_memo() {
+  local f="${PROJECT_DIR}/.swarm/release-memo" key text at rest
+  key="$2 $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$3^{commit}" 2>/dev/null) $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$4^{commit}" 2>/dev/null) $(board_rel)"
+  [[ "${key}" =~ ^[^\ ]+\ [0-9a-f]{40,}\ [0-9a-f]{40,}\  && "${key}" != *$'\n'* ]] || return 1
+  if [[ "$1" == put ]]; then
+    [[ -d "${f%/*}" ]] || return 0
+    if ! { { date +%s; echo "${key}"; cat; } > "${f}.$$" && mv -f "${f}.$$" "${f}"; } 2>/dev/null; then rm -f "${f}.$$"; fi
+    return 0
+  fi
+  text="$(cat "${f}" 2>/dev/null)" || return 1
+  at="${text%%$'\n'*}"; rest="${text#*$'\n'}"
+  [[ "${text}" == *$'\n'* && "${rest%%$'\n'*}" == "${key}" && "${at}" =~ ^[0-9]+$ ]] || return 1
+  (( $(date +%s) - at < NON_FIX_RETRY )) || return 1
+  [[ "${rest}" != *$'\n'* ]] || printf '%s\n' "${rest#*$'\n'}"
+}
+
+# release_changes <owner/repo> <from> <ref> — non_fix_change's lines on stdout, and when it fails, a
+# last line `failed: <its last line on stderr>`, with its exit code. Its stderr is read apart from its
+# stdout, so a warning a tool prints there is never read as a change.
+release_changes() {
+  local err rc=0
+  { err="$(non_fix_change "$@" 2>&1 1>&3 3>&-)" || rc=$?; } 3>&1
+  [[ ${rc} == 0 ]] || echo "failed: ${err##*$'\n'}"
+  return "${rc}"
+}
+
+# retro_step <since> <x.y.z> <retro_done's why> <tag v<a.b.c>> — print `retro v<x.y.z>` and its why:
+# open the kind: lead story retro-v<x-y-z>, then swarm.sh retro --since <w>, with <w> the tag's
+# v<a.b.0> when that tag is here, else the tag. On a board outside the repo the why adds that merge
+# --release cannot read a retro file there, so the user merges the release PR by hand.
+retro_step() {
+  local w="v${4#v}" out
+  w="${w%.*}.0"
+  git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/tags/${w}^{commit}" > /dev/null 2>&1 || w="$4"
+  out="$1, and v$2 has no done retro file ($3): open retro-v${2//./-} (kind: lead), then swarm.sh retro --since ${w}"
+  [[ ${BOARD_IN_REPO} == 1 ]] \
+    || out+="; the board is outside the repo, so merge --release cannot read a retro file there: merge the release PR yourself"
+  echo "retro v$2"
+  echo "${out}"
 }
 
 # next_lines — next_step's lines, then its release-held: line (RELEASE_HELD) when it has one: what
@@ -816,7 +941,7 @@ idle_warned() {
 }
 
 # idle_lines <step line> — what next prints after its step, given the step's first line: capacity no
-# step uses. idle_now's lines, less the epic that line names. And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# step uses. idle_now's lines, less the epic that line names. And when the step leaves the builders idle (gate, done, escalated, release, retro: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope or
 # deferred finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts
 # with a quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a
@@ -827,7 +952,7 @@ idle_lines() {
   local f found
   # Advisory: a failed check warns (idle_warned), and never fails next.
   idle_warned "next's step above stands" "$1" || true
-  case "${1%% *}" in gate|done|escalated|release) ;; *) return 0 ;; esac
+  case "${1%% *}" in gate|done|escalated|release|retro) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
   done < <(board stories)

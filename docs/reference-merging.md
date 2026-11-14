@@ -919,15 +919,21 @@ goes on with no pane, as it does for a pane closed by hand.
 
 ## Releases
 
-No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
-release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
-`v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
-outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`,
-`Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no
-release due). It reads local refs only, since reconcile has just pulled. The lead opens a PR
-from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
-when `next` printed a bare `release` does it bump to the next minor version (a patch when every
-change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
+No story PR bumps `.claude-plugin/plugin.json`.
+A release is due once the project has `.claude-plugin/plugin.json`, the tag `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no release due).
+`next` reads local refs for this, since reconcile has just pulled.
+With no stage (see below), `next` then checks each change since the tag against one `gh pr list` of the merged PRs.
+A change is a fix when its PR came from a `story/fix-main-<sha7>` branch, or from a story whose file had `fix: true` before the merge.
+When every change is a fix, `next` prints a bare `release`, and a bare release is always a patch.
+Any other change makes the release a minor, and so does a check that cannot answer.
+A minor needs a done retro file first: `<board>/retros/v<version>.md` on `origin/<base>`, with `covers:` and `done:` in the [retros README](../templates/docs/retros/README.md)'s format.
+Only a version above the tag's minor counts, so a patch's retro file never selects a release.
+Until such a file is on the base, `next` prints `retro v<x.y.z>` for the next minor.
+Its why names the `retro-v<x-y-z>` lead story and `swarm.sh retro --since <w>`, where `<w>` is the tag's `v<x.y.0>` when that tag exists, else the tag.
+Once the file is there, `next` prints `release v<version>`, the lowest version whose retro file is done, and its why quotes the file's `covers:` line.
+On a board outside the project's repo, `next` can read no retro file, so it always prints `retro`; there `merge --release` cannot read one either, and you merge the release PR yourself.
+The lead opens a PR from `release/v<new>` that bumps only that file, to the version `next` named: the bare release's patch, `release v<version>`, the stage's v<S>, or the patch it named.
+It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
 every behaviour change since the tag, and the release PR names it. When nothing since the tag
 changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
 stands in for the docs PR. For swarm-dev's own repo, the release PR body also lists the behaviour
@@ -940,7 +946,9 @@ Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release
 reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
 epics an edit in your checkout deleted or changed before it reached the base (a release ships the
 base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
-is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
+is left on the board, a stage's release is a minor, so it waits on a done `retros/v<S>.md` on the
+base. Until then the step is `retro v<S>`. After that it is `release v<S>`, and its why names the
+stage and its retro file. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
 only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
 while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
@@ -951,8 +959,8 @@ one whose file was deleted since the tag (a story's PR deletes its file), or one
 to the steps after it. An epic on the board whose `stage:` is not
 `v<x.y.z>` holds the release too, and the line names it. `merge --release` does not read the hold, so the lead cuts a
 release only when `next` prints it. A board where no epic has `stage:`
-releases as before, with a plain `release`. So does a board outside the project's repo, since git
-can't list its deleted epics.
+reads no stages, so its release is a patch or a minor, as above. So does a
+board outside the project's repo, since git can't list its deleted epics.
 
 Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
 minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or
