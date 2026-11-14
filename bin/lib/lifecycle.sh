@@ -3089,9 +3089,15 @@ stop_lines() {
 
 # PLAN_START_GRACE: seconds after a plan agent's start mark (plan_mark) before plan_lines may call it ended.
 # The mark is written before its pane opens, and the agent sits idle until its brief lands, so a poll in
-# between would see an agent that has not begun. A start's retries (clean_env's fresh pane, herdr agent
-# start's second try) and the brief's delivery take a few minutes at most.
-PLAN_START_GRACE=300
+# between would see an agent that has not begun. It is the longest start_agent can take after the mark:
+# two tries for the pane's shell (ENV_READY_MS each, clean_env's fresh pane), two herdr agent start tries
+# (HERDR_START_MS each), and the brief's delivery, the larger of a fable brief's SLOW_PROMPT_TIMEOUT_MS
+# and deliver_prompt's two tries of PROMPT_TIMEOUT_MS, each followed by as long again of settle reads;
+# then a margin for the pane's opening and the naps between tries (PLAN_START_MARGIN). 10 minutes by
+# default, longer with SWARM_PROMPT_TIMEOUT_MS.
+PLAN_START_MARGIN=60
+PLAN_START_GRACE=$(( (2 * ENV_READY_MS + 2 * HERDR_START_MS \
+  + (SLOW_PROMPT_TIMEOUT_MS > 4 * PROMPT_TIMEOUT_MS ? SLOW_PROMPT_TIMEOUT_MS : 4 * PROMPT_TIMEOUT_MS)) / 1000 + PLAN_START_MARGIN ))
 
 # plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
 # agents have all written their output, and `plan-missing: <epic> <name> ended without its output, exit:

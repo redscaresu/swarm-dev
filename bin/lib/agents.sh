@@ -392,6 +392,8 @@ ENV_READY="swarm: agent environment ready"
 # when measured (#688); what saves a start whose shell never prints it is start_agent's one retry in a
 # fresh pane, not a longer wait.
 ENV_READY_MS=60000
+# HERDR_START_MS: how long each of start_agent's two herdr agent start tries waits for the agent.
+HERDR_START_MS=60000
 # OUTER_START_RETRY: set by a caller that starts the agent again itself when a start runs nothing
 # (build_story and review_agent, up to STARTS_PER_REVIEW starts, each in a fresh pane), so
 # start_agent's own fresh-pane retry stays off and the two never nest. Never from the environment.
@@ -767,10 +769,10 @@ start_agent() {
       if [[ -n "${root}" && "${root}" != *[\"\\[:cntrl:]]* ]] && ! codex_distrusts "${root}"; then
         sandbox+=(-c "projects={\"${root}\"={trust_level=\"trusted\"}}")
       fi
-      out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
+      out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout "${HERDR_START_MS}" -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
+      out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout "${HERDR_START_MS}" -- \
         --session-id "${session}" "${flags[@]}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then

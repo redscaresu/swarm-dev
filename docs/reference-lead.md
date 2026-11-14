@@ -611,8 +611,9 @@ those whose mark is newer than the same resume reference; an older mark is an ea
 A plan with marks and no record at all, because its first start failed before a tab opened, is read
 too. It can get `plan-missing:` lines but never `planned:`, which needs a record that lists an agent:
 the marks stay after a finished plan's tab is closed.
-A marked agent gets the line when its file does not count, its mark is 300 seconds old (a start
-and its brief can take minutes), and the poll's herdr list shows it in no pane of this plan's own
+A marked agent gets the line when its file does not count, its mark is older than the longest
+a start can take (10 minutes by default: two tries at the pane's shell, two at herdr's start, and
+the brief's delivery, which a larger `SWARM_PROMPT_TIMEOUT_MS` makes longer), and the poll's herdr list shows it in no pane of this plan's own
 tab records, or shows it idle or done with no background task still running in its session. An agent
 of the same name in another plan's pane does not count: plan agents share bare names such as
 `critic`. While any agent's file does not count, there is no `planned:` line. The board PR
