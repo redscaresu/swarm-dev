@@ -4,7 +4,7 @@
 # ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
-# lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
+# lines, and tab list adds ${ROOT}/tabs-extra's ,{...} entries; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
 # close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
@@ -27,7 +27,7 @@ printf '#!/bin/sh\nA="%s"; CLOSED="%s"; H="%s"\n' "${ROOT}/agents" "${CLOSED}" "
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "tab list") [ -e "$H/tablistfail" ] && exit 1
-              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"},{"tab_id":"w:t12","label":"sp"},{"tab_id":"w:t13","label":"rb"}]}}' ;;
+              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"},{"tab_id":"w:t12","label":"sp"},{"tab_id":"w:t13","label":"rb"}'"$(cat "$H/tabs-extra" 2>/dev/null)"']}}' ;;
   "tab close") [ -e "$H/tabclosefail" ] && exit 1
                printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") [ -e "$H/agentfail" ] && exit 1
@@ -815,6 +815,69 @@ printf '%s\n' "conduct-ce w:p90" "re w:p105" "review-re w:p106" > "${ROOT}/agent
 : > "${CLOSED}"; : > "${ROOT}/panes-closed"; out="$(from_pane w:p106 reconcile)" || true
 is "reconcile from review-re's idle pane closes epic story re's builder, and keeps review-re and tab ce-2, recorded there now" "w:p105||w:p106 review-re|1" \
   "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)|$(grep -c '^kept review-re (the pane running this command) in tab ce-2:' <<< "${out}")"
+
+# --- pane-closed: close_pane logs one line per pane it closes, its target the agent's name, with
+# pane= and agent_fields' slug= and role=. review-x shares x's tab with its builder, so its pane closes
+# alone; review-y is the last pane of tab other (w:t3), so its pane closes with that tab.
+# pane_closed_lines <name> — <outcome> of each pane-closed line on <name>, without version=
+pane_closed_lines() { awk -F'\t' -v n="$1" '$2 == "pane-closed" && $3 == n { print $5 }' "${P}/.swarm/events.tsv" | no_version; }
+item x "status: review" "kind: code"; built review-x review; built review-y review
+printf '%s\n' "w:p70 x" "w:p71 review-x" > "${P}/.swarm/state/x"; echo "w:p72 review-y" > "${P}/.swarm/state/other"
+printf '%s\n' "x w:p70" "review-x w:p71" "review-y w:p72" > "${ROOT}/agents"; printf '%s\n' "w:p70 w:t9" "w:p71 w:t9" "w:p72 w:t3" > "${ROOT}/panes"
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; cs review-x >/dev/null || true
+is "close review-x closes its pane alone and logs one pane-closed line, slug=x role=review pane=w:p71" \
+  "w:p71|ok ~~ pane=w:p71 slug=x role=review" "$(cat "${ROOT}/panes-closed")|$(pane_closed_lines review-x)"
+cs review-y >/dev/null || true
+is "close review-y closes its tab, its last pane, and logs one pane-closed line for that pane" \
+  "<w:t3>|ok ~~ pane=w:p72 slug=y role=review" "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines review-y)"
+echo "w:p73 review-z" >> "${P}/.swarm/state/x"; echo "review-z w:p73" >> "${ROOT}/agents"
+touch "${ROOT}/paneclosefail"; cs review-z >/dev/null || true; rm -f "${ROOT}/paneclosefail"
+is "a pane herdr could not close logs no pane-closed line, and its record keeps it" "|w:p73 review-z" \
+  "$(pane_closed_lines review-z)|$(grep -x 'w:p73 review-z' "${P}/.swarm/state/x")"
+# A label sweep (close_tabs: no record line holds the name epic) closes tab epic (w:t5) and logs one
+# line for each pane its record holds.
+printf '%s\n' "w:p74 sweep-a" "w:p75 sweep-b" > "${P}/.swarm/state/epic"; printf '%s\n' "sweep-a w:p74" "sweep-b w:p75" >> "${ROOT}/agents"
+: > "${CLOSED}"; cs epic >/dev/null || true
+is "close epic sweeps its tab and logs one pane-closed line per recorded pane" "<w:t5>|ok ~~ pane=w:p74|ok ~~ pane=w:p75" \
+  "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines sweep-a)|$(pane_closed_lines sweep-b)"
+# A review agent's name of AGENT_NAME_MAX (32) or more: herdr and agents.tsv hold its cut, the tab
+# record its whole name, which close finds and the line reads its slug from.
+LS=pane-closed-slug-past-the-cut; LC="review-${LS}"; LC="${LC:0:32}"
+built "${LC}" review; echo "w:p77 review-${LS}" >> "${P}/.swarm/state/x"; echo "${LC} w:p77" >> "${ROOT}/agents"
+cs "review-${LS}" >/dev/null || true
+is "close review-<a slug past the cut> logs its whole slug" "ok ~~ pane=w:p77 slug=${LS} role=review" "$(pane_closed_lines "review-${LS}")"
+rm -f "${P}/.swarm/state/x" "${P}/.swarm/state/other"
+# reconcile from that agent's own pane, once its story merged, retires it (<its first 27>-done, in herdr
+# and its tab record); tidy --yes then closes the pane, and its line carries the whole slug that
+# retire_agent kept in .swarm/retired.tsv.
+LR=pane-closed-retired-past-cut; LC="review-${LR}"; LC="${LC:0:32}"
+item "${LR}" "status: review" "kind: code" "prs: ${U}/34"; started "${LR}"; echo "${U}/34 MERGED" > "${ROOT}/pr-states"
+built "${LC}" review; echo "w:p109 review-${LR}" > "${P}/.swarm/state/${LR}"
+echo "${LC} w:p109" > "${ROOT}/agents"; echo "w:p109 w:t15" > "${ROOT}/panes"; : > "${ROOT}/panes-closed"
+from_pane w:p109 reconcile >/dev/null || true
+is "reconcile from its own pane retires review-${LR} as ${LC:0:27}-done, its whole name in retired.tsv" \
+  "${LC:0:27}-done w:p109|w:p109 ${LC:0:27}-done review-${LR}" \
+  "$(cat "${ROOT}/agents")|$(tr '\t' ' ' < "${P}/.swarm/retired.tsv" 2>/dev/null)"
+from_pane w:me tidy --yes >/dev/null || true
+is "tidy --yes closes the retired pane and logs its whole slug" "w:p109|ok ~~ pane=w:p109 slug=${LR} role=review" \
+  "$(cat "${ROOT}/panes-closed")|$(pane_closed_lines "${LC:0:27}-done")"
+# close conduct-ce while ce is kept for cbw, working: the conductor's pane closes alone (own_pane), and
+# its record line, the word conductor, is no name: the line reads conduct-ce's.
+rm -f "${P}/.swarm/state/ce" "${P}/.swarm/state/ce-2"; printf '%s\n' "w:p90 conductor" "w:p96 cbw" > "${P}/.swarm/state/ce"
+printf '%s\n' "conduct-ce w:p90" "cbw w:p96 working" > "${ROOT}/agents"; printf '%s\n' "w:p90 w:t7" "w:p96 w:t7" > "${ROOT}/panes"
+built conduct-ce conduct; : > "${CLOSED}"; : > "${ROOT}/panes-closed"; from="$(wc -l < "${P}/.swarm/events.tsv")"
+cs conduct-ce >/dev/null || true
+is "close conduct-ce, ce kept for a working cbw: its pane closes alone and logs slug=ce role=conduct" \
+  "|w:p90|conduct-ce|ok ~~ pane=w:p90 slug=ce role=conduct" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(tail -n +"$((from + 1))" "${P}/.swarm/events.tsv" | awk -F'\t' '$2 == "pane-closed" { print $3 "|" $5 }' | no_version)"
+rm -f "${P}/.swarm/state/ce"
+# The backlog conductor's tab is labelled with its name: closing it logs the conductor under that name.
+BN="$(cd "${P}" && HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" _conductor backlog)"
+echo "w:p98 conductor" > "${P}/.swarm/state/${BN}"; echo "${BN} w:p98" > "${ROOT}/agents"; echo "w:p98 w:t16" > "${ROOT}/panes"
+printf ',{"tab_id":"w:t16","label":"%s"}' "${BN}" > "${ROOT}/tabs-extra"; built "${BN}" conduct; : > "${CLOSED}"
+cs "${BN}" >/dev/null || true; rm -f "${ROOT}/tabs-extra"
+is "closing the backlog conductor's tab logs its pane under conductor_name backlog" "<w:t16>|ok ~~ pane=w:p98 role=conduct" \
+  "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines "${BN}")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
