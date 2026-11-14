@@ -10,8 +10,11 @@
 ## Credentials
 - GitHub: `gh`'s own login (`gh auth`). Run `unset GITHUB_TOKEN` before any `gh` call, so a stray
   token never shadows it.
-- Claude: Azure Foundry, from the session environment. swarm.sh passes the `ANTHROPIC_FOUNDRY_*` and
-  `ANTHROPIC_DEFAULT_*_MODEL` variables to every agent.
+- Claude: whichever provider the lead's session uses: a Claude subscription login, Azure Foundry or
+  AWS Bedrock. A subscription login is read from the Claude config dir. On Foundry, swarm.sh passes
+  the `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables to every agent. On Bedrock,
+  `AWS_BEARER_TOKEN_BEDROCK` and the `ANTHROPIC_DEFAULT_*_MODEL` pins pass through `agent_env` in
+  `.claude/swarm/config`.
 - Never print a secret, in output, a log or anywhere else.
 - codex: its own login (`codex login`).
 - No secret ever goes in code, a commit, a PR body, a log or a comment.
