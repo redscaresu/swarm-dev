@@ -1020,20 +1020,6 @@ codex_retry_wait() {
   trap "exit 143" TERM HUP
 }
 
-# codex_retry_wait <target> [key=value...] — codex hit its rate limit: say so, log a codex-retry line
-# (target codex-<story or base>, the incidents' slug/role tail; an event, not an incident), and sleep
-# CODEX_RETRY_SECONDS in the background, so a TERM or HUP stops the wait at once.
-codex_retry_wait() {
-  local spid
-  echo "codex rate limit: retrying in ${CODEX_RETRY_SECONDS} s" >&2
-  record_event codex-retry "$1" "rate limit: retrying in ${CODEX_RETRY_SECONDS} s" "${@:2}"
-  sleep "${CODEX_RETRY_SECONDS}" & spid=$!
-  # shellcheck disable=SC2064 # this sleep, fixed now
-  trap "kill ${spid} 2>/dev/null; exit 143" TERM HUP
-  wait "${spid}" || true
-  trap "exit 143" TERM HUP
-}
-
 # codex_cleanup <tee pid, or -> <file>... — codex-review's EXIT trap, so every way out (codex done, the
 # timeout, an interrupt, a failed step) runs it: stop tee, which a child of codex left holding its
 # pipe would keep running, and the caller's stdout open with it; then remove the run's files and
