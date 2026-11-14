@@ -935,13 +935,16 @@ With `origin/HEAD` unset it stops and asks for `--since <tag>`, and a tag the re
 The first line names the tag and the window's first day.
 The second names the `swarm.sh` that wrote the report: its short commit when it runs from the top of a git checkout, or else the version in its `.claude-plugin/plugin.json` and that it is not a git checkout, as in the plugin cache.
 Then `bin/lib/retro_report.py` runs each `bin/lib/retro_<name>.py` in name order, under a `## <name>` heading.
-Each section gets the tag, the window's day, the project and board folders, the paths of `events.tsv` and `findings.tsv`, the memory folder, and a file of the declined out-of-scope and deferred findings that `swarm.sh next` offers.
+Each section gets the tag, the window's day, the project and board folders, the paths of `events.tsv` and `findings.tsv`, the memory folder, and a file of the declined out-of-scope and deferred findings since that day that no story has picked up.
 A section that fails prints `error: <name>: <message>`, the other sections still run, and retro exits 1.
 A new list is a new `retro_<name>.py`, and the runner does not change.
 The lists, in name order:
 
 **findings.** The declined out-of-scope and deferred findings since the tag that no story has picked up.
-`swarm.sh retro` does not print this list yet.
+It lists a finding only while its newest row in `findings.tsv` is that decline, so a later `--filed` or fixed row drops it.
+It also drops a finding whose text a story carries, by the same rule `swarm.sh next` uses for the findings it offers.
+Each line is `<reason> <date> <kind> <PR>: <text>`, newest first.
+With none, it prints `no out-of-scope or deferred findings open since <tag>`.
 
 **incidents.** Each `user-caught` and `lead-hand` line (`swarm.sh intervene`) since the tag, with its date and text, and the other incident lines.
 `swarm.sh retro` does not print this list yet.

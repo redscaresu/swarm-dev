@@ -257,7 +257,8 @@ CFG_demote_kinds=""      # empty: off; else finding kinds, comma-separated, that
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
 CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify demote_kinds lead_epics commit_trailers agent_env"
+CFG_usage_warn_percent="" # empty: off; else a percent, 1 to 100: wait --lead warns once a usage week when the usage estimate reaches it
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify demote_kinds lead_epics commit_trailers agent_env usage_warn_percent"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
@@ -333,6 +334,9 @@ load_config() {
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
           || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;   # loose-match: ok trailer is a fixed regex
+      usage_warn_percent)
+        [[ -z "${value}" || ( "${value}" =~ ^[1-9][0-9]*$ && ${#value} -le 3 && "${value}" -le 100 ) ]] \
+          || die "${where}: usage_warn_percent must be a whole number from 1 to 100, or empty for off, not '${value}'" ;;
       agent_env)
         # Reserved names are refused once agents.sh, which defines them, is loaded (reserved_env).
         read -r -a words <<< "${value}"   # read, not a bare word list, so a * is never globbed
