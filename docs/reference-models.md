@@ -208,6 +208,17 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
 - `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
+- `usage_warn_percent` (default empty): a whole number from 1 to 100. `wait --lead` prints one line the first time either estimate reaches it in a usage week, and none again that week: `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, at or past usage_warn_percent <P> (<calibrated at | uncalibrated>; /usage is the truth), exit: check /usage, as nothing stops on this`.
+  It is a warning, never a gate: nothing stops or slows on it.
+  The estimate is the price-weighted tokens of every session log under Claude Code's projects directory (`CLAUDE_PROJECTS_DIR`) since the weekly reset.
+  Of each log line it reads only `message.usage`, `message.model`, `message.id` and the timestamp, never the conversation, and it reads them at most once every 10 minutes (`SWARM_USAGE_EVERY`, 600 seconds).
+  It is only an estimate, and `/usage` is the only truth.
+  To calibrate it, copy a `/usage` reading into `.swarm/usage-reading` as one line, `<read at> <resets at> <week %> <fable %>`, such as `2026-11-14T10:00 2026-11-17T09:00 42 18` (ISO times, local unless they give an offset).
+  A reading from this week is the base, and the estimate adds the spend since it, so it still counts with no logs from before it.
+  With a reading, Fable's own limit is fitted from its share, and Fable gets its own weight in the week: its limit is taken to be 40% of the week's, from a night on Fable on 2026-10-25 that moved its limit 15 points and the week about 6.
+  Without one, the week starts Monday 00:00 UTC, the limits are guesses, and Fable counts at its price alone, which counts it low: that day a single weighting read 90.6% where `/usage` showed 95%.
+  A reading that is not in that form warns on stderr when the logs are read (at most once every 10 minutes, and not once the week's line has printed), and the estimate runs uncalibrated.
+  Any other value of the key stops `swarm.sh` with the file and line
 - `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run.
   Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines and appending a `reap` line to `.swarm/events.tsv` (see the audit log).
   A file in the Makefile's `SLOW` gets three times the limit.
