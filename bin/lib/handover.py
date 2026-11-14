@@ -174,8 +174,9 @@ def agent_lines(own):
         agents = json.loads(raw)["result"]["agents"]
     except (ValueError, KeyError, TypeError):
         return ["not read: herdr agent list gave no agent list"]
-    out = ["%s: %s, pane %s" % (a.get("name"), a.get("agent_status"), a.get("pane_id"))
-           for a in agents if str(a.get("pane_id")) in own]
+    # Its name and pane only: an agent's state comes from its session (tests/agent_state_test.sh), and
+    # on another machine it is gone anyway.
+    out = ["%s, pane %s" % (a.get("name"), a.get("pane_id")) for a in agents if str(a.get("pane_id")) in own]
     return out or ["none running in this project's panes"]
 
 

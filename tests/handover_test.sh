@@ -129,7 +129,7 @@ check "RESTORE.md counts the three session logs left out" "1" "$(grep -c '^- 3 s
 check "board.patch holds the three board edits" $'docs/stories/a.md\ndocs/stories/c.md\ndocs/stories/d.md' \
   "$(git -C "${P}" apply --numstat "${H}/board.patch" | cut -f3 | LC_ALL=C sort)"
 check "snapshot.md lists the open PR" "- #7 Add the thing (story/a, open) https://github.com/o/p/pull/7" "$(grep -F '#7' "${H}/snapshot.md")"
-check "snapshot.md lists this project's agent, not another's nor one only a token-named file names, with no other field" "- a: working, pane w1:p1" \
+check "snapshot.md lists this project's agent, not another's nor one only a token-named file names, with no other field" "- a, pane w1:p1" \
   "$(sed -n '/^## Agents/,$p' "${H}/snapshot.md" | grep '^- ')"
 check "without --memory, no memory/ folder" "no" "$([[ -e "${H}/memory" ]] && echo yes || echo no)"
 check "without --memory, no file from the memory folder is in the handover" "" \
