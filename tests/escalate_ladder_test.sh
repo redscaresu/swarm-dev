@@ -429,6 +429,24 @@ stepped_f() {
 }
 check "a findings tell herdr sent but not seen taken up counts toward round 3; one herdr never sent does not" "up|up|up|told|told" \
   "$(stepped_f f1)|$(stepped_f f3)|$(stepped_f f4)|$(stepped_f f2)|$(stepped_f f5)"
+
+# Which start errors say the brief may have gone out. Only herdr's reply to the brief, in sent_note's words,
+# does: another thing that could not be read (its pane, origin's default branch) says nothing about it.
+# unclear_reads <err> — "<start_unclear>|<rung_late>", yes when each takes start_agent's stderr <err> as a
+# brief that may have gone out. rung_late's pane read is stubbed to find the agent working, so it succeeds
+# only once its match lets it past.
+unclear_reads() {
+  bash -c 'source "$1/bin/lib/build.sh"; source "$1/bin/lib/lifecycle.sh"
+    agent_name() { echo "$1"; }; agent_field() { echo w:9; }; prompt_settle() { echo taken; }; SLOW_PROMPT_TIMEOUT_MS=5000
+    if start_unclear "$2"; then printf yes; else printf no; fi
+    if rung_late u1 opus "$2" 2>/dev/null; then echo "|yes"; else echo "|no"; fi' _ "${SWARM%/bin/swarm.sh}" "$1"
+}
+check "start_unclear and rung_late take herdr's unread reply to the brief as maybe sent" "yes|yes" \
+  "$(unclear_reads "u1: herdr's reply to the brief could not be read once, then could not send it again (agent_not_found); see herdr agent read u1")"
+check "start_unclear and rung_late take no pane that could not be read as a brief that may have gone" "no|no" \
+  "$(unclear_reads "u1: its pane could not be read")"
+check "start_unclear and rung_late take no default branch that could not be read as a brief that may have gone" "no|no" \
+  "$(unclear_reads "step-up: origin's default branch could not be read (see above)")"
 # f6, for real: herdr sends the findings twice and reads f6 idle with no turn finished each time. The
 # tell fails saying they count as a round, to be sent again as a nudge only if f6's pane shows they
 # never arrived, and the next one steps f6 up. f7: herdr sends them once and then gives no status, so f7

@@ -15,7 +15,7 @@ fm() {
 # a report starts reads the board for itself.
 BOARD_SNAP=""
 # BOARD_SNAP_MARK: the file a board-state write during the report makes (board_snap_written), so a
-# shell that took the snapshot drops it, a write in a $( ) subshell included; next removes it on exit.
+# shell that took the snapshot drops it, a write in a $( ) subshell included; report_cleanup removes it on exit.
 BOARD_SNAP_MARK=""
 # BOARD_SNAP_RE: the names of the snapshot's variables, which board_snapshot checks each one against
 # before it sets it: _BS_<s|e|h>_<the file's name, encoded> marks a file in it, with __F_<key> (fm's
@@ -786,25 +786,23 @@ idle_lines() {
   printf '%s\n' "${found}" | awk '{ sub(/\t/, " finding: "); print "  " $0 }'
 }
 
-# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
-# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
-# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
-# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
-# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
-# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
-# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
-# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, are
+# report_wrappers' (merge.sh), so each read runs within the report's deadline and a cut one is named as
+# status and dash name it. Inside herdr, `herdr agent list` is answered from the one list next_report
+# read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a later list cut
+# at the deadline cannot hide a conductor an earlier one showed; herdr's other reads go on to
+# report_herdr. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # herdr is called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  report_wrappers
   herdr() {
     if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
       [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
       printf '%s\n' "${LEAD_AGENTS}"; return 0
     fi
-    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+    report_herdr "$@"
   }
-  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
-  claude() { report_read "claude $1" claude "$@" </dev/null; }
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
@@ -878,8 +876,8 @@ next_report() {
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   report_start || die "next: cannot set the report's deadline (perl)"
-  # shellcheck disable=SC2064 # the paths are fixed now
-  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}' '${BOARD_SNAP_MARK}'" EXIT
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'; report_cleanup" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
   # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
   # deadline).
@@ -990,6 +988,13 @@ lead_blocked() {
   done
 }
 
+# reopened_ready <story-file> — true for a ready story whose last event is reconcile's reopen, after its
+# PR closed unmerged: the lead's, not an agent's. agent_work_left skips it, and lead_held reads a story
+# blocked only on it as the lead's too.
+reopened_ready() {
+  [[ "$(fm "$1" status)" == ready && "$(last_event "$(basename "$1" .md)")" == $'reconcile\tok (reopened)' ]]
+}
+
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
 # open and not yet in review), unless reconcile reopened it after its PR closed unmerged (the lead's);
@@ -1011,7 +1016,7 @@ agent_work_left() {
     else
       [[ "${e:--}" == "$1" ]] || continue
       case "$(fm "${f}" status)" in
-        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        ready) ! reopened_ready "${f}" || continue ;;
         blocked) ! lead_held "${f}" || continue ;;
         review) review_agent_owns "${f}" || continue ;;
         *) continue ;;
@@ -1049,7 +1054,8 @@ note_group() {
 # lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
 # blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
 # reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
-# that is itself lead_held, so a chain of agent stories under a lead story waits too. A depends_on
+# that is itself lead_held, so a chain of agent stories under a lead story waits too, or a ready story
+# reconcile reopened (reopened_ready), which the lead restarts. A depends_on
 # cycle ([seen], space-separated slugs) waits on the lead as well: no merge can break it.
 lead_held() {
   local p f open seen
@@ -1063,6 +1069,7 @@ lead_held() {
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     agent_kind "$(fm "${f}" kind)" || continue
+    ! reopened_ready "${f}" || continue
     lead_held "${f}" "${seen}" || return 1
   done
 }
@@ -2746,14 +2753,16 @@ REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may ta
 # that adds to <sha> only git's own clean merges of the PR's base (base_merges_only, as merge --head
 # reads it) brings no code the review did not read, so it is taken, with a line `<pr-url> <head> <base>
 # <merges, short>` added to REVIEW_ACCEPTED for mark_review, once ci_gate head finds it green (the review
-# waited for green on <sha> only). Any other head, one whose merges cannot be read, and one whose CI is red,
+# waited for green on <sha> only), each workflow a pull_request runs there included, as wait-pr reads them
+# (ci_gate head with the PR's base, number and changed file count): one with no run on the head is not
+# finished. Any other head, one whose merges cannot be read, and one whose CI is red,
 # not finished or unread (within REVIEW_HEAD_SECONDS), dies as a moved head does, after a line on stderr
-# saying why it was not taken. Only a moved
-# head's PR has its base branch read, a second gh read. Each gh read stops after REVIEW_HEAD_SECONDS;
-# one that fails or runs out says to run review again.
+# saying why it was not taken. Only a moved head's PR has its base branch and changed file count read, a
+# second gh read. Each gh read stops after REVIEW_HEAD_SECONDS; one that fails or runs out says to run
+# review again.
 REVIEW_ACCEPTED=""
 review_heads() {
-  local f="$1" want="$2" slug url head base why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head info base changed why n merges rc ci others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
   pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
   if [[ "${f}" == "${BOARD}/stories/"* ]]; then
@@ -2781,15 +2790,19 @@ review_heads() {
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     [[ "${head}" != "${want}" ]] || continue
-    # Only a moved head needs the PR's base, for base_merges_only's read of its merges.
-    base="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName < /dev/null \
-      | json "d['baseRefName']" 2>/dev/null)" || base=""
-    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] \
-      || die "review: gh could not read the base branch of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
+    # Only a moved head needs the PR's base, for base_merges_only's read of its merges and ci_gate head's of
+    # the workflows a pull_request runs, and its changed file count, for ci_gate's read of its files.
+    info="$(within "${secs}" gh pr view "${n}" --repo "${repo}" --json baseRefName,changedFiles < /dev/null \
+      | json "'%s %d' % (d['baseRefName'], d['changedFiles'])" 2>/dev/null)" || info=""
+    read -r base changed <<< "${info}"
+    [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
+      || die "review: gh could not read the base branch and changed file count of ${url} within ${secs}s, so whether its head ${head:0:7} adds only merges of the base to ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     if why="$(base_merges_only "${repo}" "${n}" "${want}" "${head}" "${base}" 2>&1)"; then
       merges="$(short_shas "${why##*$'\n'}")"
-      # The review waited for green on <sha> only: a merge of the base can still break a check.
-      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" < /dev/null 2>&1)" || rc=$?
+      # The review waited for green on <sha> only: a merge of the base can still break a check. With the
+      # base, number and file count, as wait-pr passes them, a workflow that has not started yet is not
+      # finished, so one green check alone does not take the head.
+      rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" "${base}" "${n}" "${changed}" < /dev/null 2>&1)" || rc=$?
       if [[ ${rc} -eq 0 ]]; then REVIEW_ACCEPTED+="${url} ${head} ${base} ${merges}"$'\n'; continue; fi
       case ${rc} in 1) ci="red" ;; 2) ci="not finished" ;; *) ci="unread" ;; esac
       why="$(tr -d '\000-\037\177' <<< "${why%%$'\n'*}")"
