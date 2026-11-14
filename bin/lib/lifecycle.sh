@@ -4965,12 +4965,14 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's agent list, read once per
 # round (upgrade_herdr).
 # UPGRADE_CLAUDE: Claude Code's list of its sessions, read once for the closed check (upgrade_claude).
+# UPGRADE_REOPENED: the conductors the last reread reopened (upgrade_reopen), space-separated.
 # UPGRADE_WANT and UPGRADE_NEW: the run's agents (upgrade_want) and version.
 UPGRADE_PID="${PROJECT_DIR}/.swarm/upgrade.pid"
 UPGRADE_DIR=""
 UPGRADE_SAID=""
 UPGRADE_HERDR=""
 UPGRADE_CLAUDE=""
+UPGRADE_REOPENED=""
 UPGRADE_WANT=""
 UPGRADE_NEW=""
 UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_mine)
@@ -5203,6 +5205,8 @@ upgrade_round() {
   if [[ -n "${fresh}" ]]; then
     upgrade_reread "$1" "$2" || return 1
     list="$(upgrade_open < "${UPGRADE_DIR}/list")"
+    # A conductor this reread reopened missed the handovers above: the next round asks it.
+    [[ -z "${UPGRADE_REOPENED}" ]] || waits=1
   fi
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
@@ -5433,9 +5437,10 @@ upgrade_ident() {
 # not the one its marker saw (upgrade_ident), as when its conductor started a new agent under its
 # name: drop the marker, a conductor's handover records with it, and the name from the `skipped
 # (closed):` line, so this run moves the new one (a conductor asked for its own handover first), and
-# say so in the summary.
+# say so in the summary. The conductors it reopens go in UPGRADE_REOPENED.
 upgrade_reopen() {
   local name pane role cur n names was
+  UPGRADE_REOPENED=""
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && -e "${UPGRADE_DIR}/closed-${name}" ]] || continue
     [[ "$(cat "${UPGRADE_DIR}/closed-${name}")" != "$(upgrade_ident "${name}" "${pane}")" ]] || continue
@@ -5446,6 +5451,7 @@ upgrade_reopen() {
     for n in "${was[@]}"; do [[ "${n}" == "${name}" ]] || names+=" ${n}"; done
     printf '%s' "${names}" > "${UPGRADE_DIR}/closed"
     echo "${name}: a new agent in pane ${pane} took its name after it was skipped as closed, so it is moved" >> "${UPGRADE_DIR}/summary"
+    [[ "${role}" != conduct ]] || UPGRADE_REOPENED+=" ${name}"
   done < "${UPGRADE_DIR}/list"
 }
 
