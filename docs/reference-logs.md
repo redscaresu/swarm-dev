@@ -935,16 +935,26 @@ With `origin/HEAD` unset it stops and asks for `--since <tag>`, and a tag the re
 The first line names the tag and the window's first day.
 The second names the `swarm.sh` that wrote the report: its short commit when it runs from the top of a git checkout, or else the version in its `.claude-plugin/plugin.json` and that it is not a git checkout, as in the plugin cache.
 Then `bin/lib/retro_report.py` runs each `bin/lib/retro_<name>.py` in name order, under a `## <name>` heading.
-Each section gets the tag, the window's day, the project and board folders, the paths of `events.tsv` and `findings.tsv`, the memory folder, and a file of the declined out-of-scope and deferred findings that `swarm.sh next` offers.
+Each section gets the tag, the window's day, the project and board folders, the paths of `events.tsv` and `findings.tsv`, the memory folder, and a file of the declined out-of-scope and deferred findings since that day that no story has picked up.
 A section that fails prints `error: <name>: <message>`, the other sections still run, and retro exits 1.
 A new list is a new `retro_<name>.py`, and the runner does not change.
 The lists, in name order:
 
 **findings.** The declined out-of-scope and deferred findings since the tag that no story has picked up.
-`swarm.sh retro` does not print this list yet.
+It lists a finding only while its newest row in `findings.tsv` is that decline, so a later `--filed` or fixed row drops it.
+It also drops a finding whose text a story carries, by the same rule `swarm.sh next` uses for the findings it offers.
+Each line is `<reason> <date> <kind> <PR>: <text>`, newest first.
+With none, it prints `no out-of-scope or deferred findings open since <tag>`.
 
 **incidents.** Each `user-caught` and `lead-hand` line (`swarm.sh intervene`) since the tag, with its date and text, and the other incident lines.
-`swarm.sh retro` does not print this list yet.
+It reads `events.tsv` and takes each line's day in local time, as `flow`'s `incidents` section does, and leaves out a line dated before the window's first day.
+Every `lead-hand` and `user-caught` line comes first, in full and oldest first, as TSV `day kind cause text`.
+The text is what follows `<kind>: ` in the line's outcome, and the cause is its `cause=` field.
+After a blank line come the other kinds that `flow`'s `incidents` section counts, as TSV `kind cause incidents first last`: the other `incident` lines, such as `wait-timeout` and `login`, and each stalled step-up, as kind `stalled step-up`.
+Each kind and cause gets one row, with its count and the first and last day it was seen, and a line with no `cause=` field has cause `-`.
+A part with no lines prints `no lead-hand or user-caught lines since <day>` or `no other incidents since <day>` in its place.
+A missing `events.tsv` prints `no incidents: <path> does not exist`.
+`flow`'s `incidents` section counts these kinds and prints no line's text.
 
 **memories.** The lead's memory notes that are not yet placed in a story, a check or a rule.
 It prints one line for each `*.md` note in the memory folder except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
@@ -954,7 +964,10 @@ By default it is Claude Code's memory folder for the project: the projects folde
 An empty folder prints `no memory notes: <dir> holds none`, and a missing one `no memory notes: <dir> does not exist`.
 
 **reaped.** The test files and codex runs that were killed for running too long since the tag, from the `reap` lines in `events.tsv`.
-`swarm.sh retro` does not print this list yet.
+It prints one row for each `reap` line on or after the window's day, in local time: the line's local day, its target and its outcome, then its `slug=` and `role=` fields when it has them.
+Then it prints a count for each target, the most first.
+The last line says that a fallback reviewer killed on its timeout writes no `reap` line, so the list is not every kill.
+With no `reap` line since the day it prints `no reap lines since <day> in <events.tsv>`, and with no `events.tsv` it prints `no reap lines: <events.tsv> does not exist`.
 
 **recurring.** The finding kinds that keep coming back and still have no check, with related kinds counted together.
 `swarm.sh retro` does not print this list yet.
