@@ -3547,18 +3547,21 @@ sign_seen() {
 # pass's read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read),
 # and takes a pane resend_pass read this poll from LEAD_READS, never reading it twice; a pane
 # resend_pass failed to read is not read again. LEAD_STUCK keeps each agent's key (herdr's status and
-# the mtime of its Claude session log, found by report.py's session_log, - with none), what its pane showed and when it was last read.
+# the time of the newest own-work entry in its Claude session log or its Task subagents' logs, found by
+# report.py's session_log and read by session_mtime.py's session_work, - with no log or no such entry; a
+# write to the log that is no work of the agent's leaves it as it was), what its pane showed and when it was last read.
 # A pane last found clear is read again only when its key changed or STUCK_RECHECK seconds have passed;
 # one last found stuck is read every poll, as a user can clear it with no turn. Agents are read in the
 # order of their last read, oldest first, so slow reads that use up the budget leave the rest first in
 # line for the next poll; its first read goes even past the deadline, so each poll reads at least one. An api-error line comes only while no `swarm.sh wait` naming the agent runs
 # (resend_busy's wait mode, the same ps): a running wait resumes it, and ends once it stops resuming;
-# meanwhile a line already in LEAD_SEEN stays. An agent skipped, unread or whose read failed keeps its
+# meanwhile a line already in LEAD_SEEN stays, and the record keeps the key it had before the wait, so
+# once the wait ends the stop is new only when the agent did own work since. An agent skipped, unread or whose read failed keeps its
 # line from LEAD_SEEN; a herdr list, ps, list parse or read directory that failed keeps every prompt:
 # line there (prompt_seen); so a missed read neither drops a line nor wakes the lead with it again. A
 # new stop wakes the lead even when its line reads the same, since LEAD_SEEN forgets the old line: a
 # prompt, login or api-error found in a pane with no record (the agent came back in a new pane), or in
-# one last found stuck after a turn (its session log changed). Manual mode is a state, not a stop: a
+# one last found stuck after a turn (new own work in its session log). Manual mode is a state, not a stop: a
 # builder in it answering prompts wakes no one again, and while it works (no candidate) its manual
 # record and line are kept (key carry), so a poll that sees it working does not end the state. A pane
 # resend_pass sent Enter to this poll (<pane>.sent in LEAD_READS) is not classified: its read is gone. The exit: for a prompt, the user answers it in
@@ -3601,14 +3604,14 @@ manual_slug() {
 # stop already seen stays seen.
 prompt_seen() { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; }
 prompt_lines() {
-  local rows name pane key last lkey lkind lat at kind out slug footer dir n=0 tried=0 text state="" files=() kinds=() i backlog now
+  local rows name pane key last lkey lkind lat at kind out slug footer hid dir n=0 tried=0 text state="" files=() kinds=() i backlog now
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || { prompt_seen; return 0; }
   if [[ -f "${UPGRADE_PID}" ]] && [[ -n "$(upgrade_holder)" ]]; then prompt_seen; return 0; fi
   # The candidates, oldest read first (LEAD_STUCK's time; never read, 0), then in herdr's order.
   rows="$(SWARM_PANES="$(own_panes)" SWARM_ROLES="${CO_WRITER_ROLES}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, re, sys
-sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log
+sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log; from session_mtime import session_work
 own, skip = set(os.environ["SWARM_PANES"].split()), set(os.environ["SWARM_ROLES"].split())
 agents = {}
 try:
@@ -3641,12 +3644,11 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
     role, sid = agents.get(n, ("", ""))
     if role in skip:
         continue
+    # The newest own-work entry, in the log or its Task subagents logs, not the mtime of the log: a write
+    # to it that is no work of the agent (a resume prompt, a compaction, an API error) is the same stop.
     at, path = "-", session_log(sys.argv[2], sid)
     if path:
-        try:
-            at = str(os.stat(path).st_mtime_ns)
-        except OSError:
-            pass
+        at = str(session_work(path) or "-")
     rows.append((read.get((n, p), (0, ""))[0], n, p, st + ":" + at))
 for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     print("\t".join((n, p, k)))' "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" "${LEAD_STUCK}" <<< "${LEAD_AGENTS}" 2>/dev/null)" \
@@ -3702,11 +3704,16 @@ for f in sys.argv[1:]:
     # for any other agent a prompt the user answers, turning manual mode off too, so each new one reminds.
     slug=""; footer=""; [[ "${kind}" != manual* ]] || slug="$(manual_slug "${name}")"
     if [[ "${kind}" == manual-prompt ]]; then if [[ -n "${slug}" ]]; then kind=manual; else kind=prompt; footer=1; fi; fi
+    # An api-error a running wait naming the agent hides: that wait is still resuming it. Its record keeps
+    # the old key, so the stop it hides is judged against the one before the wait once the wait ends.
+    hid=""; if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then hid=1; fi
     if [[ "${kind}" == unread ]]; then
       [[ "${at}" == 0 && "${lkey}" == - ]] || printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${lkey}" "${lkind/#-/unread}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
-    else printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true; fi
-    # A wait naming it is still resuming it.
-    if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then kind=unread; fi
+    else
+      [[ -z "${hid}" || "${lkey}" == - ]] || key="${lkey}"
+      printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
+    fi
+    [[ -z "${hid}" ]] || kind=unread
     case "${kind}" in
       prompt) out="the user answers it in pane ${pane}${footer:+, and turns manual mode off there}" ;;
       login) out="the user runs /login, then swarm.sh tell ${name} resume <file>" ;;
