@@ -1,0 +1,7 @@
+⏺ Running the tests.
+⏺ API Error (anthropic.claude-fable-5-2): 400 Invocation of model ID anthropic.claude-fable-5-2 with on-demand throughput isn't supported.
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

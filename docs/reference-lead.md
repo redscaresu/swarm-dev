@@ -383,9 +383,10 @@ The kinds and their exits:
   `wait` answers it.
 - `login`: the turn ended on "Please run /login". Exit: `the user runs /login, then swarm.sh tell
   <agent> resume <file>`.
-- `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
+- `api-error`: the turn ended on Claude Code's `API Error:` (or `API Error (<model>):`) line, a model
+  error among them. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
-  up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. Exit: `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
