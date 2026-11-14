@@ -1352,10 +1352,15 @@ pane_check() {
   [[ -z "${lock}" ]] || rmdir "${lock}" 2>/dev/null || true
 }
 
-# api_stopped <name> <target> — succeed when <name>'s turn ended (turn_ended) on an `API Error:` line
-# (pane_stop's api-error or model-error). It only reads, for next and tell; wait reads through
-# pane_check, which logs the stop.
-api_stopped() { [[ "$(pane_text "$2" | pane_stop | cut -f2)" =~ ^(api|model)-error$ ]] && turn_ended "$1"; }
+# stop_kind <name> <target> — print pane_stop's api-error or model-error when <name>'s turn ended
+# (turn_ended) on that `API Error` line; else print nothing and fail. api_stopped succeeds on either.
+# They only read, for next and tell; wait reads through pane_check, which logs the stop.
+stop_kind() {
+  local k
+  k="$(pane_text "$2" | pane_stop | cut -f2)"
+  [[ "${k}" =~ ^(api|model)-error$ ]] && turn_ended "$1" && echo "${k}"
+}
+api_stopped() { stop_kind "$1" "$2" > /dev/null; }
 
 # MODEL_ERROR_CHARS: how much of a model-error stop's line `stuck: model error (<line>)` keeps.
 MODEL_ERROR_CHARS=200
@@ -1784,7 +1789,7 @@ poll_while() {
 # A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit <usage_state>",
 # before any other pane check. Each other busy read also reads the pane once (pane_check, past the
 # caller's resumed_sum): a turn that stopped on an API error ends it with "api error", one that stopped
-# on a model error (pane_stop's model-error) with "stuck: model error (<line>)" (model_stuck), and a
+# on a model error (pane_stop's model-error) with "model error <line>", and a
 # pane that has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ..."
 # (stalled_state). Busy or
@@ -1818,7 +1823,7 @@ settle() {
     if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
-    if [[ "${state}" == busy && "${pane_kind}" == model-error ]]; then state="$(model_stuck "${pane_line}")"; break; fi
+    if [[ "${state}" == busy && "${pane_kind}" == model-error ]]; then state="model error ${pane_line}"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       state="$(stalled_state "${min}")"; break
     fi
@@ -1859,7 +1864,8 @@ settle() {
 # (login_expired) on a busy session's API-error stop is auth, as on an idle one, and never resumed.
 # A model error (pane_stop's model-error: a 400 or 404 naming the model) is never resumed, as the same
 # session would send the same model again: wait returns "stuck: model error (<line>)" (model_stuck) and
-# WAIT_STUCK at once, busy (settle's) or idle, goal on or off; the lead restarts the agent in a fresh session.
+# WAIT_STUCK at once, busy (settle's "model error <line>") or idle, goal on or off; the lead restarts the
+# agent in a fresh session. An expired login behind it is auth first, as behind an API error.
 # An agent whose pane is on Claude Code's usage limit (settle's "usage-limit", or idle or waiting and
 # usage_state; an idle session under the waiting line is idle) is neither a stop nor a stall: on its
 # dialog wait sends the option "Wait here, then continue automatically" (the user's standing choice)
@@ -1932,12 +1938,13 @@ wait_agent() {
       sleep_ms $((t0 < STALL_POLL_MS ? t0 : STALL_POLL_MS)); continue
     fi
     limited=""; answered=""
-    if [[ "${status}" == idle || "${status}" == "api error" ]] && login_expired "${name}"; then
+    if [[ "${status}" == idle || "${status}" == "api error" || "${status}" == "model error"* ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
       login_incident "${name}"
       echo auth; return 0
     fi
     pane_kind=""; [[ "${status}" != idle ]] || pane_check "${name}" "${target}"
+    if [[ "${status}" == "model error"* ]]; then pane_kind="model-error"; pane_line="${status#model error}"; pane_line="${pane_line# }"; fi
     if [[ "${pane_kind}" == model-error ]]; then model_stuck "${pane_line}"; return "${WAIT_STUCK}"; fi
     if [[ "${status}" == "api error" || "${pane_kind}" == api-error ]]; then
       # Idle on the very pane it was resumed from (settle held a slice): the resume was not taken up.

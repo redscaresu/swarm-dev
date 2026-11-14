@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # api_model_error_test.sh — wait on an agent whose turn stopped on an API error. A model error (a 400
 # or 404 that names the model: the provider refused the model ID the session sends) gets no resume:
-# wait prints `stuck: model error (<line>)` at once, exits 4 and logs a model-error incident. Any other
-# API error (a 529 or a 503) keeps its three resumes and ends on `stuck: api error`, exit 4.
+# wait prints `stuck: model error (<line>)` at once, exits 4 and logs a model-error incident; an
+# expired login behind it is auth. Any other API error (a 529, a 503, a 400 that names no model) keeps
+# its three resumes and ends on `stuck: api error`, exit 4.
 # herdr is a stub on PATH whose `agent prompt` calls (the resumes) land in herdr.log; claude is the
 # claude stub, which gives the session's state.
 set -euo pipefail
@@ -73,8 +74,25 @@ check "a 400 invalid model identifier, session idle: stuck: model error, exit 4,
   "stuck: model error (${L400})|exit 4|0" "$(waitrc)"
 check "that stop is one model-error incident in events.tsv" "1" "$(incidents model-error "${L400}")"
 
+# A 404 whose text is model_not_found, the session busy: a model error too.
+L404='API Error: 404 {"type":"error","error":{"code":"model_not_found","message":"The model does not exist"}}'
+session busy; screen "${L404}"
+check "a 404 model_not_found, session busy: stuck: model error, exit 4, no resume" \
+  "stuck: model error (${L404})|exit 4|0" "$(waitrc)"
+check "that stop is one model-error incident in events.tsv" "1" "$(incidents model-error "${L404}")"
+
+# An expired login behind a busy session's model-error stop (its transcript's last entry): auth, the
+# user's /login, before any restart, and nothing sent.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a.jsonl"
+printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Login expired · Please run /login"}]}}' > "${tr}"
+session busy; screen "${L899}"
+check "a busy model-error stop on an expired login returns auth and sends nothing" "auth|exit 0|0" "$(waitrc)"
+rm -f "${tr}"
+
 # A passing error keeps today's resumes: each resumed turn stops on it again, so three resumes, then stuck.
-for l in 'API Error: 529 Overloaded' 'API Error (eu.anthropic.claude-x-9): 503 Service Unavailable'; do
+# A 400 that names no model is a passing error too.
+for l in 'API Error: 529 Overloaded' 'API Error (eu.anthropic.claude-x-9): 503 Service Unavailable' \
+  'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: text content blocks must be non-empty"}}'; do
   session busy; screen "${l}"; echo "⏺ ${l}" > "${ROOT}/reerr"
   check "${l}: three resumes, then stuck: api error, exit 4" "stuck: api error|exit 4|3" "$(waitrc)"
   check "${l}: logged as api-error, never model-error" "yes|0" \

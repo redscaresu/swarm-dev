@@ -1412,6 +1412,7 @@ conduct_ready() {
     case "$(conductor_stop "${c}")" in
       auth) echo "no conductor started: ${c} stopped on an expired login, which would stop a new one too"; return 0 ;;
       stuck) echo "no conductor started: ${c} stopped on an API error, which would stop a new one too"; return 0 ;;
+      model) echo "no conductor started: ${c} stopped on a model error, which would stop a new one too"; return 0 ;;
     esac
   done 3<<< "$(running_conductors)"
   while read -r e <&3; do

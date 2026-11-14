@@ -782,7 +782,9 @@ Three more rules for the lead:
   - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
     it a file asking it to carry on, with `swarm.sh tell <slug> resume <file>`. Its turn ended on the
     API error, which `tell` reads as idle, so the resume goes at once. A wait first would only return
-    `stuck: api error` again.
+    `stuck: api error` again. On `stuck: model error` send it nothing, since a resume in that session
+    sends the refused model again, and no command starts a fresh builder for a story in review. List
+    it for the user with the line `wait` printed.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.
