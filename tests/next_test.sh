@@ -831,8 +831,24 @@ else echo "FAIL an also: line with no blocked story depending on the lead story:
 # release: a fixture repo whose origin/HEAD is main, plugin.json says 1.2.0 and the local tag v1.2.0
 # is on origin/main; each setup runs after the tag, then the repo is pushed and fetched. herdr=1 runs
 # next with a stub herdr listing a working conductor. release_repo leaves the repo in rdir.
+# REL_GH's gh stands in for GitHub: repo view names o/r, and pr list --state merged lists one merged PR
+# per line of REL_PRS (<commit> <head>, numbered from 1), which release_repo empties and merged_as
+# fills. Any other call fails, as offline.
+REL_GH="${STUB_BIN}/rel-gh"; REL_PRS="${REL_GH}/prs"; mkdir -p "${REL_GH}"
+cat > "${REL_GH}/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+  "repo view") echo '{"nameWithOwner":"o/r"}'; exit 0 ;;
+  "pr list") case "$*" in *"--state merged"*)
+    exec awk 'BEGIN { printf "[" } { printf "%s{\"number\":%d,\"headRefName\":\"%s\",\"mergeCommit\":{\"oid\":\"%s\"}}", (NR > 1 ? "," : ""), NR, $2, $1 } END { print "]" }' "$(dirname "$0")/prs" ;;
+  esac ;;
+esac
+exit 1
+GH
+chmod +x "${REL_GH}/gh"
 release_repo() { # <setup>...
   rdir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  : > "${REL_PRS}"
   (
     cd "${rdir}" && git init -q && git init -q --bare origin.git && git remote add origin "${rdir}/origin.git"
     printf 'origin.git\n' > .git/info/exclude
@@ -846,38 +862,129 @@ release_repo() { # <setup>...
     chmod +x bin/herdr
   )
 }
+# release_next [<herdr: 0|1>] — next on release_repo's fixture in rdir, with REL_GH's gh: the whole
+# output in out, its step recorded.
+release_next() {
+  if [[ ${1:-0} == 1 ]]; then out="$(cd "${rdir}" && HERDR_ENV=1 PATH="${rdir}/bin:${REL_GH}:${PATH}" bash "${SWARM}" next)"
+  else out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" next)"; fi
+  record_step "${out}"
+}
 # expect_release <name> <want> <herdr: 0|1> <setup>... — next's first line on release_repo's fixture;
 # the whole output is left in out.
 expect_release() {
   local name="$1" want="$2" herdr="$3" got; shift 3
   release_repo "$@"
-  if [[ ${herdr} == 1 ]]; then out="$(cd "${rdir}" && HERDR_ENV=1 PATH="${rdir}/bin:${PATH}" bash "${SWARM}" next)"
-  else out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; fi
-  got="${out%%$'\n'*}"; record_step "${out}"
+  release_next "${herdr}"; got="${out%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
   rm -rf "${rdir}"
 }
+# merged_as <slug> [<fix: line>] [<stories dir>] — a setup step: commit what the setup changed as the
+# merge of story/<slug>'s PR. The story file (kind: code, and the fix: line when given) goes in a
+# commit of its own first, so the merge's parent has it, then the rest, which REL_PRS maps to
+# story/<slug>. <stories dir> is docs/stories by default; stories for a board at the root.
+merged_as() {
+  local d="${3:-docs/stories}" g=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false)
+  mkdir -p "${d}"
+  { echo ---; echo 'kind: code'; [[ -z "${2:-}" ]] || echo "$2"; echo ---; } > "${d}/$1.md"
+  "${g[@]}" add "${d}/$1.md" && "${g[@]}" commit -q -m "Plan $1"
+  "${g[@]}" add -A && "${g[@]}" commit -q -m "Merge story/$1"
+  echo "$(git rev-parse HEAD) story/$1" >> "${REL_PRS}"
+}
+FIX="merged_as fx 'fix: true'"
+# retro_file <version> <from> [<done: line>] — a setup step: write docs/retros/v<version>.md covering
+# v<from>..v<version>, done (or with <done: line> in place of done:, '' for none). Committed by the
+# step after it.
+retro_file() {
+  local d="${3-done: 2026-11-01}"
+  mkdir -p docs/retros
+  { echo ---; echo "covers: v$2..v$1"; [[ -z "${d}" ]] || echo "${d}"; echo ---; echo; echo "# Retro v$1"; } > "docs/retros/v$1.md"
+}
 COMMIT="git add -A && git -c user.name=t -c user.email=t@t commit -q -m change"
 GH_FAIL="${STUB_BIN}/gh-fail"; mkdir -p "${GH_FAIL}"; printf '#!/bin/sh\nexit 1\n' > "${GH_FAIL}/gh"; chmod +x "${GH_FAIL}/gh"
-expect_release "a commit outside the board since the tag: release" release 0 "echo x > bin/x" "${COMMIT}"
+expect_release "a commit outside the board since the tag, from a fix: true story PR: release" release 0 "echo x > bin/x" "${FIX}"
 if [[ "${out}" != *release-held:* ]]; then echo "ok   a board with no stage: prints no release-held: line"
 else echo "FAIL a board with no stage: prints a release-held: line: ${out}"; fails=$((fails + 1)); fi
 expect_release "only board commits since the tag: not release" "done" 0 "echo x > docs/stories/README.md" "${COMMIT}"
 # A board at the root (its config untracked, so the only commit is the setup's): its own paths are the board.
 ROOT_BOARD="mkdir -p .claude/swarm && echo 'board_dir = .' > .claude/swarm/config && echo .claude/ >> .git/info/exclude"
-expect_release "a board at the root, a commit outside its paths: release" release 0 "${ROOT_BOARD}" "echo x > bin/x" "${COMMIT}"
+expect_release "a board at the root, a commit outside its paths: release" release 0 "${ROOT_BOARD}" "echo x > bin/x" "${FIX} stories"
 expect_release "a board at the root, only its own commits: not release" "done" 0 "${ROOT_BOARD}" "echo x > Board.base" "${COMMIT}"
 expect_release "a board at the root, only a commit under its stories/: not release" "done" 0 "${ROOT_BOARD}" "mkdir -p stories && echo x > stories/README.md" "${COMMIT}"
 # retros/*.md is a glob, as git's pathspecs read it: a retro file is the board's, a script beside it is not.
 expect_release "a board at the root, only a retro file: not release" "done" 0 "${ROOT_BOARD}" "mkdir -p retros && echo x > retros/v1.2.0.md" "${COMMIT}"
-expect_release "a board at the root, a script under retros/: release" release 0 "${ROOT_BOARD}" "mkdir -p retros && echo x > retros/x.sh" "${COMMIT}"
+expect_release "a board at the root, a script under retros/: release" release 0 "${ROOT_BOARD}" "mkdir -p retros && echo x > retros/x.sh" "${FIX} stories"
 expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
 expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture
 expect_release "the tag on a commit off origin/main: not release" "done" 0 "echo x > bin/x" "${COMMIT}" \
   'git -c tag.gpgsign=false tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
 expect_release "a working conductor's wait comes before release" "wait conduct-e1" 1 "echo x > bin/x" "${COMMIT}"
+
+# A minor needs a done retro file. With no stage, non_fix_change tells them apart: a change since the tag
+# that no fix made (a story PR with no fix: true, or a commit no PR lists) makes the release a minor,
+# and next prints retro v1.3.0 until a done docs/retros/v<V>.md above v1.2's minor is on origin/main.
+release_repo "echo x > bin/x" "merged_as s1"
+sha="$(git -C "${rdir}" rev-parse --short=7 origin/main)"
+release_next; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "retro v1.3.0" ]]; then echo "ok   a story PR with no fix: line, no retros dir: retro v1.3.0"
+else echo "FAIL a story PR with no fix: line, no retros dir: want 'retro v1.3.0', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "retro v1.3.0's why names the commit, the story and swarm.sh retro --since v1.2.0" \
+  "origin/main has 1 commit(s) since v1.2.0 that change files outside the board, and ${sha} #1 story/s1: docs/stories/s1.md had no fix: true before the merge is no fix, so the release is a minor, and v1.3.0 has no done retro file (no docs/retros/v1.3.0.md at origin/main): open retro-v1-3-0 (kind: lead), then swarm.sh retro --since v1.2.0"
+expect_release "a non-fix change and a done docs/retros/v1.3.0.md on origin/main: release v1.3.0" "release v1.3.0" 0 \
+  "echo x > bin/x" "merged_as s1" "retro_file 1.3.0 1.2.0" "${COMMIT}"
+if [[ "${out}" == *"docs/retros/v1.3.0.md covers v1.2.0..v1.3.0, done 2026-11-01: cut v1.3.0"* ]]; then echo "ok   release v1.3.0's why quotes the retro file's covers line"
+else echo "FAIL release v1.3.0's why does not quote the covers line: ${out}"; fails=$((fails + 1)); fi
+release_repo "echo x > bin/x" "merged_as s1"
+(cd "${rdir}" && retro_file 1.3.0 1.2.0 && eval "${COMMIT}")
+release_next; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "retro v1.3.0" ]]; then echo "ok   a done retro file only in an unpushed local commit: still retro v1.3.0"
+else echo "FAIL a done retro file only in an unpushed local commit: want 'retro v1.3.0', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+expect_release "a commit that no PR lists: retro v1.3.0" "retro v1.3.0" 0 "echo x > bin/x" "${COMMIT}"
+if [[ "${out}" == *": no merged PR has this commit is no fix, so the release is a minor"* ]]; then echo "ok   the why of a commit no PR lists says so"
+else echo "FAIL the why of a commit no PR lists: ${out}"; fails=$((fails + 1)); fi
+# That answer is left out of non_fix_change's cache, but next keeps it a while (release_memo): a next
+# right after, with gh failing, still names the commit with no PR, not a failed gh read.
+release_repo "echo x > bin/x" "${COMMIT}"
+release_next
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
+if [[ "${out}" == *": no merged PR has this commit is no fix"* ]]; then echo "ok   a commit no PR lists: the next read within NON_FIX_RETRY asks gh nothing"
+else echo "FAIL a commit no PR lists: the next read asked gh again: ${out}"; fails=$((fails + 1)); fi
+# Only a retro above the tag's major.minor counts: a patch-version retro never selects a release.
+expect_release "a done retros/v1.2.1.md and a non-fix change: not release v1.2.1, retro v1.3.0" "retro v1.3.0" 0 \
+  "echo x > bin/x" "merged_as s1" "retro_file 1.2.1 1.2.0" "${COMMIT}"
+expect_release "a retro file with no done: and a non-fix change: retro v1.3.0" "retro v1.3.0" 0 \
+  "echo x > bin/x" "merged_as s1" "retro_file 1.3.0 1.2.0 ''" "${COMMIT}"
+if [[ "${out}" == *"v1.3.0 has no done retro file (docs/retros/v1.3.0.md at origin/main has no done: in its front matter)"* ]]; then echo "ok   its why names retro_done's reason"
+else echo "FAIL the why does not name retro_done's reason: ${out}"; fails=$((fails + 1)); fi
+expect_release "done retros v1.10.0 and v1.3.0: the lowest, release v1.3.0" "release v1.3.0" 0 \
+  "echo x > bin/x" "merged_as s1" "retro_file 1.10.0 1.2.0" "retro_file 1.3.0 1.2.0" "${COMMIT}"
+expect_release "retros v1.3.0 not done and v1.4.0 done: release v1.4.0" "release v1.4.0" 0 \
+  "echo x > bin/x" "merged_as s1" "retro_file 1.3.0 1.2.0 ''" "retro_file 1.4.0 1.2.0" "${COMMIT}"
+expect_release "every commit from a fix: true story PR, a done retro file: still bare release" release 0 \
+  "echo x > bin/x" "${FIX}" "retro_file 1.3.0 1.2.0" "${COMMIT}"
+has_line "a bare release's why names the patch" \
+  "origin/main has 1 commit(s) since v1.2.0 that change files outside the board, and every one is a fix: cut v1.2.1, a patch"
+# gh failing is no answer: the release is a minor.
+release_repo "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "retro v1.3.0" && "${out}" == *"non_fix_change cannot tell the fixes (gh repo view named no GitHub repo for "* ]]; then echo "ok   gh failing: retro v1.3.0, its why naming the failure"
+else echo "FAIL gh failing: want 'retro v1.3.0' naming the failure, got: ${out}"; fails=$((fails + 1)); fi
+# Once one next has read the repo's name and the fixes, a later one asks gh nothing on an unmoved base:
+# with gh failing, it still prints the bare release from the two caches.
+release_repo "echo x > bin/x" "${FIX}"
+release_next
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == release ]]; then echo "ok   a second next with gh failing reads the repo's name and the fixes from their caches: release"
+else echo "FAIL a second next with gh failing: want 'release' from the caches, got: ${out}"; fails=$((fails + 1)); fi
+# On a board outside the repo neither read can answer, so next prints retro, and says to merge by hand.
+EXT_REL="${STUB_BIN}/ext-rel"
+expect_release "a board outside the repo: retro v1.3.0" "retro v1.3.0" 0 \
+  "mv docs '${EXT_REL}' && mkdir -p .claude/swarm && echo 'board_dir = ${EXT_REL}' > .claude/swarm/config && echo .claude/ >> .git/info/exclude" \
+  "echo x > bin/x" "${COMMIT}"
+rm -rf "${EXT_REL}"
+if [[ "${out}" == *"the board is outside the repo, so merge --release cannot read a retro file there: merge the release PR yourself"* ]]; then echo "ok   a board outside the repo: the why says to merge the release PR by hand"
+else echo "FAIL a board outside the repo: the why does not say to merge the release PR by hand: ${out}"; fails=$((fails + 1)); fi
 
 # Stages: S is the lowest stage: above the tag (v1.2.0) among the board's epics and the epic files
 # deleted since it. The fixtures use an active stage epic with a story in review, which no other arm
@@ -890,6 +997,7 @@ HELD="release-held: v1.3.0, open epics: e1, patches only"
 expect_release "an open stage epic and a fix since the tag: the patch on the tag's line, not release v1.3.0" "release v1.2.1 (patch)" 0 \
   "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
 has_line "an open stage epic: the release-held: line names it" "${HELD}"
+no_text "the patch prints no retro" "retro v"
 v="${out%%$'\n'*}"; v="${v#release v}"; v="${v% (patch)}"
 # merge --release's own test of the bump (bin/lib/merge.sh, release_check): MAJOR.MINOR.PATCH.
 if python3 -c 'import re, sys; sys.exit(not re.fullmatch(r"\d+\.\d+\.\d+", sys.argv[1]))' "${v}"; then echo "ok   the patch version ${v} is MAJOR.MINOR.PATCH, as merge --release takes it"
@@ -898,16 +1006,22 @@ expect_release "an open stage epic whose story merged since the tag: no release 
   "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: ready' 'kind: code' 'epic: e1'" "${COMMIT}" \
   "git rm -q docs/stories/s0.md" "echo x > bin/x" "${COMMIT}"
 has_line "an open stage epic whose story merged: the release-held: line after the step" "${HELD}"
+no_text "the held stage prints no retro" "retro v"
 expect_release "a merged story of a child epic whose parent carries the stage: no release step" "gate" 0 \
   "item epics/e1.md 'status: split' 'stage: v1.3.0'" "item epics/c1.md 'status: active' 'parent: e1'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: c1'" "item stories/s0.md 'status: ready' 'kind: code' 'epic: c1'" "${COMMIT}" \
   "git rm -q docs/stories/s0.md" "echo x > bin/x" "${COMMIT}"
-expect_release "the stage epic's file deleted since the tag: release v1.3.0" "release v1.3.0" 0 \
+# A stage's release is a minor: it waits on a done docs/retros/v<S>.md on origin/main.
+expect_release "the stage epic's file deleted since the tag, no retro file: retro v1.3.0" "retro v1.3.0" 0 \
   "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "echo x > bin/x" "${COMMIT}"
-if [[ "${out}" == *"stage v1.3.0"* && "${out}" != *release-held:* ]]; then echo "ok   release v1.3.0's why names the stage, and nothing is held"
-else echo "FAIL release v1.3.0's why does not name the stage, or a line is held: ${out}"; fails=$((fails + 1)); fi
+has_line "a stage's retro why names the stage, the story and swarm.sh retro --since v1.2.0" \
+  "origin/main has 1 commit(s) since v1.2.0 that change files outside the board, and no epic of stage v1.3.0 is left on the board, and v1.3.0 has no done retro file (no docs/retros/v1.3.0.md at origin/main): open retro-v1-3-0 (kind: lead), then swarm.sh retro --since v1.2.0"
+expect_release "the stage epic's file deleted since the tag: release v1.3.0" "release v1.3.0" 0 \
+  "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "retro_file 1.3.0 1.2.0" "echo x > bin/x" "${COMMIT}"
+if [[ "${out}" == *"stage v1.3.0"* && "${out}" == *"(docs/retros/v1.3.0.md covers v1.2.0..v1.3.0, done 2026-11-01)"* && "${out}" != *release-held:* ]]; then echo "ok   release v1.3.0's why names the stage and its retro, and nothing is held"
+else echo "FAIL release v1.3.0's why does not name the stage and its retro, or a line is held: ${out}"; fails=$((fails + 1)); fi
 expect_release "the stage epic deleted, a draft epic of the next stage on the board: still release v1.3.0" "release v1.3.0" 0 \
-  "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "item epics/e2.md 'status: draft' 'stage: v1.4.0'" "echo x > bin/x" "${COMMIT}"
+  "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "item epics/e2.md 'status: draft' 'stage: v1.4.0'" "retro_file 1.3.0 1.2.0" "echo x > bin/x" "${COMMIT}"
 expect_release "a stage epic still on the board at status: done holds it" "release v1.2.1 (patch)" 0 \
   "item epics/e1.md 'status: done' 'stage: v1.3.0'" "echo x > bin/x" "${COMMIT}"
 has_line "a done stage epic on the board is named as open" "${HELD}"
@@ -918,7 +1032,7 @@ has_line "a malformed stage: is named in the release-held: line" "release-held: 
 # today, whatever other front matter its epics have.
 expect_release "a child epic with parent: and no stage: releases as today" release 0 \
   "item epics/e1.md 'status: split'" "item epics/c1.md 'status: active' 'parent: e1'" \
-  "item stories/s1.md 'status: review' 'kind: code' 'epic: c1'" "echo x > bin/x" "${COMMIT}"
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: c1'" "echo x > bin/x" "${FIX}"
 if [[ "${out}" != *release-held:* ]]; then echo "ok   a child epic with parent: and no stage: prints no release-held: line"
 else echo "FAIL a child epic with parent: and no stage: prints a release-held: line: ${out%%$'\n'*}"; fails=$((fails + 1)); fi
 # Staged work the board keeps at status: done (a merge that left the story file) counts as merged
@@ -1853,7 +1967,7 @@ missing_arms() {
 # shellcheck disable=SC2207 # steps are single words
 seen=($(sort -u "${STEPS}"))
 unrecorded=""
-for step in fix-main no-agent wait collect conduct resume story stage plan-epic plan-hld hld escalated release gate 'done'; do
+for step in fix-main no-agent wait collect conduct resume story stage plan-epic plan-hld hld escalated release retro gate 'done'; do
   grep -qx -- "${step}" "${STEPS}" || unrecorded="${unrecorded} ${step}"
 done
 if [[ -z "${unrecorded}" ]]; then echo "ok   the cases above reached every step"; else
@@ -1873,6 +1987,11 @@ grep -v '^   - `stage v<S>`' "${SWARM_MD}" > "${STUB_BIN}/swarm.md"
 missing="$(missing_arms "${STUB_BIN}/swarm.md" "${seen[@]+"${seen[@]}"}")"
 if [[ "${missing}" == stage ]]; then echo "ok   the arm check names stage on a swarm.md without its arm"; else
   echo "FAIL the arm check on a swarm.md without the stage arm: want 'stage', got '${missing//$'\n'/ }'"; fails=$((fails + 1)); fi
+# shellcheck disable=SC2016 # the backticks are swarm.md's
+grep -v '^   - `retro v<x.y.z>`' "${SWARM_MD}" > "${STUB_BIN}/swarm.md"
+missing="$(missing_arms "${STUB_BIN}/swarm.md" "${seen[@]+"${seen[@]}"}")"
+if [[ "${missing}" == retro ]]; then echo "ok   the arm check names retro on a swarm.md without its arm"; else
+  echo "FAIL the arm check on a swarm.md without the retro arm: want 'retro', got '${missing//$'\n'/ }'"; fails=$((fails + 1)); fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -90,6 +90,7 @@ It stops only for decisions that are yours. The common ones:
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps (cloud, credentials, anything hard to undo) |
 | a PR waiting for you | review and merge it, or close it to send the story back |
+| a retro before a minor release | go through its list with the lead and land the retro file; the release comes next |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it is done |
 | an agent waiting on a prompt | answer it in the pane the lead names |
 

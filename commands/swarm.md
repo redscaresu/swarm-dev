@@ -119,8 +119,8 @@ Repeat until a step below says stop:
      step has it), nothing in its `depends_on` holds up its planning, no plan of it runs (no
      `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
      `plan-epic` for it. Plan it with the exit, beside the step.
-   - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
-     `release`), no story is one an agent can build, and there are findings to offer: up to five
+   - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated`,
+     `release` or `retro`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` or `deferred finding: ...` lines (findings
      declined as out of scope or deferred in the last 30 days and not yet filed, newest first).
      File one as a one-off story (through `swarm.sh board-pr`, or where the board is when it is
@@ -636,6 +636,20 @@ Repeat until a step below says stop:
        user's merge, so name the board PR, show what `swarm.sh status` lists under Waiting on
        you, and stop.
 
+     Then go back to 1.
+   - `retro v<x.y.z>`: a minor release is due and no done retro file covers it. Either a stage's
+     release is due, or a change since the tag is no fix. `next`'s why says which, and names the
+     story and the `swarm.sh retro --since <w>` line. If `retro-v<x-y-z>` (the dots as dashes) is
+     on the board, work it with the user. Otherwise write it, `kind: lead`, through
+     `swarm.sh board-pr` (or where the board is when it is outside the repo). Its **You:** steps:
+     pick the version (a stage's release takes the stage's v<S>; otherwise a minor or a major,
+     as a patch needs no retro), go through each item
+     `swarm.sh retro --since <w>` lists with the lead, and land `<board>/retros/v<version>.md` with `covers:` and `done:` by board PR.
+     The format is in the board's `retros/README.md`. Put any question for the user on that story as a
+     **You:** step. Once that file is on the base, `next` prints
+     `release v<version>`: cut it as the release arm below cuts `release v<S>`. When the why says
+     the board is outside the repo, `merge --release` cannot read a retro file there: once the
+     retro is done, cut the release as below and tell the user to merge the release PR by hand.
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
      a release. A stage release is a minor: cut it only when `next` prints `release v<S>`, and make

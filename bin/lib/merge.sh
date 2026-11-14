@@ -2202,10 +2202,11 @@ within() {
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
 # has its own, and made only by the first skip, so a report that skips nothing leaves none behind. A
 # report that is killed mid-frame removes it through report_cleanup, its caller's EXIT trap.
-# Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
-# the rest of the report, so an edit made to a board file during it shows on the next report, and so
-# does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
-# $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the next read sees it.
+# Then it reads the board's files once (board_snapshot), and fm, get_fm and epic_stories answer from
+# that read for the rest of the report, so an edit made to a board file during it shows on the next
+# report, and so does a board-state write another swarm.sh makes. One this process makes (state_set,
+# state_drop, in a $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the
+# next read sees it.
 # A snapshot that fails leaves every read to the files, as before.
 report_start() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"

@@ -56,6 +56,7 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
+| a retro before a minor release (`retro v<x.y.z>`) | do the `retro-v<x-y-z>` lead story's **You:** steps with the lead: pick the version, decide what becomes of each item `swarm.sh retro` lists, and land `retros/v<version>.md` by board PR. Then `next` offers `release v<version>` |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
@@ -159,7 +160,8 @@ each running agent's own session and sends it no new brief, so a resumed agent k
 started with.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
-`next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
+`next` prints a `release-held:` line and offers at most a patch.
+Then it prints `retro v<x.y.z>` until the stage's retro file is done, and `release v<x.y.z>` after that.
 
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter

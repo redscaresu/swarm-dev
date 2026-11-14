@@ -31,6 +31,7 @@ BOARD_SNAP_RE='^_BS_[seh]_[A-Za-z0-9_]+$'
 # key (BOARD_SNAP_RE): _ - and . in a file's name are encoded as _5f, _2d and _2e. A file whose name
 # has any other character, or that cannot be read, and an item whose state file cannot be read, are
 # left out, so they are read as before (and fail as before). <mark-file> becomes BOARD_SNAP_MARK.
+# Then it indexes each story's epic from that read (board_snap_index), which epic_stories answers from.
 # Fails, with no snapshot, when awk does; every read then goes to the files.
 board_snapshot() {
   local d f s line out files=()
@@ -83,6 +84,44 @@ board_snapshot() {
     printf -v "${line%%=*}" '%s' "${line#*=}"
   done <<< "${out}"
   BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"
+  board_snap_index
+}
+
+# board_snap_index — board_snapshot's story-to-epic index, read from the snapshot it has just taken:
+# for each story it holds, _BS_s_<name>__I is the epic the story counts in (epic_stories' rule: its
+# epic:, but none for an after_story), empty for none. epic_stories answers from it during the report,
+# so one report reads each story's epic once, not once per epic. It goes with the rest of the snapshot
+# (board_snap_drop), so a board-state write that changes a story's kind, after or epic drops it too.
+board_snap_index() {
+  local f v e
+  for f in "${BOARD}/stories"/*.md; do
+    board_snap_var s "${f##*/}" || continue
+    v="${BOARD_SNAP_VAR}"
+    [[ -n "${!v:-}" ]] || continue
+    e="$(fm "${f}" epic)"
+    [[ -z "${e}" ]] || ! after_story "${f}" || e=""
+    printf -v "${v}__I" '%s' "${e}"
+  done
+}
+
+# board_snap_live — true while this shell holds a report's snapshot of the board it reads now. When a
+# board-state write made the mark (board_snap_written), in this shell or a subshell, or BOARD or
+# BOARD_STATE_DIR is another, it drops the snapshot first and fails.
+board_snap_live() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 1
+  [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]] || return 0
+  board_snap_drop
+  return 1
+}
+
+# board_snap_var <s|e|h> <file-name> — set BOARD_SNAP_VAR to the variable that marks a story, epic or
+# HLD file named <file-name> in the snapshot (BOARD_SNAP_RE's encoding). Fails, setting it to nothing,
+# for a name board_snapshot leaves out. It sets a variable, not output, so it costs no subshell.
+board_snap_var() {
+  local n="$2"
+  BOARD_SNAP_VAR=""
+  [[ "${n}" =~ ^[A-Za-z0-9._-]+\.md$ ]] || return 1
+  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; BOARD_SNAP_VAR="_BS_$1_${n//./_2e}"
 }
 
 # board_snap_read <F|G> <file> <key> — print <key>'s value for <file> from the report's snapshot (F:
@@ -93,17 +132,16 @@ board_snapshot() {
 # board-state write made the mark (board_snap_written), in this shell or a subshell, it drops the
 # snapshot first, so every read after the write sees it.
 board_snap_read() {
-  [[ -n "${BOARD_SNAP:-}" ]] || return 1
-  if [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]]; then board_snap_drop; return 1; fi
-  local n="${2##*/}" t
+  board_snap_live || return 1
+  local n t
   case "${2%/*}" in
     "${BOARD}/stories") t=s ;;
     "${BOARD}/epics") t=e ;;
     "${BOARD}/hld") t=h ;;
     *) return 1 ;;
   esac
-  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${n}" =~ ^[A-Za-z0-9._-]+\.md$ && -e "$2" ]] || return 1
-  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; n="_BS_${t}_${n//./_2e}"
+  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -e "$2" ]] && board_snap_var "${t}" "${2##*/}" || return 1
+  n="${BOARD_SNAP_VAR}"
   [[ -n "${!n:-}" ]] || return 1
   n+="__$1_$3"
   [[ -z "${!n+x}" ]] || printf '%s\n' "${!n}"
@@ -212,7 +250,7 @@ state_read() {
 board() {
   local f
   for f in "${BOARD}/$1"/*.md; do
-    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] || continue
+    [[ -e "${f}" && "${f##*/}" != README.md ]] || continue
     echo "${f}" 2>/dev/null || return 0
   done
   return 0
@@ -236,9 +274,22 @@ after_story() { waits_on_epic "$(get_fm "$1" kind)" "$(get_fm "$1" after)" "$(fm
 
 # epic_stories <epic> — the story files that count in <epic>, any status: those naming it, but an
 # after_story. Every test of an epic's stories reads them here, taken whole first (a loop that returns
-# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored).
+# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored). During a report
+# it walks the board's stories in board order, as board does, and takes each one's epic from the
+# snapshot's index (board_snap_index) with no process, reading a story the index lacks (one made
+# since the snapshot) as it would with no report.
 epic_stories() {
-  local s
+  local s v
+  # The index keeps no epic for a story with none and an after_story alike, so "" walks the board.
+  if [[ -n "$1" ]] && board_snap_live; then
+    for s in "${BOARD}/stories"/*.md; do
+      [[ -e "${s}" && "${s##*/}" != README.md ]] || continue
+      if board_snap_var s "${s##*/}" && v="${BOARD_SNAP_VAR}__I" && [[ -n "${!v+x}" ]]; then
+        [[ "${!v}" != "$1" ]] || echo "${s}"
+      elif [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}"; then echo "${s}"; fi
+    done
+    return 0
+  fi
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}" && echo "${s}"
   done < <(board stories)
@@ -248,10 +299,10 @@ epic_stories() {
 # epic_has_stories <epic> [<slug>] — true when a story counts in <epic> (epic_stories). With <slug>,
 # one but <slug>: story_brief's test for the epic's last story.
 epic_has_stories() {
-  local s list
+  local s n list
   list="$(epic_stories "$1")"
   while IFS= read -r s; do
-    [[ -z "${s}" || "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
+    n="${s##*/}"; [[ -z "${s}" || "${n%.md}" == "${2:-}" ]] || return 0
   done <<< "${list}"
   return 1
 }
@@ -357,7 +408,7 @@ epic_report_stale() {
 epic_after_only() {
   local s slug list
   [[ "$(fm "$1" status)" == active ]] || return 1
-  slug="$(basename "$1" .md)"
+  slug="${1##*/}"; slug="${slug%.md}"
   list="$(epic_stories "${slug}")"
   while IFS= read -r s; do
     [[ -z "${s}" || "$(fm "${s}" status)" == "done" ]] || return 1
@@ -422,12 +473,21 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
-#                     file outside the board (release_due): the lead cuts a release. With epics that
+#                     file outside the board (release_due) and every change is a fix (non_fix_change,
+#                     release_bare): the lead cuts a patch. A change that is no fix makes a minor:
+#                     `release v<V>` once a done retros/v<V>.md above the tag's minor is on the base
+#                     (retro_done), else `retro v<x.y+1.0>` below. With epics that
 #                     carry stage: (release_stage), `release v<S>` once no epic of the next stage S
-#                     is left on the board; while one is, `release v<x.y.z+1> (patch)` when no
+#                     is left on the board and retros/v<S>.md is done, else `retro v<S>`; while one
+#                     is, `release v<x.y.z+1> (patch)` when no
 #                     staged epic's story merged since the tag, else no release step. A held stage
 #                     sets RELEASE_HELD, its release-held: line, which next_lines and next_report
 #                     print after the step's lines
+#   retro v<x.y.z>    a minor (a stage's release, or a release with a change that is no fix) is due
+#                     and no done retro file covers it (retro_step): the lead opens retro-v<x-y-z>
+#                     (kind: lead) and goes through swarm.sh retro with the user; the patch and the
+#                     held stage never print it. On a board outside the repo, always, as no retro
+#                     file can be read there
 #   plan-epic <epic>  (again) a later epic whose depends_on are listed and all done, with no stories
 #                     and no unasked plan yet (unblocked_epic): planning is read-only and its stories
 #                     wait for approval
@@ -488,7 +548,8 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line. basename here, unlike the
+  # loops below: next_test.sh makes it fail on a story's path, to show a failure in next_step stops next.
   while IFS= read -r f; do
     buildable_story "${f}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
@@ -515,7 +576,7 @@ next_step() {
   fi
   # A built epic (every story merged, its file still here) is reported, never planned again.
   while IFS= read -r f; do
-    slug="$(basename "${f}" .md)"
+    slug="${f##*/}"; slug="${slug%.md}"
     epic_built "${slug}" || continue
     epic_report_stale "${slug}" || continue
     echo "conduct ${slug}"
@@ -531,14 +592,14 @@ next_step() {
   # Neither HLD arm calls gh: dash runs next every frame. An open plan PR (its worktree) lets the
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     [[ "$(hld_due "${f}")" == plan && -z "$(hld_blocked "${f}")" ]] || continue
     ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
-    slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
+    slug="${f##*/}"; slug="${slug%.md}"; when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
     echo "escalated ${slug}"
     if [[ "${held}" == top-rung ]]; then
       echo "${slug} is held (top-rung): its builder on or above the ladder's top rung drew another findings round, which was not sent (the block names the file); re-scope it, lift the hold with swarm.sh reset ${slug} <reason> and send the findings with swarm.sh tell ${slug} findings <file>, or close its builder, PR and worktree as its block says and swarm.sh drop ${slug} <reason>, then tell the user why"
@@ -562,10 +623,15 @@ next_step() {
     RELEASE_HELD="$(sed -n 2p <<< "${stage}")"
     since="origin/${base} has ${n} commit(s) since ${tag} that change files outside the board"
     case "${stage%%$'\n'*}" in
-      "") echo "release"; echo "${since}: cut a release"; return ;;
+      "") release_bare "${since}" "${tag}" "${base}"; return ;;
       "release "*)
-        echo "release v${stage#release }"
-        echo "${since}, and no epic of stage v${stage#release } is left on the board: cut v${stage#release }, the stage's release"; return ;;
+        stage="${stage#release }"
+        since="${since}, and no epic of stage v${stage} is left on the board"
+        if line="$(retro_done "origin/${base}" "${stage}" "${tag#v}")"; then
+          echo "release v${stage}"
+          echo "${since}: cut v${stage}, the stage's release ($(board_rel)retros/v${stage}.md ${line})"
+        else retro_step "${since}" "${stage}" "${line}" "${tag}"; fi
+        return ;;
       "patch "*)
         stage="${stage%%$'\n'*}"
         echo "release v${stage#patch } (patch)"
@@ -578,7 +644,7 @@ next_step() {
   fi
   # A planned HLD with no epic left is finished; while its finish PR is open, it is a gate row.
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     [[ "$(hld_due "${f}")" == finish ]] || continue
     ! hld_pr_open "${slug}" finish || continue
     echo "hld ${slug}"; echo "the planned HLD ${slug} has no epics left on the board: run swarm.sh finish ${slug}"; return
@@ -588,6 +654,117 @@ next_step() {
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# release_bare <since> <tag v<x.y.z>> <base> — next_step's release arm when no epic carries a stage
+# (release_stage printed nothing). non_fix_change from the local tag's commit to origin/<base>, in the
+# repo origin_repo names, tells a patch from a minor: with every change a fix it prints bare `release`,
+# a patch. A change that is no fix, or a failure of either read (a board outside the repo among them),
+# makes it a minor. Then the lowest v<V> whose <board_rel>retros/v<V>.md on origin/<base> (git ls-tree)
+# is above the tag's major.minor and passes retro_done gives `release v<V>`, its why quoting the
+# covers line: a patch-version retro file never selects a release. With none, `retro v<x.(y+1).0>`
+# (retro_step). Its gh calls, origin_nwo's and non_fix_change's, are made only while their caches have
+# no answer, and an answer non_fix_change leaves uncached (a commit no PR lists yet) is kept for
+# NON_FIX_RETRY seconds (release_memo), so dash, which runs next every frame, asks gh at most that often.
+release_bare() {
+  local since="$1" tag="$2" base="$3" ver="${2#v}" repo="" out rc=0 why f v got="" cov="" line
+  if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then
+    rc=1; out="failed: ${repo}"
+  else
+    # On a board outside the repo, non_fix_change fails before it reads the empty repo.
+    if ! out="$(release_memo get "${repo}" "refs/tags/${tag}" "origin/${base}")"; then
+      out="$(release_changes "${repo}" "refs/tags/${tag}" "origin/${base}")" || rc=$?
+      [[ ${rc} != 0 ]] || release_memo put "${repo}" "refs/tags/${tag}" "origin/${base}" <<< "${out}"
+    fi
+  fi
+  if [[ ${rc} == 0 && -z "${out}" ]]; then
+    echo "release"
+    echo "${since}, and every one is a fix: cut v${ver%.*}.$((10#${ver##*.} + 1)), a patch"; return
+  fi
+  line="${out##*$'\n'}"
+  if [[ ${rc} == 0 ]]; then why="${out%%$'\n'*} is no fix"
+  else why="non_fix_change cannot tell the fixes (${line#failed: })"; fi
+  while IFS= read -r f; do
+    [[ "${f##*/}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\.md$ ]] || continue
+    v="${BASH_REMATCH[1]}"
+    version_gt "${v%.*}.0" "${ver%.*}.0" || continue    # a patch of the tag's minor needs no retro
+    [[ -z "${got}" ]] || version_gt "${got}" "${v}" || continue
+    line="$(retro_done "origin/${base}" "${v}" "${ver}")" || continue
+    got="${v}"; cov="${line}"
+  done < <(git -C "${PROJECT_DIR}" ls-tree --full-tree --name-only "origin/${base}" -- "$(board_rel)retros/" 2>/dev/null)
+  if [[ -n "${got}" ]]; then
+    echo "release v${got}"
+    echo "${since}, and ${why}, so the release is a minor: $(board_rel)retros/v${got}.md ${cov}: cut v${got}"; return
+  fi
+  IFS=. read -r f v _ <<< "${ver}"
+  v="$((10#${f})).$((10#${v} + 1)).0"
+  line="$(retro_done "origin/${base}" "${v}" "${ver}")" || true
+  retro_step "${since}, and ${why}, so the release is a minor" "${v}" "${line}" "${tag}"
+}
+
+# origin_nwo — the project's origin as gh names it, owner/name in lower case, as origin_repo (merge.sh)
+# reads it, but through the gh next_reads wraps, so a report's deadline bounds it. The answer is kept in
+# .swarm/origin-repo as "<origin URL> <owner/name>" and read from there while the URL is unchanged.
+# Fails with why on stdout.
+origin_nwo() {
+  local origin cache="${PROJECT_DIR}/.swarm/origin-repo" url own
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || { echo "the project has no origin remote"; return 1; }
+  if read -r url own < "${cache}" 2>/dev/null && [[ "${url}" == "${origin}" && "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
+    echo "${own}"; return 0
+  fi
+  own="$(gh repo view "${origin}" --json nameWithOwner < /dev/null 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" \
+    && [[ "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]] || { echo "gh repo view named no GitHub repo for ${origin}"; return 1; }
+  if [[ -d "${cache%/*}" && "${origin}" != *[[:space:]]* ]]; then printf '%s %s\n' "${origin}" "${own}" > "${cache}" 2>/dev/null || true; fi
+  echo "${own}"
+}
+
+# release_memo get|put <owner/repo> <from> <ref> — next's short-lived copy of non_fix_change's answer
+# for <from>..<ref>, in .swarm/release-memo. Its key is the repo, both refs resolved to SHAs (a moved
+# base is a new key) and the board's path (board_rel), which non_fix_change reads. put writes stdin
+# with the time and the key to a file of its own, then renames it into place, so a reader never sees
+# half of one. get reads the file once and prints the answer while it is under NON_FIX_RETRY seconds
+# old and its key matches, else fails. An answer non_fix_change caches for good is kept here too,
+# harmlessly.
+NON_FIX_RETRY=300
+release_memo() {
+  local f="${PROJECT_DIR}/.swarm/release-memo" key text at rest
+  key="$2 $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$3^{commit}" 2>/dev/null) $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$4^{commit}" 2>/dev/null) $(board_rel)"
+  [[ "${key}" =~ ^[^\ ]+\ [0-9a-f]{40,}\ [0-9a-f]{40,}\  && "${key}" != *$'\n'* ]] || return 1
+  if [[ "$1" == put ]]; then
+    [[ -d "${f%/*}" ]] || return 0
+    if ! { { date +%s; echo "${key}"; cat; } > "${f}.$$" && mv -f "${f}.$$" "${f}"; } 2>/dev/null; then rm -f "${f}.$$"; fi
+    return 0
+  fi
+  text="$(cat "${f}" 2>/dev/null)" || return 1
+  at="${text%%$'\n'*}"; rest="${text#*$'\n'}"
+  [[ "${text}" == *$'\n'* && "${rest%%$'\n'*}" == "${key}" && "${at}" =~ ^[0-9]+$ ]] || return 1
+  (( $(date +%s) - at < NON_FIX_RETRY )) || return 1
+  [[ "${rest}" != *$'\n'* ]] || printf '%s\n' "${rest#*$'\n'}"
+}
+
+# release_changes <owner/repo> <from> <ref> — non_fix_change's lines on stdout, and when it fails, a
+# last line `failed: <its last line on stderr>`, with its exit code. Its stderr is read apart from its
+# stdout, so a warning a tool prints there is never read as a change.
+release_changes() {
+  local err rc=0
+  { err="$(non_fix_change "$@" 2>&1 1>&3 3>&-)" || rc=$?; } 3>&1
+  [[ ${rc} == 0 ]] || echo "failed: ${err##*$'\n'}"
+  return "${rc}"
+}
+
+# retro_step <since> <x.y.z> <retro_done's why> <tag v<a.b.c>> — print `retro v<x.y.z>` and its why:
+# open the kind: lead story retro-v<x-y-z>, then swarm.sh retro --since <w>, with <w> the tag's
+# v<a.b.0> when that tag is here, else the tag. On a board outside the repo the why adds that merge
+# --release cannot read a retro file there, so the user merges the release PR by hand.
+retro_step() {
+  local w="v${4#v}" out
+  w="${w%.*}.0"
+  git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/tags/${w}^{commit}" > /dev/null 2>&1 || w="$4"
+  out="$1, and v$2 has no done retro file ($3): open retro-v${2//./-} (kind: lead), then swarm.sh retro --since ${w}"
+  [[ ${BOARD_IN_REPO} == 1 ]] \
+    || out+="; the board is outside the repo, so merge --release cannot read a retro file there: merge the release PR yourself"
+  echo "retro v$2"
+  echo "${out}"
 }
 
 # next_lines — next_step's lines, then its release-held: line (RELEASE_HELD) when it has one: what
@@ -700,7 +877,7 @@ idle_epic_lines() {
   plannable="$(plannable_epics)"; current="$(idle_stage)"
   while IFS= read -r f; do
     [[ -n "${f}" ]] || continue
-    slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
+    slug="${f##*/}"; slug="${slug%.md}"; st="$(fm "${f}" status)"
     [[ "${slug}" != "${named}" ]] || continue
     case "${st}" in
       draft|later)
@@ -764,7 +941,7 @@ idle_warned() {
 }
 
 # idle_lines <step line> — what next prints after its step, given the step's first line: capacity no
-# step uses. idle_now's lines, less the epic that line names. And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# step uses. idle_now's lines, less the epic that line names. And when the step leaves the builders idle (gate, done, escalated, release, retro: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope or
 # deferred finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts
 # with a quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a
@@ -775,7 +952,7 @@ idle_lines() {
   local f found
   # Advisory: a failed check warns (idle_warned), and never fails next.
   idle_warned "next's step above stands" "$1" || true
-  case "${1%% *}" in gate|done|escalated|release) ;; *) return 0 ;; esac
+  case "${1%% *}" in gate|done|escalated|release|retro) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
   done < <(board stories)
@@ -1206,17 +1383,25 @@ dep_holds() {
 # commits since it change a file outside the board (when the board is in the repo; at the root, outside
 # its own paths, board_paths); else nothing. Local refs only: reconcile has just pulled.
 release_due() {
-  local base version rel q ex=() n
+  local base version q ex=() n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
   version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
-  # An empty :(exclude) would exclude every path, so a board at the root excludes its own paths.
-  rel="$(board_rel)"
-  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then ex=(":(exclude)${rel}")
-  else while IFS= read -r q; do ex+=(":(exclude)${q}"); done < <(board_paths); fi
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex[@]+"${ex[@]}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
+}
+
+# board_excludes — the :(exclude) pathspecs, one a line, that leave the board's files out of a git
+# walk over the repo from its root: the board's folder (board_rel), or for a board at the root its own
+# paths (board_paths), since an empty :(exclude) would exclude every path; nothing for a board outside
+# the repo. release_due and non_fix_change both read them, so the two agree on what is a board file.
+board_excludes() {
+  local rel q
+  rel="$(board_rel)"
+  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then echo ":(exclude)${rel}"
+  else while IFS= read -r q; do echo ":(exclude)${q}"; done < <(board_paths); fi
 }
 
 # release_stage <tag> <base> — which release the commits since <tag> (v<x.y.z>) on origin/<base> make,
@@ -1317,6 +1502,124 @@ staged_chain() {
     e="${p}"
   done
   return 1
+}
+
+# non_fix_change <owner/repo> <from> <ref> — the one definition of a fix, for next and merge --release:
+# each change in <from>..<ref> (a commit, or a ref git reads) that no fix made, one line each, oldest
+# first; nothing when every change is a fix. A change is a commit on the first-parent line that touches
+# a file outside the board (board_excludes, as release_due counts). --full-history keeps a --no-ff merge
+# that is TREESAME to its second parent; today's git compares a first-parent walk's merge with its first
+# parent alone, so the flag guards a git that does not. Its PR is the merged PR whose mergeCommit is that
+# commit, from one gh pr list --repo <owner/repo> --state merged of the PRs merged from the day before
+# <from>'s commit date (UTC), <limit> at most: a change whose PR is past that prints as having none.
+# The change is a fix when that PR's head is story/fix-main-<sha7> exactly (a fix-main build: fix_main
+# writes no other name, so a planner's slug such as fix-main-docs is no fix), or story/<slug> whose
+# <board>/stories/<slug>.md, read at the
+# commit's first parent, has fix: true in its first front matter (fm_text; a trailing # comment and
+# whitespace off, as stage_of takes them). The parent is the base as the planner left it, so a PR cannot
+# make its own feature a fix by adding fix: true in its own diff, and a PR that deleted its own file is
+# read too. Every other change prints one of
+#   <sha7> #<n> <head>: <why>                its story is no fix, its file is missing, or its head is no story branch
+#   <sha7>: no merged PR has this commit     a direct push, a rebase merge's earlier commits, or a PR the list missed
+# It reads git at those commits alone, never the checkout or the board's state, so a local edit changes
+# nothing. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
+# <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails or gives no list. A caller counts
+# exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE; SWARM_GH_FRESH set skips
+# the cached read) under <rule>, the board's path and both SHAs, written only once git and gh both
+# answered and no line says no merged PR (gh's search can lag a fresh merge): a merged commit's PR and a
+# file at a commit never change, so next, which dash runs every frame, pays one gh call per base move.
+non_fix_change() {
+  # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
+  # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
+  local rule=1 limit=1000
+  local repo="$1" from="" to="" rel q ex=() changes day json map c n head p txt v line out="" keep=1
+  [[ ${BOARD_IN_REPO} == 1 ]] || { echo "non_fix_change: the board is outside the repo, so git holds no story history to read" >&2; return 1; }
+  [[ "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "non_fix_change: '${repo}' is not <owner>/<repo>" >&2; return 1; }
+  for q in "$2" "$3"; do
+    if [[ "${q}" == -* ]] || ! c="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "${q}^{commit}" 2>/dev/null)"; then
+      echo "non_fix_change: git cannot read the commit '${q}'" >&2; return 1
+    fi
+    if [[ -z "${from}" ]]; then from="${c}"; else to="${c}"; fi
+  done
+  rel="$(board_rel)"
+  if out="$(non_fix_cache get "${rule}" "${repo}" "${rel}" "${from}" "${to}" < /dev/null)"; then
+    [[ -z "${out}" ]] || printf '%s\n' "${out}"
+    return 0
+  fi
+  out=""
+  while IFS= read -r q; do ex+=("${q}"); done < <(board_excludes)
+  changes="$(git -C "${PROJECT_DIR}" rev-list --reverse --first-parent --full-history "${from}..${to}" -- . ${ex[@]+"${ex[@]}"} 2>/dev/null)" \
+    || { echo "non_fix_change: git cannot list the commits in ${from:0:7}..${to:0:7}" >&2; return 1; }
+  [[ -n "${changes}" ]] || return 0
+  day="$(git -C "${PROJECT_DIR}" show -s --format=%ct "${from}" 2>/dev/null)" || day=""
+  [[ "${day}" =~ ^[0-9]+$ ]] || { echo "non_fix_change: git cannot read the date of ${from:0:7}" >&2; return 1; }
+  day="$(perl -MPOSIX -e 'print POSIX::strftime("%Y-%m-%d", gmtime($ARGV[0] - 86400))' "${day}")"
+  json="$(gh pr list --repo "${repo}" --state merged --search "merged:>=${day}" --json number,headRefName,mergeCommit \
+    --limit "${limit}" < /dev/null 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} --state merged failed" >&2; return 1; }
+  # One "<mergeCommit> <number> <head>" line per merged PR; one that does not read is left out, so its
+  # commit prints as having no PR, and the answer is not cached.
+  map="$(python3 -I -c '
+import json, re, sys
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    m = p.get("mergeCommit") if isinstance(p, dict) else None
+    oid, n, head = m.get("oid") if isinstance(m, dict) else None, p.get("number"), p.get("headRefName")
+    if isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) and type(n) is int \
+       and isinstance(head, str) and re.fullmatch(r"[^\s\x00-\x1f\x7f]+", head):
+        print(oid, n, head)
+' <<< "${json}" 2>/dev/null)" || { echo "non_fix_change: gh pr list --repo ${repo} gave no list of merged PRs" >&2; return 1; }
+  while IFS= read -r c; do
+    n=""; head=""
+    read -r _ n head <<< "$(awk -v c="${c}" '$1 == c { print; exit }' <<< "${map}")"
+    if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
+    line="${c:0:7} #${n} ${head}:"
+    [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
+    if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
+    p="${rel}stories/${BASH_REMATCH[1]}.md"
+    if ! txt="$(git -C "${PROJECT_DIR}" show "${c}^:${p}" 2>/dev/null)"; then
+      # A parent git cannot read (a shallow clone) is no answer: printed, but not cached.
+      if git -C "${PROJECT_DIR}" rev-parse -q --verify "${c}^^{commit}" > /dev/null 2>&1; then out+="${line} no ${p} before the merge"$'\n'
+      else out+="${line} git cannot read the commit before it"$'\n'; keep=""; fi
+      continue
+    fi
+    v="$(fm_text fix <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+    [[ "${v}" != true ]] || continue
+    if [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true before the merge"$'\n'
+    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} before the merge, not true"$'\n'; fi
+  done <<< "${changes}"
+  out="${out%$'\n'}"
+  if [[ -n "${keep}" ]]; then non_fix_cache put "${rule}" "${repo}" "${rel}" "${from}" "${to}" <<< "${out}" || true; fi
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+  return 0
+}
+
+# non_fix_cache get|put <rule> <owner/repo> <board rel> <from> <to> — non_fix_change's cached answer, through
+# gh_cache.py: get prints it and fails when there is none (or SWARM_GH_FRESH is set); put writes stdin,
+# its last newline off. The file is <GH_CACHE>/<owner--repo>/non-fix/rule<rule>-<board>-<from>-<to>.json,
+# <board> the board's path from the repo root (board_rel, which swarm.sh resolves from board_dir) with
+# every byte but a-z, 0-9, ., _ and - as %XX. So it stays one file name, and two paths that differ only
+# in case stay two files on a disk that ignores case. With no cache (GH_CACHE empty), or a get under
+# SWARM_GH_FRESH, it fails at once, as gh_cache.py would, without starting python.
+non_fix_cache() {
+  local fresh="${SWARM_GH_FRESH:-${GH_FRESH:-}}"
+  [[ -n "${GH_CACHE:-}" && ( "$1" == put || -z "${fresh}" ) ]] || return 1
+  SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${fresh}" python3 -I -c '
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import gh_cache
+op, rule, repo, rel, a, b = sys.argv[2:8]
+board = "".join(chr(c) if re.fullmatch(rb"[a-z0-9._-]", bytes([c])) else "%%%02X" % c for c in rel.encode("utf-8", "surrogateescape"))
+name = "non-fix/rule%s-%s-%s-%s" % (rule, board, a, b)
+if op == "put":
+    gh_cache.put(repo, name, sys.stdin.read()[:-1])
+    sys.exit(0)
+got = gh_cache.get(repo, name)
+if not isinstance(got, str):
+    sys.exit(1)
+sys.stdout.write(got)
+' "${SWARM_HOME}/bin/lib" "$@" 2>/dev/null
 }
 
 # stage_of <stage: value> — x.y.z for v<x.y.z> (a trailing # comment and whitespace off, as slug_list
@@ -2261,7 +2564,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 waiting_on_user() {
   local f kind slug when start agreed stage prev why waiting="" holds="${1-}" hread="${1+1}"
   while IFS= read -r f; do
-    kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
+    kind=$(fm "${f}" kind); slug="${f##*/}"; slug="${slug%.md}"
     case "$(fm "${f}" status)" in
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
@@ -2278,7 +2581,7 @@ waiting_on_user() {
       # agreed: <today> in the edit that sets it active, as /epic does. On a board in the repo, one agreed
       # and parked today has that date at the base already, which is no ticket, so its agreed: line goes
       # in a board PR first. A board outside the repo has no board PR and no guard.
-      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md); start="set it active with agreed: <today> to start it"
+      later) when="$(fm "${f}" unasked_plan)"; slug="${f##*/}"; slug="${slug%.md}"; start="set it active with agreed: <today> to start it"
         agreed="$(get_fm "${f}" agreed)"
         [[ ${BOARD_IN_REPO} != 1 || -z "${agreed}" || "$(slug_list "${agreed}")" != "$(date +%F)" ]] \
           || start="it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next"
@@ -2291,12 +2594,12 @@ waiting_on_user() {
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
       # A staged draft is the lead's to set active once the stage before it is tagged (next's stage).
       # A draft the epic guard would let go active unagreed (draft_lead_why) is the lead's too.
-      draft) slug=$(basename "${f}" .md); stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
+      draft) slug="${f##*/}"; slug="${slug%.md}"; stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
         if [[ -n "${stage}" ]]; then waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'
         elif why="$(draft_lead_why "${f}")" && [[ -n "${why}" ]]; then waiting+="  draft epic: ${slug}, the lead sets it active (${why})"$'\n'
         else waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'; fi ;;
       review) [[ -n "${hread}" ]] || { holds="$(protected_holds)"; hread=1; }
-        waiting+="$(merge_rows "${f}" "epic $(basename "${f}" .md)" "${holds}")"$'\n' ;;
+        slug="${f##*/}"; waiting+="$(merge_rows "${f}" "epic ${slug%.md}" "${holds}")"$'\n' ;;
     esac
   done < <(board epics)
   # Every stage PR's worktree, its epics drafts or not: once the PR merges they are active, and the
@@ -2305,7 +2608,7 @@ waiting_on_user() {
     [[ -z "${stage}" ]] || waiting+="  stage PR awaiting merge: v${stage}"$'\n'
   done <<< "$(stage_worktrees)"
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
