@@ -4,7 +4,9 @@
 # names v0.2.0 and its commit's day (from the local origin/HEAD, which unset asks for --since), --since v0.1.0 names that tag's day, and an unknown tag exits
 # non-zero naming it. Its first lines name the short commit of the git checkout swarm.sh runs from, or,
 # run from a copy of bin/ and .claude-plugin/ outside any, plugin.json's version and that it is not one. The
-# memories section prints each note's name and description but not MEMORY.md, says so for an empty
+# memories section prints each swarm-dev note's name and description but not MEMORY.md (tagged
+# project: swarm-dev, under metadata: or at the top, or with swarm in its name: or description:),
+# skips a note about something else, with swarm only in its body, and counts it after the list, says so for an empty
 # or missing folder, and with no --memory reads the folder named for the project's main checkout
 # under CLAUDE_PROJECTS_DIR, from a worktree too. In the copy, a section that raises prints its error while the next still runs,
 # and a section imports bin/lib's report.py, not the project's. A full run makes no gh call.
@@ -59,21 +61,26 @@ sw intervene lead-hand flaky-test "typed into a stalled conductor's pane" >/dev/
 printf '%s\n' $'2026-02-13T09:00:00Z\tincident\tconduct-e\t-\tstalled: no output for 30m' \
   $'2026-02-13T10:00:00Z\treap\ttests/slow_test.sh\t-\tTIMEOUT after 600s' >> "${P}/.swarm/events.tsv"
 
-# The memory folders: two notes, the index and a session log beside them; an empty one; the default one.
+# The memory folders: three swarm-dev notes (tagged under metadata:, past a blank and a comment line, named swarm-lead-decides, Swarm in
+# the description) and one about something else with swarm only in its body, the index and a session
+# log beside them; an empty one; the default one, its note tagged at the top level with a trailing comment.
 M="${ROOT}/memory"; E="${ROOT}/empty"; mkdir -p "${M}" "${E}"
-printf -- '---\nname: wait-on-ci\ndescription: wait on CI with wait-pr, never a loop\nmetadata:\n  type: feedback\n---\n\nbody\n' > "${M}/wait-on-ci.md"
-printf -- '---\nname: board-dir\ndescription: the board lives in board/\n---\n' > "${M}/board-dir.md"
+printf -- '---\nname: wait-on-ci\ndescription: wait on CI with wait-pr, never a loop\nmetadata:\n  type: feedback\n\n# tags\n  project: swarm-dev\n---\n\nbody\n' > "${M}/wait-on-ci.md"
+printf -- '---\nname: swarm-lead-decides\ndescription: make routine calls without asking\n---\n' > "${M}/swarm-lead-decides.md"
+printf -- '---\nname: board-dir\ndescription: the Swarm board lives in board/\n---\n' > "${M}/board-dir.md"
+printf -- '---\nname: co-kanban-board\ndescription: where the work backlog lives\nmetadata:\n  type: reference\n---\n\nits pipeline is the swarm-dev plugin\n' > "${M}/co-kanban-board.md"
 printf -- '- [Wait on CI](wait-on-ci.md) — index line\n' > "${M}/MEMORY.md"
 echo '{"secret":"session text"}' > "${M}/s1.jsonl"
 D="${CLAUDE_PROJECTS_DIR}/${P//[^A-Za-z0-9]/-}/memory"; mkdir -p "${D}"
-printf -- '---\nname: default-note\ndescription: read from the default folder\n---\n' > "${D}/default-note.md"
+printf -- '---\nname: default-note\ndescription: read from the default folder\nproject: swarm-dev # tagged by hand\n---\n' > "${D}/default-note.md"
 
 : > "${GH_CALLS}"
 rc=0; out="$(sw retro --memory "${M}")" || rc=$?
 check "a full retro over the fixture's findings, events and memory exits 0" "${rc}" 0
 check "with no --since retro names v0.2.0 and its day" "$(sed -n 1p <<< "${out}")" "retro since v0.2.0: from 2026-02-10, the day of its commit"
-check "--memory prints both notes' names and descriptions, and not MEMORY.md" "$(sed -n '/^## memories$/,/^$/p' <<< "${out}")" \
-  "## memories"$'\n'"board-dir.md: board-dir — the board lives in board/"$'\n'"wait-on-ci.md: wait-on-ci — wait on CI with wait-pr, never a loop"
+check "--memory prints the swarm-dev notes' names and descriptions, not MEMORY.md, and counts the note it skipped" \
+  "$(sed -n '/^## memories$/,/^$/p' <<< "${out}")" \
+  "## memories"$'\n'"board-dir.md: board-dir — the Swarm board lives in board/"$'\n'"swarm-lead-decides.md: swarm-lead-decides — make routine calls without asking"$'\n'"wait-on-ci.md: wait-on-ci — wait on CI with wait-pr, never a loop"$'\n'"1 other notes skipped (not tagged project: swarm-dev)"
 
 git -C "${P}" remote set-head origin -d
 rc=0; err="$(sw retro --memory "${M}" 2>&1)" || rc=$?
@@ -122,7 +129,7 @@ check "outside a git checkout it names plugin.json's version and says it is not 
   "written by swarm.sh at version ${version}, not a git checkout"
 check "reading that version imports no json.py from the project" "$([[ -e "${ROOT}/json-imported" ]] && echo imported || echo none)" none
 check "a section that raises prints its error and fails the run" "$(grep '^error:' <<< "${out}") rc=${rc}" "error: aa_boom: broken on purpose rc=1"
-check "the sections still run, in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## findings ## incidents ## memories ## reaped ## zz_lib "
+check "the sections still run, in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## findings ## incidents ## memories ## reaped ## recurring ## zz_lib "
 check "a section imports bin/lib's report.py" "$(sed -n '/^## zz_lib$/{n;p;}' <<< "${out}")" "${C}/bin/lib/report.py"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

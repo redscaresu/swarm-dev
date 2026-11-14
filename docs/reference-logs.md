@@ -963,8 +963,12 @@ A part with no lines prints `no lead-hand or user-caught lines since <day>` or `
 A missing `events.tsv` prints `no incidents: <path> does not exist`.
 `flow`'s `incidents` section counts these kinds and prints no line's text.
 
-**memories.** The lead's memory notes that are not yet placed in a story, a check or a rule.
-It prints one line for each `*.md` note in the memory folder except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
+**memories.** The lead's swarm-dev memory notes that are not yet placed in a story, a check or a rule.
+The memory folder can be a store that also holds notes for other projects, so only swarm-dev notes are listed.
+It prints one line for each swarm-dev note in the folder, `*.md` except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
+A note counts as a swarm-dev note when its front matter has `project: swarm-dev`, at the top level or under `metadata:`, or when its `name:` or `description:` contains `swarm` in any case.
+The filter reads only the front matter, so a note with `swarm` only in its body, or with no front matter, is skipped.
+After the list, one line counts the notes it skipped, `<n> other notes skipped (not tagged project: swarm-dev)`, so a swarm-dev note that lacks the tag still gets noticed.
 It reads only the `*.md` files in that one folder, never a subfolder or a session log.
 `--memory <dir>` names the folder.
 By default it is Claude Code's memory folder for the project: the projects folder (`CLAUDE_PROJECTS_DIR`, or `projects` under the Claude config folder), then the main checkout's path with each character outside `A-Za-z0-9` turned into `-`, then `memory`.
@@ -977,7 +981,13 @@ The last line says that a fallback reviewer killed on its timeout writes no `rea
 With no `reap` line since the day it prints `no reap lines since <day> in <events.tsv>`, and with no `events.tsv` it prints `no reap lines: <events.tsv> does not exist`.
 
 **recurring.** The finding kinds that keep coming back and still have no check, with related kinds counted together.
-`swarm.sh retro` does not print this list yet.
+It lists each kind fixed or escaped on 3 or more distinct PRs from the window's day to today, from `findings.tsv`.
+Kinds are folded first, as `FOLD` in `bin/lib/recurring.py` sets out: `docs-misstate-code`, `stale-docs` and `docs-stale` count as `docs`, and `test-coverage` and `missing-case` count as `test-gap`.
+A folded kind has a check once a `checks:` story for any name folded into it has merged, as `outcomes` finds one, and then it is left out.
+So a kind whose check story waits in an open PR still shows until that story merges.
+Each line reads `<kind>: <n> PRs, as <names>`, most PRs first, where the names are the kinds in `findings.tsv` that were folded into it.
+With none, it prints one line saying no kind fixed on 3 or more PRs since the window's day lacks a merged check.
+The `recurring` block of `outcomes` does not fold.
 
 ## Commands
 

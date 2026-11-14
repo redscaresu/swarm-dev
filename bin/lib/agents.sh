@@ -447,7 +447,11 @@ reserved_env() {
 # set up for a provider (Foundry's key, say) still runs from a session without it. With
 # CLAUDE_CODE_USE_FOUNDRY on (1 or true), the session's ANTHROPIC_FOUNDRY_* and ANTHROPIC_DEFAULT_*_MODEL
 # names are added unasked: Foundry's endpoint and key live only in the environment, so without them
-# every agent stops at its first request, and the session has already chosen to use them.
+# every agent stops at its first request, and the session has already chosen to use them. With
+# CLAUDE_CODE_USE_BEDROCK on (1 or true), the session's AWS_BEARER_TOKEN_BEDROCK (Bedrock's API key) and
+# ANTHROPIC_DEFAULT_*_MODEL names are added the same way: without them an agent hangs at its first
+# request. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN are not: profile and SSO
+# logins reach agents through HOME and AWS_PROFILE, and an exported secret stays opt-in through agent_env.
 agent_env_names() {
   local n exported out=""
   exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
@@ -458,6 +462,12 @@ agent_env_names() {
   if [[ "${CLAUDE_CODE_USE_FOUNDRY:-}" == 1 || "${CLAUDE_CODE_USE_FOUNDRY:-}" == true ]]; then
     for n in ${exported}; do
       [[ "${n}" =~ ^ANTHROPIC_FOUNDRY_[A-Z0-9_]+$ || "${n}" =~ ^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$ ]] || continue
+      [[ "${out} " == *" ${n} "* ]] || out+=" ${n}"
+    done
+  fi
+  if [[ "${CLAUDE_CODE_USE_BEDROCK:-}" == 1 || "${CLAUDE_CODE_USE_BEDROCK:-}" == true ]]; then
+    for n in ${exported}; do
+      [[ "${n}" == AWS_BEARER_TOKEN_BEDROCK || "${n}" =~ ^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$ ]] || continue
       [[ "${out} " == *" ${n} "* ]] || out+=" ${n}"
     done
   fi

@@ -298,10 +298,9 @@ and epic co-authors, planners, conductors, builders and review agents. A restart
 `swarm.sh upgrade` gives them the values of the session that runs it. When herdr restores a pane, the
 values come from that pane's new shell, since swarm.sh never writes a value to disk. So a key you
 export only in the session that started the agent is gone after a herdr restore; export it from your
-shell's startup files to keep it there. This is how a provider's key
-reaches agents. On Azure Foundry, for example, Claude Code needs `ANTHROPIC_FOUNDRY_RESOURCE` and
-`ANTHROPIC_FOUNDRY_API_KEY`, and the `ANTHROPIC_DEFAULT_*_MODEL` names if your deployments are named
-differently from the models. Without them every agent stops at its start. Each value comes from the
+shell's startup files to keep it there. This is how a provider key that does not pass on its own
+reaches agents: another provider's secret, say, or `ANTHROPIC_BEDROCK_BASE_URL`. Foundry's and
+Bedrock's keys and model pins pass without it; see the exception below. Each value comes from the
 session that starts the agent. A name that session does not have is skipped with a warning, so the
 same board still runs from a session without the provider. When the config loads, `swarm.sh` refuses
 a name that is not `[A-Z_][A-Z0-9_]*` or is reserved, by the same rules as `env:`, and names the line.
@@ -316,9 +315,14 @@ selection above passes from the session that runs swarm.sh, or can go under `env
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
 `gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY`
-reaches agents only when `agent_env` names it. Foundry is the exception: its endpoint and key exist
-only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`, every agent also gets
-the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables, with no `agent_env` line.
+reaches agents only when `agent_env` names it. Foundry and Bedrock are the exceptions. Foundry's
+endpoint and key exist only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`,
+every agent also gets the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables,
+with no `agent_env` line. When `CLAUDE_CODE_USE_BEDROCK` is `1` or `true`, every agent gets the
+session's `AWS_BEARER_TOKEN_BEDROCK` (Bedrock's API key) and `ANTHROPIC_DEFAULT_*_MODEL` variables the
+same way. Without them an agent on Bedrock hangs at its first request. `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are not passed: profile and SSO logins reach agents
+through `HOME` and `AWS_PROFILE`, and a long-lived exported secret stays opt-in through `agent_env`.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
