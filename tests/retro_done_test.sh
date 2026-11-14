@@ -2,8 +2,9 @@
 # retro_done_test.sh — retro_done <ref> <version> <tag> (bin/lib/board.sh) on a git fixture. A done
 # retro file covering the version from at or before the tag passes and prints its covers line. Each
 # other shape fails with its reason on one line: covers ending at another version or starting after the
-# tag, no done:, a done: that is not a date, a covers: only in the body or with a trailing word, no
-# file. It reads the file at the ref, never the checkout, and a board outside the repo always fails.
+# tag, no done:, a done: that is not a date, a covers: only in the body or with a trailing word, a
+# front-matter block that never closes or does not start on line 1, no file. It reads the file at
+# the ref, never the checkout, and a board outside the repo always fails.
 # The repo's own retro notes (v0.28.0.md, v0.30.0.md) fail as notes.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -15,7 +16,10 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
-export HOME="${ROOT}/home"   # no global git config (commit signing) reaches the fixture's commits
+# No user, XDG or system git config, and none passed on the command line by a parent git: so no
+# commit signing reaches the fixture's commits, whatever the machine or a builder's shell sets.
+export HOME="${ROOT}/home" XDG_CONFIG_HOME="${ROOT}/home/.config" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 mkdir -p "${HOME}"
 fails=0
 
@@ -79,6 +83,18 @@ check "a covers: only in the body fails" "1 ${F} at ${ref} has no covers: in its
 ref="$(commit_retro --- 'covers: v1.2.0..v1.3.0 later' 'done: 2026-11-20' ---)"
 check "a covers: with a trailing word fails" \
   "1 ${F} at ${ref}: covers: 'v1.2.0..v1.3.0 later' is not v<a.b.c>..v<x.y.z>" "$(rd "${ref}" 1.3.0 1.2.0)"
+
+ref="$(commit_retro --- 'covers: v1.2.0..v1.3.0' 'done: 2026-11-20')"
+check "a front-matter block that never closes is none" \
+  "1 ${F} at ${ref} has neither done: nor covers: in its front matter, so it is a note, not a retro" "$(rd "${ref}" 1.3.0 1.2.0)"
+
+ref="$(commit_retro '# Retro: v1.3.0' --- 'covers: v1.2.0..v1.3.0' 'done: 2026-11-20' ---)"
+check "a --- block below line 1 is not front matter" \
+  "1 ${F} at ${ref} has neither done: nor covers: in its front matter, so it is a note, not a retro" "$(rd "${ref}" 1.3.0 1.2.0)"
+
+ref="$(commit_retro '# Retro: v1.3.0' 'covers: v1.2.0..v1.3.0' 'done: 2026-11-20' --- '' 'notes')"
+check "fields above a --- rule, with no --- on line 1, are not front matter" \
+  "1 ${F} at ${ref} has neither done: nor covers: in its front matter, so it is a note, not a retro" "$(rd "${ref}" 1.3.0 1.2.0)"
 
 check "no file at the ref fails" "1 no board/retros/v1.4.0.md at ${GOOD}" "$(rd "${GOOD}" 1.4.0 1.3.0)"
 
