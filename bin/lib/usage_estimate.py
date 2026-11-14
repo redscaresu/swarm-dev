@@ -7,9 +7,12 @@
 #     or null) and weight (percent of the week per estimated USD, for fable and for every other model).
 #   usage_estimate.py <projects> --warn <percent> --state <dir> [--every <seconds>] [--reading <file>]
 #     prints one `usage:` line, naming the week's start, when either share has reached <percent>, and nothing
-#     once <dir>/usage-warned holds that week, whose logs it then never reads. wait --lead writes the week
-#     there once it has printed the line (lifecycle.sh's usage_warned), so a line it never printed is not spent. <dir>/usage-at holds the
-#     time of the last read, and with --every no read comes sooner than that many seconds after it.
+#     while <dir>/usage-warned holds a time inside the current usage week, whose logs it then never reads.
+#     It writes the time the estimate was made to <dir>/usage-pending, and wait --lead moves that file to
+#     usage-warned once it has printed the line (lifecycle.sh's usage_warned): a line it never printed is not
+#     spent, a read that runs past the reset holds only its own week, and a later reading moves no week's line. <dir>/usage-at
+#     holds the time of the last read, and with --every no read comes sooner than that many seconds after it.
+#     A malformed reading's warning comes only on a read, so at most once per --every.
 #
 # <projects> is Claude Code's projects directory. Of each line of each *.jsonl under it, only
 # message.usage, message.model, message.id (so a turn logged on several lines counts once) and the
@@ -41,24 +44,23 @@ def iso(t):
     return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).isoformat(timespec="minutes")
 
 def read_reading(path):
-    # (read at, resets at, week %, fable %) from the file's first line that is not blank or a comment,
-    # or None, with a warning on stderr when that line is not one.
+    # ((read at, resets at, week %, fable %) or None, the warning for a malformed one or None) from the
+    # file's first line that is not blank or a comment. The caller prints the warning when it reads the logs.
     try:
         lines = [(n, l.split("#")[0].split()) for n, l in enumerate(open(path, encoding="utf-8"), 1)]
     except OSError:
-        return None
+        return None, None
     for n, f in lines:
         if not f:
             continue
         try:
             r = (epoch(f[0]), epoch(f[1]), float(f[2]), float(f[3]))
             if len(f) == 4 and all(0 <= p <= 100 for p in r[2:]):
-                return r
+                return r, None
         except (ValueError, IndexError):
             pass
-        print(f"swarm: warning: {path}:{n}: expected '<read at> <resets at> <week %> <fable %>', so the usage estimate is uncalibrated", file=sys.stderr)
-        return None
-    return None
+        return None, f"swarm: warning: {path}:{n}: expected '<read at> <resets at> <week %> <fable %>', so the usage estimate is uncalibrated"
+    return None, None
 
 def week_start(now, resets):
     # The start of the usage week holding now: the weeks run on from a reset, or from Monday 00:00 UTC.
@@ -122,13 +124,15 @@ def estimate(projects, reading, now):
     return {"week": round(week, 1), "fable": round(fable_share, 1),
             "week_start": iso(start), "calibrated": at, "weight": {"fable": round(w_fable, 4), "other": round(w_other, 4)}}
 
-def warn(projects, reading, now, percent, state, every):
-    key = datetime.datetime.fromtimestamp(week_start(now, reading[1] if reading else None), datetime.timezone.utc).date().isoformat()
+def warn(projects, reading, problem, now, percent, state, every):
+    start = week_start(now, reading[1] if reading else None)
+    key = datetime.datetime.fromtimestamp(start, datetime.timezone.utc).date().isoformat()
     warned, stamp = os.path.join(state, "usage-warned"), os.path.join(state, "usage-at")
     try:
-        if open(warned).read().strip() == key:
+        # The time the week's line printed, so a reading that moves the week's edges holds it too.
+        if start <= float(open(warned).read()) <= now:
             return
-    except OSError:
+    except (OSError, ValueError):
         pass
     try:
         if now - float(open(stamp).read()) < every:
@@ -138,6 +142,8 @@ def warn(projects, reading, now, percent, state, every):
     os.makedirs(state, exist_ok=True)
     with open(stamp, "w") as f:
         f.write(f"{now:.0f}\n")
+    if problem:
+        print(problem, file=sys.stderr)
     e = estimate(projects, reading, now)
     if max(e["week"], e["fable"]) < percent:
         return
@@ -145,14 +151,18 @@ def warn(projects, reading, now, percent, state, every):
     # The week's start in the line, so two weeks' lines never read as one in wait --lead's seen queue.
     print(f"usage: estimate {e['week']:.0f}% of the week from {key} and {e['fable']:.0f}% of Fable's own limit, at or past usage_warn_percent {percent:g} "
           f"({how}; /usage is the truth), exit: check /usage, as nothing stops on this")
+    with open(os.path.join(state, "usage-pending"), "w") as f:
+        f.write(f"{now!r}\n")   # unrounded: a half-second before the reset rounds into the next week
 
 def main(argv):
     projects, opts = argv[0], dict(zip(argv[1::2], argv[2::2]))
-    reading = read_reading(opts["--reading"]) if "--reading" in opts else None
+    reading, problem = read_reading(opts["--reading"]) if "--reading" in opts else (None, None)
     now = epoch(opts["--now"]) if "--now" in opts else time.time()
     if "--warn" in opts:
-        warn(projects, reading, now, float(opts["--warn"]), opts["--state"], float(opts.get("--every", 0)))
+        warn(projects, reading, problem, now, float(opts["--warn"]), opts["--state"], float(opts.get("--every", 0)))
     else:
+        if problem:
+            print(problem, file=sys.stderr)
         print(json.dumps(estimate(projects, reading, now)))
 
 if __name__ == "__main__":

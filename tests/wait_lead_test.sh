@@ -1389,9 +1389,12 @@ firstlist
 # it in a usage week, from fixture session logs under a stand-in CLAUDE_PROJECTS_DIR. A reading taken a
 # minute ago, with the reset three days off, puts the estimate at the reading: 30% of the week, 20% of Fable's.
 UC="${ROOT}/usage-projects"
-# uturn <seconds ago> <message id> <model> — a turn of 1M input tokens, that long ago.
+# uturn <seconds ago> <message id> <model> [monday] — a turn of 1M input tokens, that long ago; with monday, no
+# earlier than this Monday 00:00 UTC, where an uncalibrated week starts, so a run just after it keeps the turn.
 uturn() {
-  python3 -c 'import datetime, sys; t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=int(sys.argv[1]))
+  python3 -c 'import datetime, sys; n = datetime.datetime.now(datetime.timezone.utc); t = n - datetime.timedelta(seconds=int(sys.argv[1]))
+m = (n - datetime.timedelta(days=n.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+t = max(t, m) if sys.argv[4:] else t
 print("{\"timestamp\":\"%s\",\"message\":{\"id\":\"%s\",\"model\":\"%s\",\"usage\":{\"input_tokens\":1000000}}}" % (t.strftime("%Y-%m-%dT%H:%M:%S.000Z"), sys.argv[2], sys.argv[3]))' "$@"
 }
 usage_fixture() {
@@ -1418,6 +1421,28 @@ mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
 ulead
 check "usage: with usage_warn_percent unset, no line prints" test "$(out)|$(rc)" == "|1"
 check "usage: and the session logs are never read" test ! -e "${P}/.swarm/lead/usage-at"
+# A line printed uncalibrated holds for the week once a reading is added, though the reading moves the week's
+# start from Monday 00:00 UTC to its reset less a week: 1M tokens on Opus and on Fable are 0.7% of the guessed
+# week and 1.25% of Fable's guessed limit, past 1; with the reading they are 30% and 20%.
+fresh "usage_warn_percent = 1"; rm -rf "${UC}" "${P}/.swarm/usage-reading"; mkdir -p "${UC}/-proj"
+{ uturn 120 o1 claude-opus-5-5 monday; uturn 110 f1 claude-fable-5-2 monday; } > "${UC}/-proj/s.jsonl"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+ulead
+mon="$(python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); print((n - datetime.timedelta(days=n.weekday())).date())')"
+check "usage: uncalibrated, one usage: line prints" test "$(out)|$(rc)" == \
+  "usage: estimate 1% of the week from ${mon} and 1% of Fable's own limit, at or past usage_warn_percent 1 (uncalibrated, so it counts Fable low; /usage is the truth), exit: check /usage, as nothing stops on this|0"
+python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); f = "%Y-%m-%dT%H:%M:%SZ"
+print((n - datetime.timedelta(seconds=60)).strftime(f), (n + datetime.timedelta(days=3)).strftime(f), 30, 20)' > "${P}/.swarm/usage-reading"
+again; ulead
+check "usage: a reading added later that week, moving its start, prints no second line" test "$(out)|$(rc)" == "|1"
+# Once the week has turned (the line printed eight days ago), the next line prints.
+fresh "usage_warn_percent = 25"; usage_fixture
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+echo $(( $(date +%s) - 8 * 86400 )) > "${P}/.swarm/lead/usage-warned"
+ulead
+check "usage: a line printed in an earlier week does not hold this week's" test "$(rc)|$(head -c 25 "${ROOT}/out")" == "0|usage: estimate 30% of th"
+# usage-warned holds the estimate's time unrounded (a float), so the check is python's.
+check "usage: and the week's print is recorded as now" test "$(python3 -c 'import sys, time; print(int(0 <= time.time() - float(sys.argv[1]) < 120))' "$(cat "${P}/.swarm/lead/usage-warned")")" == 1
 rm -rf "${UC}" "${P}/.swarm/usage-reading"
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.

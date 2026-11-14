@@ -4629,7 +4629,7 @@ line_holds() {
 
 # usage_line — with usage_warn_percent set, wait --lead's `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of
 # Fable's own limit, ...` line the first time either estimate reaches it in a usage week, and nothing on any
-# other poll of that week (usage_estimate.py --warn, over CLAUDE_PROJECTS and USAGE_READING, reading the week
+# other poll of that week (usage_estimate.py --warn, over CLAUDE_PROJECTS and USAGE_READING, reading the time
 # lead_wake records in LEAD_DIR once it prints the line, usage_warned). It reads the logs at most once every USAGE_EVERY seconds. A warning, never a gate: nothing
 # stops or slows on it. A read that fails, or takes over USAGE_WAIT seconds, warns on stderr and prints no line.
 usage_line() {
@@ -4639,11 +4639,11 @@ usage_line() {
   (( rc == 0 )) || echo "warning: wait --lead could not read the usage estimate (exit ${rc}), so this poll has no usage: line" >&2
 }
 
-# usage_warned <line> — record the week a printed usage: line names (its `of the week from <YYYY-MM-DD>`) in
-# LEAD_DIR/usage-warned, so usage_line prints nothing more that week.
+# usage_warned — once a usage: line printed, make the time its estimate was made (usage_estimate.py's
+# LEAD_DIR/usage-pending, or now without one) LEAD_DIR/usage-warned: usage_line prints nothing more while that
+# time is inside the current usage week, whatever the reading says.
 usage_warned() {
-  [[ "$1" =~ of\ the\ week\ from\ ([0-9]{4}-[0-9]{2}-[0-9]{2})\  ]] || return 0
-  printf '%s\n' "${BASH_REMATCH[1]}" > "${LEAD_DIR}/usage-warned"
+  mv -f "${LEAD_DIR}/usage-pending" "${LEAD_DIR}/usage-warned" 2>/dev/null || date +%s > "${LEAD_DIR}/usage-warned"
 }
 
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
@@ -4729,7 +4729,7 @@ lead_wake() {
   LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
     echo "${line}"; lead_line_slug "${line}"
-    [[ "${line}" != "usage: "* ]] || usage_warned "${line}"
+    [[ "${line}" != "usage: "* ]] || usage_warned
     record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }

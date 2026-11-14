@@ -302,8 +302,9 @@ check `gh auth status`, that gh can see the repo, and `base_branches`.
 reads the session logs at most once every 10 minutes (`SWARM_USAGE_EVERY`, 600 seconds). The first time
 the estimate of the week's share, or of Fable's own limit, reaches the key, the poll prints `usage: estimate
 <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, at or past usage_warn_percent <P> (...; /usage is the truth),
-exit: check /usage, as nothing stops on this`. It writes the week to `.swarm/lead/usage-warned`, and no poll
-reads the logs again that week. It is an estimate and a warning, never a gate. A read that fails or takes
+exit: check /usage, as nothing stops on this`. Once the line has printed, it writes the time of that estimate to
+`.swarm/lead/usage-warned`, and no poll reads the logs again while that time is in the current usage week,
+even when a reading added or changed later moves the week's edges. It is an estimate and a warning, never a gate. A read that fails or takes
 over 60 seconds prints a warning on stderr and no line. How the estimate is made, and how to calibrate
 it, is in reference-models.md § Settings.
 

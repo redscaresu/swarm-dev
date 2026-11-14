@@ -82,5 +82,29 @@ check "a malformed reading warns, naming its line" \
   "swarm: warning: ${R}.bad:1: expected '<read at> <resets at> <week %> <fable %>', so the usage estimate is uncalibrated" "${err}"
 check "and the estimate is uncalibrated" "3.9" "$(est --reading "${R}.bad" 2>/dev/null | field 'd["week"]')"
 
+# --warn: a malformed reading warns only on a read of the logs, so once per --every, and not at all once the
+# week's line has printed (usage-warned holds a time in the week).
+S="${ROOT}/state"
+warnerr() { { est --warn 99 --state "${S}" --every 600 --reading "${R}.bad" > /dev/null; } 2>&1; }
+check "--warn: a read with a malformed reading warns" "swarm: warning: ${R}.bad:1: expected '<read at> <resets at> <week %> <fable %>', so the usage estimate is uncalibrated" "$(warnerr)"
+check "--warn: a second poll inside --every does not" "" "$(warnerr)"
+rm -f "${S}/usage-at"; python3 -c 'import datetime; print(datetime.datetime(2026, 11, 14, 11, tzinfo=datetime.timezone.utc).timestamp())' > "${S}/usage-warned"
+check "--warn: nor one after the week's line printed" "" "$(warnerr)"
+check "--warn: which reads no log then" "no" "$([[ -e "${S}/usage-at" ]] && echo yes || echo no)"
+# A line leaves the time of its estimate (--now) for wait --lead to record once the line has printed, so a read
+# that runs past the reset holds only the week it estimated.
+rm -rf "${S}"
+check "--warn: a share past the percent prints the line" "usage: estimate 68% of the week from 2026-11-10 and 60% of Fable's own limit" \
+  "$(est --warn 60 --state "${S}" --reading "${R}" | cut -d, -f1)"
+check "--warn: and leaves its estimate's time pending" "$(python3 -c 'import datetime; print(datetime.datetime(2026, 11, 14, 12, tzinfo=datetime.timezone.utc).timestamp())')" "$(cat "${S}/usage-pending" 2>/dev/null)"
+# At the reset (2026-11-17 09:00 UTC): a line estimated a quarter second before it holds only that week, so
+# once wait --lead records it, the first read after the reset prints the new week's line.
+rm -rf "${S}"
+turn 2026-11-17T09:00:00.050Z f4 claude-fable-5-2 1000000 > "${C}/-proj/s2.jsonl"   # the new week's first turn
+est --warn 1 --state "${S}" --reading "${R}" --now 2026-11-17T08:59:59.750Z > /dev/null
+mv "${S}/usage-pending" "${S}/usage-warned"
+check "--warn: a line a quarter second before the reset holds that week" "" "$(est --warn 1 --state "${S}" --reading "${R}" --now 2026-11-17T08:59:59.900Z)"
+check "--warn: and not the next" "usage: estimate" "$(est --warn 1 --state "${S}" --reading "${R}" --now 2026-11-17T09:00:00.100Z | cut -c1-15)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
