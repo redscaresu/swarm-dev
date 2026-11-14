@@ -7,6 +7,8 @@
 # set the fallback gets a whole codex_minutes of its own (SWARM_CODEX_SECONDS stands in for it here); with
 # it empty, "codex skipped: timed out" stays. One reconnect line, or three followed by a review, stops
 # nothing, and neither does a rate limit whose reconnect lines come seconds apart, as on Azure Foundry.
+# The reconnect line codex prints with no connection at all ("Reconnecting... waiting for network") counts
+# as the "Reconnecting... N/5" one does. The builder's brief and the review brief name the new lines.
 # codex, herdr and claude are stubs on PATH, as in codex_rate_limit_test.sh.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -28,6 +30,7 @@ check() { # <name> <want> <got>
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, got: $2"; else echo yes; fi; }
 logged() { if grep -q -- "$1" "${ROOT}/herdr.log" 2>/dev/null; then echo yes; else echo no; fi; }
+names() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo no; fi; }   # has, without the text: a brief is long
 
 # codex <line>... — a codex stub: each argument is a shell line it runs, its output on stderr as codex's is.
 # It writes the second it started to codex-start first. A hang is `sleep 120`, which stop_codex ends.
@@ -130,6 +133,15 @@ review "${HIGH}"
 check "with fallback_reviewer empty, three reconnect lines stop codex within 30 s and print codex skipped: unreachable" \
   "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable|no" \
   "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)|$(logged '^agent start')"
+# The line codex 0.164.0 printed, at 15, 22, 35 and 57 s, when run against a local port that refused it on
+# 2026-11-14: no N/5 in it. Three of them are an unreachable codex too.
+WAITING="ERROR: Reconnecting... waiting for network"
+codex "$(say "${WAITING}")" "$(say "${WAITING}")" "$(say "${WAITING}")" "sleep 120"
+n="$(count incident)"
+review "${HIGH}"
+check "three waiting-for-network reconnect lines then a hang: stopped within 30 s, a codex-unreachable incident, codex skipped: unreachable" \
+  "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable" \
+  "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
 
 # --- One "stream disconnected before completion" line, then a hang: the same.
 codex "$(say "ERROR: stream disconnected before completion: error sending request for url (https://x.openai.azure.com/openai/responses)")" "sleep 120"
@@ -183,6 +195,19 @@ review "${HIGH}"
 check "reconnect lines 4 s before a rate-limit line: a codex-limit: rate limit incident and its retry, no codex-unreachable" \
   "1|$((n + 1))|codex-s1|codex-limit: rate limit|1" \
   "${rc}|$(count incident)|$(events incident | tail -1)|$(count codex-retry)"
+
+# --- The briefs: codex_rule (in a builder's brief) and the review brief name the line an unreachable codex
+# ends on, and the two new lines a fallback's review comes under.
+brief="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${BIN}:${PATH}" bash "${SWARM}" _brief s1 2>&1 | tr -s '[:space:]' ' ')"
+check "the builder brief's codex rule names codex skipped: unreachable, and the unreachable and timeout fallback lines" "yes|yes" \
+  "$(names '"codex skipped: unreachable" when codex could not reach its provider' "${brief}")|$(
+    names '(or "codex rate limit", "codex unreachable" or "codex timeout")' "${brief}")"
+rbrief="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${BIN}:${PATH}" bash "${SWARM}" _review-brief s1 https://github.com/o/r/pull/1 main \
+  "${p}/.swarm/reviews/s1.md" 0123456789abcdef0123456789abcdef01234567 2>&1 | tr -s '[:space:]' ' ')"
+# shellcheck disable=SC2016 # the backquotes are the brief's own
+check "the review brief names codex skipped: unreachable, and the unreachable and timeout fallback lines" "yes|yes" \
+  "$(names '`codex skipped: unreachable` when codex could not reach its provider' "${rbrief}")|$(
+    names '(or `codex rate limit`, `codex unreachable` or `codex timeout`)' "${rbrief}")"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

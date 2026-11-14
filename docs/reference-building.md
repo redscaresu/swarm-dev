@@ -1101,7 +1101,8 @@ minutes by default and 10 at most, before the limit could apply. Whoever runs it
 exit and acts on what it prints last, since a usage or rate limit printed early may be followed by a
 fallback's review. When it ends on codex's usage or rate limit or on `codex skipped: ...`, no one runs it again: a
 builder carries on, a story's review agent or the lead reviews the diff itself, and the PR says `codex
-skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
+skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. When codex could not
+reach its provider, it says `codex skipped: unreachable`. A review agent says `codex skipped: <why>` in
 its reply and on its review file's second line, and in a round with no `/code-review` it reads the
 diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
@@ -1147,8 +1148,10 @@ under two minutes of `codex_minutes` left, no fallback starts: it prints `codex 
 
 A timeout or an unreachable codex runs the fallback reviewer too. codex is unreachable when its output
 ends in three or more `Reconnecting...` lines in a row, or in a `stream disconnected before completion`
-line, each at the start of its line, with nothing after it but blank lines. One reconnect line followed by
-a review does not count. While codex runs, codex-review reads its output every second. Once it has looked
+line, with nothing after it but blank lines. Each line starts with the message, with `ERROR:`, `■` or
+nothing before it. A reconnect line reads `ERROR: Reconnecting... 2/5` while codex retries a request, and
+`ERROR: Reconnecting... waiting for network` when it cannot connect to its provider at all. One reconnect
+line followed by a review does not count. While codex runs, codex-review reads its output every second. Once it has looked
 unreachable for 15 seconds in a row, codex-review stops codex. It waits those 15 seconds because on Azure
 Foundry codex prints five reconnect lines before its rate-limit line, and stopping it at the third would
 skip the rate limit's retry. A codex that exits with its output ending that way counts too. Either way,

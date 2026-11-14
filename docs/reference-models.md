@@ -118,7 +118,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   own (role `review`, started by `swarm.sh review-agent`). One per PR, started when it opens, so
   reviews run side by side and the conductor's own context holds none of them.
 - **The fallback reviewer runs on the model `fallback_reviewer` names, at `high`** (role
-  `review-fallback`). codex-review starts it only when codex hits its usage or rate limit and the key is set.
+  `review-fallback`). codex-review starts it only when codex hits its usage or rate limit, cannot reach its provider or times out, and the key is set.
 
 ## Settings
 

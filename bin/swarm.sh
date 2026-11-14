@@ -1031,7 +1031,8 @@ CODEX_LIMIT_RE="^(ERROR: |■ )?You(’ve|'ve| have) hit your usage limit"
 # "ERROR: rate limit exceeded: Your requests to <model> for <model> in <region> have exceeded token rate
 # limit."), and its retries spent on a 429 ("exceeded retry limit, last status: 429 Too Many Requests").
 CODEX_RATE_LIMIT_RE="^(ERROR: |■ )?(rate limit exceeded: |exceeded retry limit, last status: 429 Too Many Requests)"
-# CODEX_RECONNECT_RE: codex's line as it retries a connection ("ERROR: Reconnecting... 2/5"), and
+# CODEX_RECONNECT_RE: codex's line as it retries a request ("ERROR: Reconnecting... 2/5") or waits for a
+# provider it cannot connect to at all ("ERROR: Reconnecting... waiting for network", codex 0.164.0), and
 # CODEX_STREAM_RE its line when a response stream broke off ("stream disconnected before completion: ...",
 # codex-rs/protocol/src/error.rs). Both from the start of the line, so a diff that quotes them is no match.
 CODEX_RECONNECT_RE="^(ERROR: |■ )?Reconnecting[.][.][.]"
