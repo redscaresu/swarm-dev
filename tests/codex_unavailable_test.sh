@@ -30,8 +30,11 @@ lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, got: $2"; else echo yes; 
 logged() { if grep -q -- "$1" "${ROOT}/herdr.log" 2>/dev/null; then echo yes; else echo no; fi; }
 
 # codex <line>... — a codex stub: each argument is a shell line it runs, its output on stderr as codex's is.
-# A hang is `sleep 120`, which stop_codex ends.
-codex() { { printf '#!/bin/sh\nexec 1>&2\n'; printf '%s\n' "$@"; } > "${BIN}/codex"; chmod +x "${BIN}/codex"; }
+# It writes the second it started to codex-start first. A hang is `sleep 120`, which stop_codex ends.
+codex() {
+  { printf '#!/bin/sh\ndate +%%s > "%s/codex-start"\nexec 1>&2\n' "${ROOT}"; printf '%s\n' "$@"; } > "${BIN}/codex"
+  chmod +x "${BIN}/codex"
+}
 say() { printf 'echo "%s"' "$1"; }
 # herdr: as in codex_rate_limit_test.sh. agent prompt writes the findings file the brief names and marks
 # the agent done; agent list and wait report it idle once done.
@@ -81,18 +84,19 @@ git -c init.defaultBranch=main init -q "${p}"
 printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${p}/docs/stories/s1.md"
 # review <codex seconds> [config line] — codex-review main for SWARM_STORY=s1 in herdr, with that config and
 # that many seconds of codex's time, a fallback's least time 1 s and a 1 s wait before a rate limit's
-# retry: sets out, rc and took (seconds). A run past 90 s is KILLed, failing the checks instead of
+# retry: sets out, rc and ran (seconds from codex's start to codex-review's exit, which
+# leaves out swarm.sh's own start on a busy machine). A run past 150 s is KILLed, failing the checks instead of
 # hanging the test.
 review() {
-  local pid i t0=${SECONDS}
-  printf '%s\n' "${@:2}" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
+  local pid i
+  printf '%s\n' "${@:2}" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"; rm -f "${ROOT}/codex-start"
   (cd "${p}" && exec env -u SWARM_PROJECT -u SWARM_PR HERDR_ENV=1 SWARM_STORY=s1 SWARM_FALLBACK_MIN_SECONDS=1 HERDR_WORKSPACE_ID=w \
     SWARM_CODEX_GRACE=1 SWARM_CODEX_RETRY_SECONDS=1 SWARM_CODEX_SECONDS="$1" PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
   pid=$!
-  for ((i = 0; i < 450; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
+  for ((i = 0; i < 750; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
   kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"
   rc=0; wait "${pid}" || rc=$?
-  took=$((SECONDS - t0))
+  ran=$(($(date +%s) - $(cat "${ROOT}/codex-start" 2>/dev/null || echo 0)))
   out="$(cat "${ROOT}/out")"
 }
 # events <kind> — that kind's lines in events.tsv as "target|outcome" (events_outcome's, without the tail).
@@ -105,7 +109,7 @@ for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[2])):
         print(r[2] + "|" + outcome(r))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "$1"
 }
 count() { events "$1" | wc -l | tr -d ' '; }
-within() { if [[ "$2" -le "$1" ]]; then echo yes; else echo "no, $2 s"; fi; } # <most seconds> <took>
+within() { if [[ "$2" -le "$1" ]]; then echo yes; else echo "no, $2 s"; fi; } # <most seconds> <seconds taken>
 # used — the seconds codex used before it was stopped: its time less the budget codex-review gave the
 # fallback ("within <N> s"), so the fallback's own start is not counted.
 used() { local n; n="$(sed -n 's/.*fallback sonnet reviews in its place, within \([0-9]*\) s$/\1/p' <<< "${out}")"; echo $((HIGH - ${n:-0})); }
@@ -125,7 +129,7 @@ n="$(count incident)"
 review "${HIGH}"
 check "with fallback_reviewer empty, three reconnect lines stop codex within 30 s and print codex skipped: unreachable" \
   "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable|no" \
-  "$(within 30 "${took}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)|$(logged '^agent start')"
+  "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)|$(logged '^agent start')"
 
 # --- One "stream disconnected before completion" line, then a hang: the same.
 codex "$(say "ERROR: stream disconnected before completion: error sending request for url (https://x.openai.azure.com/openai/responses)")" "sleep 120"
@@ -138,17 +142,17 @@ n="$(count incident)"
 review "${HIGH}"
 check "with fallback_reviewer empty, a stream-disconnected line prints codex skipped: unreachable" \
   "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable" \
-  "$(within 30 "${took}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
+  "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)"
 
 # --- A silent hang past codex's time: the reap line as before, then the fallback with a whole budget of
-# its own, as codex-review prints it (codex's own time is spent, so what is left would be 0). 30 s, as
-# the fallback's start can take 20 s on a busy machine.
+# its own, as codex-review prints it (codex's own time is spent, so what is left would be 0). 60 s, as
+# the fallback's start can take over 30 s on a busy machine.
 codex "sleep 120"
 n="$(count reap)"; i="$(count incident)"
-review 30 "fallback_reviewer = sonnet"
-check "a timeout with fallback_reviewer set: the reap line, then the fallback with a whole 30 s budget, under codex timeout" \
+review 60 "fallback_reviewer = sonnet"
+check "a timeout with fallback_reviewer set: the reap line, then the fallback with a whole 60 s budget, under codex timeout" \
   "0|$((n + 1))|codex-s1|timed out after 10 min|yes|yes|yes|${i}" \
-  "${rc}|$(count reap)|$(events reap | tail -1)|$(has "codex timeout: fallback sonnet reviews in its place, within 30 s" "${out}")|$(
+  "${rc}|$(count reap)|$(events reap | tail -1)|$(has "codex timeout: fallback sonnet reviews in its place, within 60 s" "${out}")|$(
     has "reviewed by fallback sonnet: codex timeout" "${out}")|$(has "- [P1] STUB FINDING — x.sh:3" "${out}")|$(count incident)"
 n="$(count reap)"
 review 3

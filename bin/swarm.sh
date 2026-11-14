@@ -1062,8 +1062,8 @@ codex_limit() {
 codex_unreachable() {
   [[ -f "$1" ]] || return 1
   tail -n 50 "$1" | awk -v r="${CODEX_RECONNECT_RE}" -v s="${CODEX_STREAM_RE}" -v k="${CODEX_RECONNECTS}" '
-    NF { n = ($0 ~ r) ? n + 1 : 0; last = $0 }
-    END { exit !(n >= k || last ~ s) }'
+    NF { n = ($0 ~ r) ? n + 1 : 0; last = $0 }   # loose-match: ok r is CODEX_RECONNECT_RE, a regex
+    END { exit !(n >= k || last ~ s) }'   # loose-match: ok s is CODEX_STREAM_RE, a regex
 }
 
 # codex_why — what stopped codex (CODEX_LIMIT_KIND) as the fallback's line names it: usage limit, rate
