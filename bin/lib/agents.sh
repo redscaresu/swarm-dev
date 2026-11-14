@@ -31,9 +31,10 @@
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none. With
 #     stall_minutes, only a task whose launch entry is logged less than TEST_RUN_STALLS times that
-#     before <now> (epoch; default the clock) counts: a server left running in the background is no
-#     work. A launch entry with no UTC timestamp is too old to count. A test run has no such limit
-#     (test_running).
+#     before <now> (epoch; default the clock) counts: a server left running in the background, or a
+#     shell hung on a read that never ends, is no work. A launch entry with no UTC timestamp is too
+#     old to count. The shell bg_running passes stall_minutes always, so every caller has the bound.
+#     A test suite still running in the pane has no such limit (test_running).
 #   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
 #     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
 #     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
@@ -1374,13 +1375,16 @@ resume_agent() {
 
 # bg_running <name> [<stall_minutes> [<now>]] — succeed when <name>'s Claude session has a background
 # task (a shell, an async subagent, a monitor) it started and has not yet been told the end of
-# (panes.py's bg_running, over its transcript): it is waiting on it. With <stall_minutes>, only one
-# started less than TEST_RUN_STALLS times that before <now> (epoch; default the clock) counts.
+# (panes.py's bg_running, over its transcript): it is waiting on it. Only one started less than
+# TEST_RUN_STALLS times <stall_minutes> (default the config's stall_minutes) before <now> (epoch;
+# default the clock) counts, so a task hung for good stops hiding a stall: a review agent's background
+# shell sat on a read for 17.5 hours, and nothing reported it (#891).
 bg_running() {
+  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
-sys.exit(0 if bg_running(*sys.argv[1:6]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "${2:-}" "${3:-}"
+sys.exit(0 if bg_running(*sys.argv[1:6]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "${2:-${CFG_stall_minutes}}" "${3:-}"
 }
 
 # sign_blocked <worktree> — print blocked, clear or unknown for whether the signer git is set to use in
@@ -1428,9 +1432,9 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running, at
-# any age), setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says
-# nothing.
+# old, the agent runs no background task (bg_running, one launched less than TEST_RUN_STALLS times
+# stall_minutes ago) and its pane runs no test suite (test_running, at any age), setting the caller's
+# state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
   local min
   [[ -n "${pane_at}" ]] || return 1

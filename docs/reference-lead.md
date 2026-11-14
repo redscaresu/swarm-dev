@@ -211,7 +211,8 @@ whether a builder is at work or not. For each one it prints:
   or a conflict with the base, counted from when a poll first saw it on that head. A push resets both. A
   head whose review passed (`.swarm/reviews/<slug>.md` is a pass on it) has no pending findings, since the PR
   then waits on its merge. A conflict on such a head is still pending. The builder must also be live in
-  the poll's herdr list and idle, with no background task in its session and no test suite running in its
+  the poll's herdr list and idle, with no background task in its session launched less than 3 times
+  `stall_minutes` ago and no test suite running in its
   pane (`make test`, `make check` or `scripts/test.sh`). `.swarm/lead/pr-heads` keeps each open PR's head
   and when a poll first saw it. Findings told before then do not count, so a head seen first after a long gap
   in `wait --lead` waits for its next findings. The line names N, never the minutes that passed, so it

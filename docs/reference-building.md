@@ -504,7 +504,10 @@ treats such an agent as idle and delivers, and `next` names a conductor's stop. 
 prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
 herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
 transcript shows no background task still running (a shell, an async subagent or a monitor it
-started, with no `<task-notification>` carrying a `<status>` for it since). A test suite running in
+started, with no `<task-notification>` carrying a `<status>` for it since) that it launched less than
+3 times `stall_minutes` ago. An older task, a background test run included, no longer counts, because a
+task can hang for good: on #891 a review agent's background shell waited 17.5 hours on a read that
+never ended, and nothing reported a stall. A test suite running in
 its pane (`make test`, `make check` or `scripts/test.sh`, as under `stall_minutes`) also keeps it
 from being stuck, for a conductor as for a builder, for as long as the run is alive, with no limit on
 its age. It sends nothing when it says `stuck`: read the pane. `stuck` is
