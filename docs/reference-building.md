@@ -1121,7 +1121,8 @@ minutes by default and 10 at most, before the limit could apply. Whoever runs it
 exit and acts on what it prints last, since a usage or rate limit printed early may be followed by a
 fallback's review. When it ends on codex's usage or rate limit or on `codex skipped: ...`, no one runs it again: a
 builder carries on, a story's review agent or the lead reviews the diff itself, and the PR says `codex
-skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
+skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. When codex could not
+reach its provider, it says `codex skipped: unreachable`. A review agent says `codex skipped: <why>` in
 its reply and on its review file's second line, and in a round with no `/code-review` it reads the
 diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
@@ -1141,11 +1142,20 @@ status: 429 Too Many Requests`. The line starts with the message, with `ERROR:`,
 words does not count. On Azure Foundry the rate limit reads `ERROR: rate limit exceeded: Your requests to
 <model> for <model> in <region> have exceeded token rate limit.` That limit is the Foundry deployment's
 capacity, its tokens per minute. You raise it in Azure, on the deployment or the quota behind it. The
-swarm never changes it. With `fallback_reviewer` empty, codex-review then exits as codex did. With
+swarm never changes it. On a rate limit, codex-review runs codex once more before anything else. It
+prints `codex rate limit: retrying in 60 s`, logs a `codex-retry` line in events.tsv (target
+`codex-<story>`, with the incident's `slug=` and `role=`), waits 60 seconds, and runs codex again with
+the same prompt. The first run, the wait and the retry share the one `codex_minutes`: the retry gets
+only what is left, and the timeout stops it as it would the first run. It retries only when at least
+the wait plus two minutes are left. A rate limit on the retry logs no second incident, so one limit
+counts once. A usage limit is never retried, since it resets in hours. When the retry hits the rate
+limit too, or there was no time to retry, codex-review goes on as follows. With `fallback_reviewer`
+empty, it exits as codex did. With
 it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
 runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
 unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
-findings to `.swarm/reviews/fallback/<story>.md`, in a tab of its own (`fallback-<story>`). codex-review prints `reviewed by fallback <model>:
+findings to `.swarm/reviews/fallback/<story>.md`, in a tab of its own (`fallback-<story>`). As it starts the agent, codex-review prints
+`codex usage limit: fallback <model> reviews in its place, within <N> s` on stderr. It then prints `reviewed by fallback <model>:
 codex usage limit` (`codex rate limit` on a rate limit) and then the findings, and closes the agent, findings or not; an interrupt closes
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
@@ -1154,7 +1164,26 @@ nothing in time, codex-review prints `codex skipped: usage limit (<why>)` (`rate
 waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
 call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
-(no time left for a fallback)` (`rate limit` on a rate limit). The planning `codex` panes of
+(no time left for a fallback)` (`rate limit` on a rate limit).
+
+A timeout or an unreachable codex runs the fallback reviewer too. codex is unreachable when its output
+ends in three or more `Reconnecting...` lines in a row, or in a `stream disconnected before completion`
+line, with nothing after it but blank lines. Each line starts with the message, with `ERROR:`, `■` or
+nothing before it. A reconnect line reads `ERROR: Reconnecting... 2/5` while codex retries a request, and
+`ERROR: Reconnecting... waiting for network` when it cannot connect to its provider at all. One reconnect
+line followed by a review does not count. While codex runs, codex-review reads its output every second. Once it has looked
+unreachable for 15 seconds in a row, codex-review stops codex. It waits those 15 seconds because on Azure
+Foundry codex prints five reconnect lines before its rate-limit line, and stopping it at the third would
+skip the rate limit's retry. A codex that exits with its output ending that way counts too. Either way,
+codex-review logs a `codex-unreachable` incident (target `codex-<story>`, with `slug=` and `role=`), and
+there is no retry. With `fallback_reviewer` set, the fallback reviews in what is left of `codex_minutes`,
+under `reviewed by fallback <model>: codex unreachable`. With it empty, codex-review prints `codex
+skipped: unreachable` and exits 1. On the timeout, codex-review stops codex and logs its `reap` line as
+before. With `fallback_reviewer` empty, it then prints `codex skipped: timed out after <N> min` and
+exits 1. With it set, the fallback gets a whole `codex_minutes` of its own, since codex used up the
+first, so the run can take twice `codex_minutes`. Its line is `reviewed by fallback <model>: codex
+timeout`. A fallback that cannot start then prints `codex skipped: unreachable (<why>)` or `codex
+skipped: timed out after <N> min (<why>)`. The planning `codex` panes of
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 A codex review reads the diff. In this repository, swarm-dev's own, its `scripts/test.sh` refuses to
