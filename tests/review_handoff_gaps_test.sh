@@ -81,6 +81,12 @@ check "1 with the ladder off, the brief names no step-up" no "$(has 'stepped up'
 # merge's refusal comes once review put the story in review, so it is no head to follow in the session.
 check "1 merge's moved-head refusal in the pass step writes head moved: and sends the stop note before it stops" yes \
   "$(has 'holding two lines, `head: '"${HB}"'` and `head moved: <the head merge named>`, then send the conductor the stop note, as below, naming that `head moved:` line, and stop' "${brief}")"
+# review's refusal has the agent move its pass aside before it follows the new head. If the two paths
+# went into that command bare, a project path with a space would split the mv, the pass would stay where
+# it is, and a wait on the agent or a review-agent start would read it as a finished review meanwhile.
+sbrief="$(flat "$(lib "review_handoff s1 ${URL} '${ROOT}/a b/s1.md' ${HB} swarm.sh")")"
+check "1 the move of a refused pass quotes both paths for the shell, so a path with a space does not split it" yes \
+  "$(has "with \`mv ${ROOT}/a\\ b/s1.md ${ROOT}/a\\ b/s1.md.prev\`, so no review file is there while you follow" "${sbrief}")"
 check "1 the stop note goes to s1's epic conductor" yes "$(has 'tell conduct-e note '"${F%.md}"'.stop.md`' "${brief}")"
 rule="$(flat "$(lib review_rule)")"
 check "1 the conductor starts a new review on a head moved: note" yes \

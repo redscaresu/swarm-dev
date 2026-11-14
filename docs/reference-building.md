@@ -944,8 +944,11 @@ How each kind of stop reaches an owner:
   uncommitted changes, the builder is still at work: the agent waits for it and follows again. A
   second such refusal on the same head ends the agent with `head moved:` and a stop note. A worktree
   that has uncommitted changes at the review's end, with HEAD still at the head it reviewed, is no
-  moved head: the agent waits for the builder and checks again. It follows HEAD if HEAD moved by
-  then, keeps its review if the worktree is clean at that head, and otherwise ends with `head moved:`
+  moved head. The review may have read those changes, since `codex-review` reads the worktree,
+  committed or not, so the agent drops its verdict and every finding but the dropped-lines check's,
+  which reads the PR's merges and never the worktree. It waits for the builder and checks again. It
+  follows HEAD if HEAD moved by then. If the worktree is clean at that head, it reviews the
+  head again in the same session and round, with codex again. Otherwise it ends with `head moved:`
   and a stop note. Besides those two, only `merge`'s moved-head refusal and a step-up still end the
   agent with `head moved:`.
   The merge one sends the conductor the stop note, its why that `head moved:` line, and the

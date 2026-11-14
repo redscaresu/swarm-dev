@@ -1441,8 +1441,11 @@ follow_moved() {
 # conductor the same stop note a stop before a pass sends, so the PR keeps an owner.
 # <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
-  local merge next nudge="${3%.md}.nudge.md" stop="${3%.md}.stop.md" cond
+  local merge next nudge="${3%.md}.nudge.md" stop="${3%.md}.stop.md" cond aside
   cond="$(story_conductor "$1")"
+  # The move of a refused pass, each path quoted for the shell as the brief's swarm.sh is: bare, a
+  # project path with a space would split it, and the pass would stay to be read as a finished review.
+  aside="$(printf 'mv %q %q' "$3" "$3.prev")"
   merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit. When the base gained code since $4's CI ran, it first has GitHub merge the base into the PR's branch and waits up to $((MERGE_CI_SECONDS / 60)) minutes for that new head's CI, ${MERGE_BASE_ROUNDS} rounds at most; after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, or the head it made by merging the base in, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == agent ]]; then
@@ -1457,7 +1460,7 @@ and removes this worktree, so a file written after would never come. Then hand t
 \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
 When review refuses because the PR's head is no longer $4 (a push since your review), that head has
 had no review, and the story is not in review. First move your pass of $4 aside, with
-\`mv ${3} ${3}.prev\`, so no review file is there while you follow: a wait on you, or a review agent's
+\`${aside}\`, so no review file is there while you follow: a wait on you, or a review agent's
 start, would read it as a finished review. Then write no review file for the new head yet, and
 $(follow_moved "$1" "$2" "$5").
 When merge refuses because the PR's head is no longer $4, review had already put the story in
@@ -1521,10 +1524,12 @@ EOF
 # the start head before any findings, a worktree whose HEAD moved by the review's end, or review --head's
 # refusal) is followed instead (follow_moved): the green step on it, then review-agent --next, in the
 # same session; --next refused twice on one head for the worktree ends it with a head moved: stop. A
-# worktree with uncommitted changes at the start head is no moved head: the agent waits for the builder
-# and checks again, keeping its review when the worktree is clean at that head, following when HEAD moved,
-# and stopping with head moved: otherwise. Only merge's moved-head refusal, a step-up and those stops
-# still write head moved:.
+# worktree with uncommitted changes at the start head is no moved head, but its review may have read
+# them (codex-review reads the worktree, committed or not), so the agent drops it, all but what the
+# dropped-lines check found (it reads the PR's merges, never the worktree), waits for the builder and
+# checks again: it reviews that head again, as the same round, when the worktree is clean at it,
+# follows when HEAD moved, and stops with head moved: otherwise. Only merge's moved-head refusal, a
+# step-up and those stops still write head moved:.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
@@ -1692,8 +1697,12 @@ prints nothing. If HEAD moved, the worktree moved under you, so this review is o
 longer has: drop its findings, wait for the builder as above, and
 $(follow_moved "$1" "$2" "${sw}").
 If HEAD is still $5 but the worktree has uncommitted changes, the PR's head has not moved: the builder
-is at work in it. Wait for the builder as above, then check again. If HEAD moved by then, follow it as
-just said. If the worktree is clean at $5, this review of $5 stands: go on with it below. Otherwise
+is at work in it. This review may have read those changes, since codex-review reads the worktree,
+committed or not, so it is no review of $5: drop its verdict and every finding but the dropped-lines
+check's. That check reads the PR's merges, never the worktree, so what it printed for $5 still holds.
+Wait for the builder as above, then check again. If HEAD moved by then, follow it as just said. If the
+worktree is clean at $5, review $5 again in this session, as the same round: run codex-review once
+more, as above, and what this round's line has you run with it, then make this check again. Otherwise
 write ${4} with the Write tool holding two lines, \`head: $5\` and \`head moved: <what changed>\`,
 then stop.
 
