@@ -3097,15 +3097,16 @@ PLAN_START_GRACE=300
 # agents have all written their output, and `plan-missing: <epic> <name> ended without its output, exit:
 # /swarm-dev:plan-epic <epic> (it starts that agent again)` for each agent of its attempt that has ended
 # without one. A swarm is a tab record scope-<epic> (has_records' overflow scope-<epic>-<n> too) of an epic
-# on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit; planned: only
-# with no plan board PR worktree (plan_pr_open; _board-plan-<hld> for an HLD). Its agents are the record's `<pane>
+# on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit, or a
+# .swarm/<slug>/started directory of such an epic or HLD that no record names; planned: only with a record
+# that lists an agent and no plan board PR worktree (plan_pr_open; _board-plan-<hld> for an HLD). Its agents are the record's `<pane>
 # <name>` lines and the attempt's start marks, .swarm/<epic>/started/<name> (plan_mark), newer than the
 # reference below: next_pane prunes a failed or closed pane from the record, never from the marks. Each
 # <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only when it is newer
 # than its planner's resume reference and parses as JSON. The reference is the epic file; for
 # split-critic the scope worktree, so a split critic counts, and can be missing, only while that exists;
 # for an HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing
-# reference counts nothing. planned: needs at least one agent, every one counted. plan-missing: names a
+# reference counts nothing. planned: needs every agent counted. plan-missing: names a
 # marked agent with no counted output whose mark is PLAN_START_GRACE seconds old and that the poll's
 # herdr list (LEAD_AGENTS) shows in no pane of the swarm's own tab records, or shows idle or done with no background
 # task in flight (bg_running, over its session log); a poll with no herdr list keeps the plan-missing: lines
@@ -3125,6 +3126,15 @@ plan_lines() {
     fi
     [[ -f "${item}/${slug}.md" ]] || continue
     groups+="${kind} ${slug}"$'\n'
+  done
+  # A plan with start marks but no tab record: its first agent's start failed before a tab opened. Its
+  # epic's (else its HLD's) swarm, unless a record already names the slug.
+  for f in "${PROJECT_DIR}"/.swarm/*/started; do
+    [[ -d "${f}" ]] || continue
+    slug="${f%/started}"; slug="${slug##*/}"
+    [[ $'\n'"${groups}" != *$'\n'"scope ${slug}"$'\n'* && $'\n'"${groups}" != *$'\n'"plan ${slug}"$'\n'* ]] || continue
+    if [[ -f "${BOARD}/epics/${slug}.md" ]]; then groups+="scope ${slug}"$'\n'
+    elif [[ -f "${BOARD}/hld/${slug}.md" ]]; then groups+="plan ${slug}"$'\n'; fi
   done
   while read -r kind slug; do
     [[ -n "${slug}" ]] || continue
@@ -3206,7 +3216,9 @@ for p in sys.argv[1:]:
     done <<< "${rows}"
     # While the plan's board PR worktree exists the plan is in its board PR, or about to be: no planned: line,
     # but an agent that ended without its output is still named (/plan-hld makes the worktree before any agent).
-    [[ -n "${wt}" || "${done_list}" == -* || -z "${done_list}" ]] || echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+    # planned: needs a tab record that lists an agent: marks alone outlive a finished plan's closed tab.
+    [[ -n "${wt}" || -z "${listed//$'\n'/}" || "${done_list}" == -* || -z "${done_list}" ]] \
+      || echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
     printf '%s' "${out}"
   done < <(awk '!seen[$0]++' <<< "${groups}")
 }

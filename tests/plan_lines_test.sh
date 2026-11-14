@@ -60,7 +60,7 @@ mark() {
 # fresh — an active epic e an hour old, a scope-e record listing survey-e and critic, both outputs
 # written now and valid; no HLD plan, no worktree, no earlier run.
 fresh() {
-  rm -rf "${S}" "${ROOT}/proj-wt" "${ROOT}/prs.json" "${P}/docs/hld"/*.md "${ROOT}/agents" "${ROOT}/no-list" "${ROOT}/start-fails" "${ROOT}/panes.json"
+  rm -rf "${S}" "${ROOT}/proj-wt" "${ROOT}/prs.json" "${P}/docs/hld"/*.md "${P}/docs/epics/g.md" "${P}/docs/epics/k.md" "${ROOT}/agents" "${ROOT}/no-list" "${ROOT}/start-fails" "${ROOT}/panes.json"
   mkdir -p "${S}/state" "${S}/e"
   printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"; old "${P}/docs/epics/e.md"
   printf 'w:p1 survey-e\nw:p2 critic\n' > "${S}/state/scope-e"
@@ -150,7 +150,8 @@ check "nor does the good poll after it: the lines never left the seen queue" tes
 # The marks start_agent writes: a critic whose start fails (herdr agent start refused twice, its pane closed),
 # then survey-e's start, which prunes the closed pane from the record before it opens its own. The same
 # poll reads an HLD plan h whose marked hld-lead has ended without its output, with its plan worktree there
-# (/plan-hld makes it before any agent starts) and survey-code's output written.
+# (/plan-hld makes it before any agent starts) and survey-code's output written. Epics g and k have start
+# marks and no tab record at all: g's survey-g has no output, k's critic has written its own.
 fresh; rm -f "${S}/state/scope-e" "${S}/e/critic.json"; echo 'brief' > "${ROOT}/brief.md"
 start() { (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w bash "${SWARM}" agent scope-e "$1" "${P}" codex "${ROOT}/brief.md" >/dev/null 2>&1); }
 echo 'w:p1' > "${ROOT}/next-pane"; touch "${ROOT}/start-fails"
@@ -165,6 +166,11 @@ printf -- '---\nstatus: agreed\n---\n\n# h\n' > "${P}/docs/hld/h.md"
 mkdir -p "${S}/h/started"; echo 0123abc > "${S}/h/base-rev"; old "${S}/h/base-rev"
 printf 'w:p3 survey-code\nw:p4 hld-lead\n' > "${S}/state/plan-h"; touch "${S}/h/started/hld-lead"
 echo '{"summary":"s","facts":[]}' > "${S}/h/survey-code.json"; mkdir -p "${ROOT}/proj-wt/_board-plan-h"
+for x in g k; do
+  printf -- '---\nstatus: active\n---\n\n# %s\n' "${x}" > "${P}/docs/epics/${x}.md"; old "${P}/docs/epics/${x}.md"; mkdir -p "${S}/${x}/started"
+done
+touch "${S}/g/started/survey-g" "${S}/k/started/critic"; echo '{"findings":[]}' > "${S}/k/critic.json"
+perl -e 'my $t = time - 1800; utime $t, $t, @ARGV' "${S}/g/started/survey-g" "${S}/k/started/critic"
 perl -e 'my $t = time - 1800; utime $t, $t, @ARGV' "${S}/h/started/hld-lead"
 out="$(poll)"
 check "a critic that failed to start, its pane pruned by a sibling's start, still gets plan-missing: e critic" grep -qxF "$(missing_line e critic)" <<< "${out}"
@@ -172,6 +178,9 @@ check "and survey, with its output written, gets no plan-missing: line" test -z 
 check "an HLD plan's ended agent gets plan-missing: with the /swarm-dev:plan-hld exit, while its plan worktree exists" \
   grep -qxF 'plan-missing: h hld-lead ended without its output, exit: /swarm-dev:plan-hld h (it starts that agent again)' <<< "${out}"
 check "and that HLD plan gets no planned: line" test -z "$(grep '^planned: h ' <<< "${out}")"
+check "a plan with a start mark and no tab record at all (its first start failed before a tab opened) gets plan-missing:" \
+  grep -qxF "$(missing_line g survey)" <<< "${out}"
+check "a plan with marks and no tab record gets no planned: line, though its one output counts" test -z "$(grep '^planned: k ' <<< "${out}")"
 
 # An HLD plan: the record plan-h, its outputs newer than .swarm/h/base-rev.
 hld() {

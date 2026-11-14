@@ -608,6 +608,9 @@ agents a plan expects: a start that fails closes its pane, you can close one by 
 start in the tab then drops that pane's line from the record. So `swarm.sh agent` also leaves a start mark,
 `.swarm/<epic>/started/<name>`, before it opens the pane. The plan's agents are the record's and
 those whose mark is newer than the same resume reference; an older mark is an earlier attempt's.
+A plan with marks and no record at all, because its first start failed before a tab opened, is read
+too. It can get `plan-missing:` lines but never `planned:`, which needs a record that lists an agent:
+the marks stay after a finished plan's tab is closed.
 A marked agent gets the line when its file does not count, its mark is 300 seconds old (a start
 and its brief can take minutes), and the poll's herdr list shows it in no pane of this plan's own
 tab records, or shows it idle or done with no background task still running in its session. An agent
