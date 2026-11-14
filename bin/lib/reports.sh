@@ -364,7 +364,7 @@ dataset_report() {
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
-#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     each after a blank line: TSV epic kind stops (api-error, model-error and auto-denied per epic; --epic keeps
 #     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
 #     event (each stalled incident and stalled step-up's escalate line, - for an input it does not carry)
 #     and the false stalls line (those rows with an input at 1, and lead-hand and user-caught lines with
