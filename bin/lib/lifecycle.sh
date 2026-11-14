@@ -68,16 +68,18 @@ board_changes() (
 )
 
 # board_pr_kind <name> <board> — the kind of the board PR <name>: plan (plan-<hld>, scope-<epic>),
-# agreement (agree-<hld or epic>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else
-# story-scope edit. A plan or agreement name counts only when it names an HLD or epic in <board> (the
-# PR's worktree's), by its file name made clean (board_pr_names); a story slug such as plan-hld-gaps
-# or scope-creep is a story-scope edit.
+# agreement (agree-<hld or epic>), retro file (retro-<x>), finish (finish-<slug>, drop-<slug>), hold
+# (hold-<slug>), else story-scope edit. A plan, agreement or retro file name counts only when it names
+# an HLD, epic or retro in <board> (the PR's worktree's), by its file name made clean
+# (board_pr_names); a story slug such as plan-hld-gaps, scope-creep or retro-goals-step is a
+# story-scope edit.
 board_pr_kind() {
   local x="${1#*-}"
   case "$1" in
     plan-?*) board_pr_names "$2/hld" "${x}" && { echo plan; return; } ;;
     scope-?*) board_pr_names "$2/epics" "${x}" && { echo plan; return; } ;;
     agree-?*) { board_pr_names "$2/hld" "${x}" || board_pr_names "$2/epics" "${x}"; } && { echo agreement; return; } ;;
+    retro-?*) board_pr_names "$2/retros" "${x}" && { echo "retro file"; return; } ;;
     finish-?* | drop-?*) echo finish; return ;;
     hold-?*) echo hold; return ;;
   esac
@@ -920,7 +922,7 @@ start_rung() {
 }
 
 # rung_late <slug> <model> <err> [who] — when start_agent's stderr <err> says the brief may have gone out
-# (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
+# (the tries review_start_failed reads as unclear, start_unclear's words) and the agent was not blocked on a question before
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
@@ -932,7 +934,7 @@ rung_late() {
   local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v who="${4:-step-up}"
   case "$3" in
     *agent_blocked*) return 1 ;;
-    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"reply to the brief could not be read"*) ;;
     *) return 1 ;;
   esac
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
@@ -2232,7 +2234,8 @@ init_claude() {
 BOARD_BASE_PAST='2da305247898d622618058c62cd705560ea90b83ce9b225687e565080f255103
 302798ca551553b5d24d68577a24630f5d31dd7b6b9d006c66981a0810d02d62
 9956edaf77067f1c503bbc52572022998ba127a653c5960ce164a8a8fa6ed102
-ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9'
+ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9
+ec48da53c63e58b127fbb7aa8b70d14a1f91dfd1b3fae9dcddb0e780ba3bf4c2'
 
 # init_board_base <rel> — init's line for the board's Board.base, which exists (a dangling symlink too):
 # replaced with the current template when it is a regular file, not a symlink, holding a past one nobody
@@ -2384,6 +2387,11 @@ LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protec
 LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
 LEAD_WORKSPACE="${LEAD_DIR}/workspace"   # "<herdr workspace id>\t<its label, refused or kept>[\t<note>]" per line (lead_rename)
 LEAD_HERDR_WAIT="${SWARM_LEAD_HERDR_WAIT:-5}"   # seconds each herdr call of lead_label may take (within)
+# usage_line's: the /usage reading the user copies in (bin/lib/usage_estimate.py says its form), the
+# seconds between its reads of the session logs, at least 0, and the seconds one read may take (within).
+USAGE_READING="${PROJECT_DIR}/.swarm/usage-reading"
+USAGE_EVERY="${SWARM_USAGE_EVERY:-600}"
+USAGE_WAIT=60
 
 # The plugin ships hooks/ beside bin/; a copy of bin/ alone (a test's stand-in plugin) has no lead.
 # shellcheck source=hooks/lead-session.sh
@@ -4428,9 +4436,10 @@ try:
             sr = started.get(n) or told(n, t)
         else:
             sr = started[n] = stem(c, t)
-        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it,
+        # in the words of sent_note: another thing that could not be read (its pane) says nothing about the brief.
         o = outcome(f)
-        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "reply to the brief could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
             newest[n] = (f[0], c, alike[k]) + sr
@@ -4619,6 +4628,25 @@ line_holds() {
   esac
 }
 
+# usage_line — with usage_warn_percent set, wait --lead's `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of
+# Fable's own limit, ...` line the first time either estimate reaches it in a usage week, and nothing on any
+# other poll of that week (usage_estimate.py --warn, over CLAUDE_PROJECTS and USAGE_READING, reading the time
+# lead_wake records in LEAD_DIR once it prints the line, usage_warned). It reads the logs at most once every USAGE_EVERY seconds. A warning, never a gate: nothing
+# stops or slows on it. A read that fails, or takes over USAGE_WAIT seconds, warns on stderr and prints no line.
+usage_line() {
+  local rc=0
+  within "${USAGE_WAIT}" python3 "${SWARM_HOME}/bin/lib/usage_estimate.py" "${CLAUDE_PROJECTS}" --warn "${CFG_usage_warn_percent}" \
+    --state "${LEAD_DIR}" --every "${USAGE_EVERY}" --reading "${USAGE_READING}" < /dev/null || rc=$?
+  (( rc == 0 )) || echo "warning: wait --lead could not read the usage estimate (exit ${rc}), so this poll has no usage: line" >&2
+}
+
+# usage_warned — once a usage: line printed, make the time its estimate was made (usage_estimate.py's
+# LEAD_DIR/usage-pending, or now without one) LEAD_DIR/usage-warned: usage_line prints nothing more while that
+# time is inside the current usage week, whatever the reading says.
+usage_warned() {
+  mv -f "${LEAD_DIR}/usage-pending" "${LEAD_DIR}/usage-warned" 2>/dev/null || date +%s > "${LEAD_DIR}/usage-warned"
+}
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
 # and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
 # since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
@@ -4626,7 +4654,7 @@ line_holds() {
 # head none covers (main_red_fix), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
-# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), drop every line
+# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and usage_line's, drop every line
 # whose word (lead_line_slug) is a story that merged (lead_merged), which keeps its file until reconcile,
 # drop a no-agent:, no-review: or `idle: ... is ready with no build` line it would print whose agent a
 # second read of herdr's list shows (line_holds), and save the rest of the queue as LEAD_SEEN. Print
@@ -4671,12 +4699,17 @@ lead_wake() {
   tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
   u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
   now="${now}${now:+${u:+$'\n'}}${u}"
-  # A merged story names no line, whatever the producer: its file stays on the board until reconcile.
-  gone="$(while IFS= read -r line; do lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
+  # Off (the key empty), no subshell and no read of the session logs.
+  u=""; [[ -z "${CFG_usage_warn_percent}" ]] || u="$(usage_line)"
+  now="${now}${now:+${u:+$'\n'}}${u}"
+  # A merged story names no line, whatever the producer: its file stays on the board until reconcile. A
+  # usage: line names no story, so a story named as its first word does not drop it.
+  gone="$(while IFS= read -r line; do [[ "${line}" == "usage: "* ]] && continue; lead_line_slug "${line}"; echo "${LEAD_LINE_SLUG}"; done <<< "${now}" | lead_merged)"
   if [[ -n "${gone}" ]]; then
     while IFS= read -r line; do
       lead_line_slug "${line}"
-      grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || kept+="${line}"$'\n'
+      [[ "${line}" == "usage: "* ]] || ! grep -qxF -- "${LEAD_LINE_SLUG}" <<< "${gone}" || continue
+      kept+="${line}"$'\n'
     done <<< "${now}"
     now="${kept%$'\n'}"
   fi
@@ -4697,6 +4730,7 @@ lead_wake() {
   LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
     echo "${line}"; lead_line_slug "${line}"
+    [[ "${line}" != "usage: "* ]] || usage_warned
     record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
@@ -4837,6 +4871,7 @@ wait_lead() {
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   [[ "${LEAD_HEADS_EVERY}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1, not '${LEAD_HEADS_EVERY}'"
+  [[ "${USAGE_EVERY}" =~ ^[0-9]+$ ]] || die "SWARM_USAGE_EVERY is whole seconds, not '${USAGE_EVERY}'"
   lead_lock
   start=${SECONDS}
   if [[ -f "${LEAD_SEEN}" ]]; then ! lead_poll || return 0; else ! lead_poll quiet || return 0; fi

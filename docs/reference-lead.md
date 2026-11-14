@@ -61,16 +61,26 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
 
+**Retro files.** A retro's file is `<board>/retros/v<version>.md`, named for the version being released.
+Its front matter holds `covers: v<from>..v<to>` and `done: YYYY-MM-DD`, each on one line with no quotes.
+A file in `retros/` that lacks either field is a note, and no check reads it as a retro.
+[templates/docs/retros/README.md](../templates/docs/retros/README.md) gives the format, the `retro-<version>` lead story and how the file lands, and `swarm.sh init` copies it to the board.
+The Retros view in `Board.base` lists every file whose `covers:` is set.
+
 **Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
 alone. Only a plan or an agreement PR gets a codex review, and only when its name names an HLD or
 epic in the PR's worktree (by the file name lower-cased, each run of characters other than `a-z`
-and `0-9` one `-`, trimmed). A story slug that starts the same way, such as `plan-hld-gaps`, is a
+and `0-9` one `-`, trimmed). A retro file PR is named the same way, after a file in the board's
+`retros/`. A story slug that starts the same way, such as `plan-hld-gaps`, is a
 story-scope edit:
 
 - plan: `plan-<hld>` (`/plan-hld`) and `scope-<epic>` (`/plan-epic`). It needs one
   `swarm.sh codex-review` pass before it merges, which those commands run before `open`.
 - agreement: `agree-<hld or epic>`, the HLD or epic the user agreed (`/hld` and `/epic` step 5).
   One `swarm.sh codex-review` pass before it merges, which those commands run before `open` too.
+- retro file: `retro-<x>`, when the PR's worktree has `<board>/retros/<f>.md` with `<f>` made clean
+  equal to `<x>`: `retros/v0.31.0.md` makes `retro-v0-31-0` one. No codex-review. A story slug
+  such as `retro-goals-step` is a story-scope edit.
 - finish: `finish-<slug>` and `drop-<slug>`, which `swarm.sh finish` and `swarm.sh drop` open. No
   codex-review.
 - hold: `hold-<slug>`. No codex-review. (`swarm.sh hold` itself only logs.)
@@ -294,6 +304,16 @@ base's read fails on 3 heads passes in a row (`SWARM_LEAD_PRS_WARN_AFTER`, the s
 stderr, or `could not tell the base of <owner/repo>` when it could not pick the base. The lead clears it:
 check `gh auth status`, that gh can see the repo, and `base_branches`.
 
+**A usage estimate past `usage_warn_percent` wakes the lead once a week.** With the key set, each poll
+reads the session logs at most once every 10 minutes (`SWARM_USAGE_EVERY`, 600 seconds). The first time
+the estimate of the week's share, or of Fable's own limit, reaches the key, the poll prints `usage: estimate
+<N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, at or past usage_warn_percent <P> (...; /usage is the truth),
+exit: check /usage, as nothing stops on this`. Once the line has printed, it writes the time of that estimate to
+`.swarm/lead/usage-warned`, and no poll reads the logs again while that time is in the current usage week,
+even when a reading added or changed later moves the week's edges. It is an estimate and a warning, never a gate. A read that fails or takes
+over 60 seconds prints a warning on stderr and no line. How the estimate is made, and how to calibrate
+it, is in reference-models.md § Settings.
+
 **A brief left in an idle agent's input box is submitted once.** herdr types a long brief into the
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
 its input box. On each read, `wait --lead` takes the agents this project opened that the read's one
@@ -301,8 +321,8 @@ herdr list shows idle. For each one it finds the newest `events.tsv` line that g
 prompt. That is `story`, `escalate` (a ladder step-up), `step-up`, `restart` or a `tell` of any kind
 but `note` for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
 agent started by name. The line must end `ok`, or in deliver_prompt's error after herdr sent the
-prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `could not be
-read`), which is how a brief that was never taken up ends. A tell that failed before sending
+prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `herdr's reply to
+the brief could not be read`), which is how a brief that was never taken up ends. A tell that failed before sending
 delivered nothing, and the line before it counts. A start that failed before sending leaves its
 agent alone: it may have opened the pane and recorded a new session with no turn in it, so its box
 holds no older brief. A note (`tell:note`) goes to a conductor's inbox, and the prompt that wakes
@@ -821,6 +841,7 @@ Wait until the lead's queue gains one of these, and print each new one:
 - a story PR whose idle builder has sat 60 minutes on findings or a conflict (`stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`)
 - a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`)
 - a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`)
+- with `usage_warn_percent` set, a usage estimate that reaches it, once a usage week (`usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, ...`; reference-models.md § Settings)
 - any other line [§ The lead](reference-lead.md#the-lead) lists
 
 A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`.

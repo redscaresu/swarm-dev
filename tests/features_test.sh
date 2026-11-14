@@ -135,12 +135,10 @@ if [[ -f "${HLD}" ]]; then
   check "HLD_EPICS is the HLD's § Epics, while the HLD is on the board" \
     " $(sed -n '/^## Epics$/,/^## /s|^- \[\([a-z0-9-]*\)\](\.\./epics/.*|\1|p' "${HLD}" | tr '\n' ' ')" "${HLD_EPICS}"
 fi
-# Read by hand at the release (lead decision 2026-10-30), so no one flow column holds them:
-# - lead-woken incidents: lead-hand incidents per 100 merged story PRs takes incidents' lead-hand lines
-#   over a count of merged story PRs that no section prints (epic_totals' merged_prs leaves some out).
-# - reference split: conflict merge-ins touching a docs/reference*.md file reads each merge-in's
-#   files, which merge_ins lists only for its top three files.
-EXEMPT=$'lead-woken incidents\nreference split'
+# Read by hand at the release (lead decision 2026-10-30), as no one flow column holds it: lead-woken
+# incidents, lead-hand incidents per 100 merged story PRs, takes incidents' lead-hand lines over a count
+# of merged story PRs that no section prints (epic_totals' merged_prs leaves some out).
+EXEMPT='lead-woken incidents'
 Q="${dir}/sections"; mkdir -p "${Q}/.swarm"; git -C "${Q}" init -q
 printf '%s\n' $'2026-10-01\tcode\ts-a\tclaude\topus\thigh\tk1' > "${Q}/.swarm/agents.tsv"; : > "${Q}/.swarm/findings.tsv"
 printf '%s\n' $'2026-10-01T07:00:00Z\tstory\ts-a\t-\tok' $'2026-10-01T07:10:00Z\treview-agent\ts-a\t-\tok' \
@@ -193,10 +191,8 @@ check "with the HLD deleted from the board, a row of its epics still has its col
 check "flow: and a metric without flow pass; a column the section prints passes; outside the HLD's epics no column is read" \
   "$(section_check "${dir}/good.tsv")" ""
 check "docs/features.tsv passes the section check" "$(section_check "${ROOT}/docs/features.tsv")" ""
-check "without its exemption, lead-woken incidents fails" "$(section_check "${ROOT}/docs/features.tsv" 'reference split')" \
+check "without its exemption, lead-woken incidents fails" "$(section_check "${ROOT}/docs/features.tsv" '')" \
   "lead-woken incidents: flow incidents prints no column lead-hand"
-check "without its exemption, reference split fails" "$(section_check "${ROOT}/docs/features.tsv" 'lead-woken incidents')" \
-  "reference split: flow merge_ins prints no column conflict"
 check "Goal 6's rows: a use of each new event" \
   "$(cut -f5 "${ROOT}/docs/features.tsv" | tr ' ' '\n' | grep -E '^event:(pr-opened|first-green|review-finished)$' | sort)" \
   "$(printf '%s\n' event:first-green event:pr-opened event:review-finished)"
