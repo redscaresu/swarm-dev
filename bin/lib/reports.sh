@@ -90,9 +90,10 @@ record_finding() {
   echo "recorded ${kind} (${outcome})"
 }
 
-# out_of_scope_findings — the findings declined as out-of-scope or deferred in the last
-# IDLE_FINDING_DAYS days, newest first, as "<reason> TAB <date> <kind> <pr>: <text>": the swarm's own
-# follow-ups, which idle_lines offers.
+# out_of_scope_findings [YYYY-MM-DD] — the findings declined as out-of-scope or deferred on or after
+# that day (with none, in the last IDLE_FINDING_DAYS days), newest first, as
+# "<reason> TAB <date> <kind> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers and
+# retro_report lists from its window's day.
 # A text is listed once, and only while its newest row is that decline: the lead's log-finding
 # --filed once it files one as a story (commands/swarm.md), or a later fixed row, drops it. That
 # record works wherever the board is and whatever the story says. In case the lead did not log it,
@@ -100,8 +101,9 @@ record_finding() {
 # repo, one any branch (an open board PR's too) added or removed since the finding's day.
 IDLE_FINDING_DAYS=30
 out_of_scope_findings() {
-  local since text day line git=""
-  since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
+  local since="${1:-}" text day line git=""
+  [[ -z "${since}" || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "out_of_scope_findings: not a YYYY-MM-DD day: ${since}"
+  [[ -n "${since}" ]] || since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
   git -C "${BOARD}" rev-parse -q --git-dir >/dev/null 2>&1 && git=1
   while IFS=$'\t' read -r text day reason line; do
     grep -qsF -- "${text}" "${BOARD}"/stories/*.md && continue
