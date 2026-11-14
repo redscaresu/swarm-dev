@@ -20,7 +20,9 @@ about 30 seconds plus its own work, even when herdr or GitHub hangs. When the Gi
 short, dash keeps what they got; a PR they did not reach keeps the state from whichever run last
 read it, until a run reaches it again, and one no run has read shows as its URL. With `--project`
 each project's frame has 30 seconds of its own. `dash --check` reads everything in full, and so do
-the `status` and `next` it compares with.
+the `status` and `next` it compares with. Each frame also reads the board's story, epic and HLD
+files, and their board state, once at its start, so an edit made to them while a frame is drawn
+shows on the next frame.
 
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
@@ -178,7 +180,8 @@ is one column, top to bottom:
   has read within `stall_minutes` shows none. The row ends with the agent's pane id, its
   workspace's label and its tab's label (`w1:p2 in myapp · billing › billing`), from herdr's
   workspace and tab lists, read once a frame, after its other reads and before its pane reads. A workspace label herdr gives none
-  of is `-`; a tab with none shows the name swarm-dev gave it. A narrow screen cuts these first. From
+  of is `-`; a tab with none shows the name swarm-dev gave it with the tab's id (`w1:p2 in myapp · billing › t1 (w1:t3)`),
+  as the tree's headings do. A narrow screen cuts these first. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it
