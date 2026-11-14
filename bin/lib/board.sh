@@ -1517,19 +1517,21 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # (one a line; README.md excepted) that goes active with no ticket, one per line: status: active at
 # the head (raw_status), absent at the base or at any status there but active (later, split, review
 # and done too, as a draft, none or a typo), and none of an agreed: date the base did not already
-# have, from today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that
-# is active or split at the base, and at the head too when the PR changes it (epic_ticket_parent), or
-# an hld: naming an HLD that is agreed and grants epics at both ends (hld_ticket). Nothing with
+# have, from today back AGREED_MAX_AGE days (epic_ticket_agreed), and that no epic the PR deletes had
+# at the base (epic_agreed_reused), a parent: naming another epic that is active or split at the base,
+# and at the head too when the PR changes it (epic_ticket_parent), or an hld: naming an HLD that is
+# agreed and grants epics at both ends (hld_ticket). A slug refused for a deleted epic's agreed: is
+# followed by a tab and the clause its refusal adds, naming that epic. Nothing with
 # lead_epics = on. <reader> base|head <path> prints a file's bytes, failing 1 when it is absent and 2
 # when it cannot be read; <reader> from <path> prints the old path a rename moved <path> from, nothing
 # for none, failing when it cannot tell, asked only for an epic absent at the base: a renamed epic's
 # base copy is read at its old path when that was an epic too, so its agreed: counts as already
 # there, and its active carries over while the heading is the same at both ends (epic_heading); any
-# other old path reads as new. [changed] is every path the PR changes, a
-# renamed file's old path too, one a line (<paths> by default). A read error at either end, or an
+# other old path reads as new. [changed] is every path the PR changes, a renamed file's old path and
+# a deleted file's path too, one a line (<paths> by default). A read error at either end, or an
 # HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
-  local reader="$1" pre p s b o now was rc kept out="" changed_paths="${3:-$2}"
+  local reader="$1" pre p s b o now was rc kept reused out="" changed_paths="${3:-$2}"
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
   pre="$(board_rel)"
@@ -1558,8 +1560,14 @@ epic_unticketed() (
     fi
     [[ ${rc} -le 1 ]] || { echo "cannot read ${b} at the base"; exit 1; }
     [[ -z "${kept}" || "$(raw_status <<< "${was}")" != active ]] || continue
-    s="${s%.md}"
-    epic_ticket_agreed "${now}" "${was}" && continue
+    s="${s%.md}"; reused=""
+    if epic_ticket_agreed "${now}" "${was}"; then
+      # A deleted epic's date is no ticket: a new epic git did not pair with it as a rename could carry it.
+      rc=0; reused="$(epic_agreed_reused "${reader}" "${now}" "${p}" "${changed_paths}")" || rc=$?
+      [[ ${rc} -ne 0 ]] || continue
+      [[ ${rc} -eq 1 ]] || { echo "${reused}"; exit 1; }
+      reused=$'\t'": the agreed: date it carries is ${reused}'s, an epic this PR deletes"
+    fi
     rc=0; epic_ticket_parent "${reader}" "${now}" "${p}" "${changed_paths}" || rc=$?
     [[ ${rc} -ne 0 ]] || continue
     [[ ${rc} -eq 1 ]] || exit 1
@@ -1569,7 +1577,7 @@ epic_unticketed() (
       [[ ${rc} -ne 0 ]] || continue
       [[ ${rc} -eq 1 ]] || exit 1
     fi
-    out+="${s}"$'\n'
+    out+="${s}${reused}"$'\n'
   done <<< "$2"
   printf '%s' "${out}"
 )
@@ -1594,6 +1602,29 @@ epic_ticket_agreed() {
     [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
   done
   return 1
+}
+
+# epic_agreed_reused <reader> <head bytes> <epic path> <changed paths> — epic_unticketed's check that
+# an agreed: ticket is not a deleted epic's: fails 1, printing its slug, at the first epic among
+# <changed paths> (one a line; <board>/epics/<slug>.md, not README.md or <epic path>) that reads absent
+# at the head and present at the base through <reader>, and whose base copy has the same agreed: as
+# <head bytes>; true when none has. A renamed epic's old path reads that way too, and is compared
+# under the same rule. Prints why and fails 2 on a read error at either end, so the caller refuses.
+epic_agreed_reused() {
+  local d e s bytes rc pre
+  pre="$(board_rel)"
+  d="$(slug_list "$(get_fm - agreed <<< "$2")")"
+  while IFS= read -r e; do
+    s="${e#"${pre}epics/"}"
+    [[ "${e}" != "$3" && "${e}" == "${pre}epics/"* && "${s}" =~ ^[^/]+\.md$ && "${s}" != README.md ]] || continue
+    rc=0; "$1" head "${e}" > /dev/null || rc=$?
+    [[ ${rc} -ne 0 ]] || continue   # still there: not deleted
+    [[ ${rc} -eq 1 ]] || { echo "cannot read ${e} at the head"; return 2; }
+    rc=0; bytes="$("$1" base "${e}")" || rc=$?
+    [[ ${rc} -ne 1 ]] || continue   # on neither end
+    [[ ${rc} -eq 0 ]] || { echo "cannot read ${e} at the base"; return 2; }
+    [[ "$(slug_list "$(get_fm - agreed <<< "${bytes}")")" != "${d}" ]] || { echo "${s%.md}"; return 1; }
+  done <<< "$4"
 }
 
 # epic_ticket_parent <reader> <head bytes> <epic path> <changed paths> — epic_unticketed's parent:

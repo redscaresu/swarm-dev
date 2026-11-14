@@ -389,6 +389,9 @@ on_main board/epics/ren-stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n#
 on_main board/stories/ren-story.md "---\nstatus: active\n---\n\n# ren-story\n\n${BODY}\n"
 on_main board/epics/ren-del.md "---\nstatus: active\n---\n\n# ren-del\n\n${BODY}\n"
 on_main board/epics/ren-ttl.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-ttl\n\n${BODY}\n"
+# del-*: epics a case deletes beside an unrelated one it adds, both with agreed: TODAY.
+on_main board/epics/del-dr.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# del-dr\n\n${BODY}\n"
+on_main board/epics/del-act.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# del-act\n\n${BODY}\n"
 git -C "${P}" fetch -q origin
 
 bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
@@ -502,6 +505,23 @@ guard_refused rnx "an active file moved into epics/ from outside it" "ren-story 
 # with another heading the new one reads as new, so it needs a ticket.
 bpr start rnu; rm "${ROOT}/proj-wt/_board-rnu/board/epics/ren-del.md"; ep rnu epics/ren-new.md "---\nstatus: active\n---\n\n# ren-new\n\n${BODY}\n"
 guard_refused rnu "an active epic deleted and an unrelated active one added, alike enough to pair" "ren-new ${NT} ren-new"
+# An agreed: date that an epic the PR deletes had at the base is no ticket, for a new epic git does not
+# pair with it (another heading and body, past the half-alike bar), so it reads as new. The refusal
+# names the deleted epic. del_new <name> <deleted> <agreed:> — board PR <name> deletes epics/<deleted>.md
+# and adds an active del-new.md with <agreed:>.
+NEW_BODY='A new epic written from scratch, which shares no line of its body with the one the same PR deletes.'
+del_new() {
+  bpr start "$1"; rm "${ROOT}/proj-wt/_board-$1/board/epics/$2.md"
+  ep "$1" epics/del-new.md "---\nstatus: active\nagreed: $3\n---\n\n# del-new\n\n${NEW_BODY}\n"
+}
+# reused <deleted> — the refusal of del-new, naming <deleted>.
+reused() { echo "board-pr: del-new goes active with no ticket (agreed: within the last 7 days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on): the agreed: date it carries is $1's, an epic this PR deletes; commit it as status: draft first, then run /swarm-dev:epic del-new"; }
+del_new dld del-dr "${TODAY}"
+guard_refused dld "a draft deleted and an unpaired active epic added with its agreed:" "$(reused del-dr)"
+del_new dla del-act "${TODAY}"
+guard_refused dla "an active epic deleted and an unpaired active one added with its agreed:" "$(reused del-act)"
+del_new dlf del-dr "$(day 3)"
+guard_opens dlf "a draft deleted and an unpaired active epic added with a fresh agreed:"
 # A rename that changes the heading too still compares the old copy's agreed:: a stale date under a
 # new heading is no ticket (the second Done when, by another route).
 bpr start rnt; git -C "${ROOT}/proj-wt/_board-rnt" mv board/epics/ren-ttl.md board/epics/ren-ttl2.md
