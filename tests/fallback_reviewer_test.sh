@@ -126,6 +126,13 @@ for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[2])):
         print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
     "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "${1:-}" | no_version
 }
+# ended — the last codex-review line's codex= field (codex_end's): how the run ended.
+ended() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields
+r = [l.rstrip("\n").split("\t") for l in open(sys.argv[2]) if l.split("\t")[1:2] == ["codex-review"]][-1]
+print(fields(r).get("codex", "-"))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv"
+}
 closed() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo yes; else echo no; fi; }
 live() { awk '{ print $1 }' "${ROOT}/agents" | tr '\n' ' '; }
 
@@ -150,6 +157,7 @@ check "its brief holds codex's story prompt" "yes" "$(has "Its Done when:" "$(ca
 check "its findings go to .swarm/reviews/fallback/s1.md" "yes" "$([[ -f "${p}/.swarm/reviews/fallback/s1.md" ]] && echo yes || echo no)"
 check "the stub's findings appear in codex-review's stdout" "yes" "$(has "- [P1] STUB FINDING — x.sh:3" "${out}")"
 check "stdout names the fallback for the PR body" "yes" "$(has "reviewed by fallback sonnet: codex usage limit" "${out}")"
+check "its codex-review line says codex=fallback" "fallback" "$(ended)"
 check "the fallback agent is closed once its findings are read" "yes|" "$(closed)|$(live)"
 check "with fallback_reviewer set, the codex-limit incident is logged too" "codex-s1|codex-limit: usage limit" "$(incidents | tail -1)"
 check "one incident per run" "2" "$(incidents | wc -l | tr -d ' ')"
@@ -219,6 +227,7 @@ touch "${ROOT}/startfail"
 review "fallback_reviewer = sonnet"
 check "a fallback whose start fails says codex was skipped and why, exiting as codex did" "1|yes" \
   "${rc}|$(has "codex skipped: usage limit (fallback did not start: fallback-s1: herdr could not start the agent" "${out}")"
+check "a fallback that did not start: its codex-review line says codex=skipped" "skipped" "$(ended)"
 rm "${ROOT}/startfail"
 touch "${ROOT}/promptfail"
 review "fallback_reviewer = sonnet"

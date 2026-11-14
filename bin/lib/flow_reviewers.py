@@ -1,8 +1,10 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
 # reviewer and kind, and the reworked PRs among those it raised them on, then the split critic's yield
 # per split, review rounds per PR, the yield of each review round (log-finding --round) and the round
-# each story's review stopped in, and with --epic the PRs counted.
-import collections, glob, os, re, subprocess
+# each story's review stopped in, with --epic the PRs counted, and last the story PRs merged in the window
+# with no codex review (the list to re-review once codex is back).
+import collections, datetime, glob, os, re, subprocess
+from events_outcome import fields as event_fields, outcome as event_outcome   # the loops below use outcome as a name
 from report import *
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
 urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
@@ -147,3 +149,49 @@ if epic:
     print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
 if rework_unknown(rows, since):
     print("\nrework: outcomes could not list every merged PR with gh (it failed or hit its limit), so some rework is unknown and counts as none.")
+# Merged without codex: each story PR merged in the window (by its merge's local day) whose every
+# codex-review run on its story, from the start of the PR's first build to its merge (so not an earlier
+# PR's, on a retry that opened its own), ended without codex reviewing, and how each ended.
+# codex-review's own line says so (codex=, with slug=; codex_end in bin/swarm.sh). A line from before it
+# did has no codex=: its run is the story's when a codex-<story> line came before it on the same pane
+# (a reap `timed out after`, an incident `codex-limit:` or `codex-unreachable`, all with slug=), and ended
+# in the fallback when the line is ok, else skipped; a run with neither (codex reviewed, or an unscoped
+# run) names no story. Reads events.tsv and outcomes' rows only: no gh call.
+def no_codex_runs():
+    runs, pending = collections.defaultdict(list), {}
+    for line in open(events, errors="ignore") if os.path.exists(events) else ():
+        f = line.rstrip("\n").split("\t")
+        if len(f) != 5:
+            continue
+        what, kv = event_outcome(f), event_fields(f)
+        if f[2].startswith("codex-") and kv.get("slug") and (
+                f[1] == "reap" and what.startswith("timed out after")
+                or f[1] == "incident" and (what.startswith("codex-limit:") or what == "codex-unreachable")):
+            pending[f[3]] = kv["slug"]
+        elif f[1] == "codex-review":
+            slug, how = (kv.get("slug"), kv["codex"]) if "codex" in kv else \
+                (pending.get(f[3]), "fallback" if what == "ok" else "skipped")
+            pending.pop(f[3], None)
+            at = merge_time(f[0])
+            if slug and at:
+                runs[slug].append((at, how))
+    return runs
+
+def build_start(r):
+    # When a build began, as outcomes places it: its session log's first time, else its agents.tsv day's
+    # local midnight; None when neither parses.
+    try:
+        return merge_time(r.get("started") or "") or datetime.datetime.strptime(r.get("date", ""), "%Y-%m-%d").astimezone()
+    except ValueError:
+        return None
+
+no_codex, runs = [], no_codex_runs()
+for k, r in {pr_key(r["pr"]): r for r in rows if r.get("merged_at")}.items():
+    merged = merge_time(r["merged_at"])
+    starts = [t for t in (build_start(x) for x in rows if pr_key(x["pr"]) == k) if t]
+    start = min(starts) if starts else None
+    ended = [how for at, how in runs.get(r["slug"], ()) if merged and at <= merged and (not start or at >= start)]
+    if merged and since <= str(local_day(merged)) <= until and ended and "reviewed" not in ended:
+        no_codex.append((r["slug"], urls.get(k, r["pr"]), str(local_day(merged)), ",".join(ended)))
+print("\nmerged_without_codex\tpr\tmerged\trounds")
+print("\n".join("\t".join(x) for x in sorted(no_codex, key=lambda x: (x[2], x[0]))) if no_codex else "none")

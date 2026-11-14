@@ -109,6 +109,13 @@ for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[2])):
         print(r[2] + "|" + outcome(r))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "$1"
 }
 count() { events "$1" | wc -l | tr -d ' '; }
+# ended — how the last codex-review line says the run ended: its codex= field (codex_end's), with its slug=.
+ended() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields
+r = [l.rstrip("\n").split("\t") for l in open(sys.argv[2]) if l.split("\t")[1:2] == ["codex-review"]][-1]
+print(fields(r).get("codex", "-") + " " + fields(r).get("slug", "-"))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv"
+}
 within() { if [[ "$2" -le "$1" ]]; then echo yes; else echo "no, $2 s"; fi; } # <most seconds> <seconds taken>
 # used — the seconds codex used before it was stopped: its time less the budget codex-review gave the
 # fallback ("within <N> s"), so the fallback's own start is not counted.
@@ -123,6 +130,7 @@ check "three reconnect lines then a hang: stopped within 30 s, a codex-unreachab
   "yes|0|codex-s1|codex-unreachable|yes|yes|yes" \
   "$(within 30 "$(used)")|${rc}|$(events incident)|$(logged '^agent start fallback-s1 .*--model sonnet ')|$(
     has "reviewed by fallback sonnet: codex unreachable" "${out}")|$(has "- [P1] STUB FINDING — x.sh:3" "${out}")"
+check "an unreachable codex the fallback reviewed for: its codex-review line says codex=fallback for s1" "fallback s1" "$(ended)"
 check "the fallback's brief says codex could not reach its provider" "yes" \
   "$(has "codex could not reach its model provider, so you review in its place" "$(cat "${p}/.swarm/briefs/fallback/s1.md")")"
 n="$(count incident)"
@@ -130,6 +138,7 @@ review "${HIGH}"
 check "with fallback_reviewer empty, three reconnect lines stop codex within 30 s and print codex skipped: unreachable" \
   "yes|1|yes|$((n + 1))|codex-s1|codex-unreachable|no" \
   "$(within 30 "${ran}")|${rc}|$(has "codex skipped: unreachable" "${out}")|$(count incident)|$(events incident | tail -1)|$(logged '^agent start')"
+check "an unreachable codex with no fallback: its codex-review line says codex=skipped" "skipped s1" "$(ended)"
 
 # --- One "stream disconnected before completion" line, then a hang: the same.
 codex "$(say "ERROR: stream disconnected before completion: error sending request for url (https://x.openai.azure.com/openai/responses)")" "sleep 120"
@@ -154,10 +163,12 @@ check "a timeout with fallback_reviewer set: the reap line, then the fallback wi
   "0|$((n + 1))|codex-s1|timed out after 10 min|yes|yes|yes|${i}" \
   "${rc}|$(count reap)|$(events reap | tail -1)|$(has "codex timeout: fallback sonnet reviews in its place, within 60 s" "${out}")|$(
     has "reviewed by fallback sonnet: codex timeout" "${out}")|$(has "- [P1] STUB FINDING — x.sh:3" "${out}")|$(count incident)"
+check "a timeout the fallback reviewed for: codex=fallback" "fallback s1" "$(ended)"
 n="$(count reap)"
 review 3
 check "a timeout with fallback_reviewer empty keeps codex skipped: timed out, its exit and its reap line, with no agent" \
   "1|yes|$((n + 1))|no" "${rc}|$(has "codex skipped: timed out after 10 min" "${out}")|$(count reap)|$(logged '^agent start')"
+check "a timeout with no fallback: codex=skipped" "skipped s1" "$(ended)"
 
 # --- One reconnect line that outlasts the wait, then a review: not stopped, no incident.
 codex "$(say "ERROR: Reconnecting... 1/5")" "sleep 17" "$(say "review: the change holds")" "exit 0"
@@ -166,6 +177,7 @@ review "${HIGH}" "fallback_reviewer = sonnet"
 check "one reconnect line held for 17 s, then a review: codex finishes, with no incident and no fallback" \
   "0|yes|yes|${i}|no" \
   "${rc}|$(has "review: the change holds" "${out}")|$(lacks "codex skipped" "${out}")|$(count incident)|$(logged '^agent start')"
+check "a codex that reviews after one reconnect line: codex=reviewed" "reviewed s1" "$(ended)"
 # Three reconnect lines followed by review output: the reconnects are no longer the last thing codex said.
 codex "$(say "ERROR: Reconnecting... 1/5")" "$(say "ERROR: Reconnecting... 2/5")" "$(say "ERROR: Reconnecting... 3/5")" \
   "$(say "review: reading x.sh")" "sleep 17" "$(say "review: the change holds")" "exit 0"

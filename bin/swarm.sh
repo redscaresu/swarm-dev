@@ -881,6 +881,7 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # exits with its output ending so, logs a `codex-unreachable` incident, and goes on as a limit does, with no retry; with fallback_reviewer
 # empty it dies "codex skipped: unreachable". On the timeout, with fallback_reviewer set, codex_fallback
 # reviews after the reap line with a whole codex_minutes of its own, since codex used all of the first.
+# codex-review's own events.tsv line carries slug=, role= and codex=<how the run ended> (codex_end).
 codex_review() {
   local pid tpid left budget deadline step rc m i args story prompt="" dir log files fields=() kv=() f try=1 stuck
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
@@ -967,12 +968,15 @@ codex_review() {
     trap "exit 143" TERM HUP
     [[ ${rc} -eq 0 ]] || codex_keep_tail "$1" "${log}" "${rc}"
     [[ ${rc} -eq 0 || -n "${CODEX_LIMIT_KIND}" ]] || CODEX_LIMIT_KIND="$(codex_limit "${log}")"
-    [[ -n "${CODEX_LIMIT_KIND}" ]] || return "${rc}"
+    if [[ -z "${CODEX_LIMIT_KIND}" ]]; then
+      if [[ ${rc} -eq 0 ]]; then codex_end reviewed; else codex_end failed; fi
+      return "${rc}"
+    fi
     # Not the slug alone, which is also its builder's agent name: login_incident would take this
     # line for the end of that builder's login episode. A rate limit on the retry is the first one still.
     if [[ "${CODEX_LIMIT_KIND}" == unreachable ]]; then
       record_event incident "codex-${SWARM_STORY:-$1}" "codex-unreachable" "${fields[@]+"${fields[@]}"}"
-      [[ -n "${CFG_fallback_reviewer}" ]] || die "codex skipped: unreachable"
+      [[ -n "${CFG_fallback_reviewer}" ]] || { codex_end skipped; die "codex skipped: unreachable"; }
     elif [[ ${try} -eq 1 || "${CODEX_LIMIT_KIND}" != rate ]]; then
       record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: ${CODEX_LIMIT_KIND} limit" "${fields[@]+"${fields[@]}"}"
     fi
@@ -985,11 +989,12 @@ codex_review() {
     # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
     # does not review exits there, as codex did.
     [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
+    codex_end skipped
     return "${rc}"
   done
   stop_codex "${pid}"
   record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min" "${fields[@]+"${fields[@]}"}"
-  [[ -n "${CFG_fallback_reviewer}" ]] || die "codex skipped: timed out after ${CFG_codex_minutes} min"
+  [[ -n "${CFG_fallback_reviewer}" ]] || { codex_end skipped; die "codex skipped: timed out after ${CFG_codex_minutes} min"; }
   { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
@@ -998,6 +1003,14 @@ codex_review() {
   CODEX_LIMIT_KIND=timeout
   codex_fallback "$1" "${prompt}" "${budget}" "${log}" 1
 }
+
+# codex_end <how> — keep the fields of codex-review's own events.tsv line (main writes it as the command
+# ends): the incident lines' slug= and role= (codex_review's local fields, which codex_fallback and
+# fallback_skip see as they run inside it) and codex=<how>, how the run ended: reviewed (codex reviewed),
+# fallback (the fallback reviewer reviewed in codex's place), skipped (neither did, after a limit, an
+# unreachable codex or the timeout) or failed (codex exited non-zero for none of those). Called once,
+# where the run ends. flow's reviewers section reads it to list the PRs that merged with no codex review.
+codex_end() { event_fields "${fields[@]+"${fields[@]}"}" "codex=$1"; }
 
 # codex_retry_wait <target> [key=value...] — codex hit its rate limit: say so, log a codex-retry line
 # (target codex-<story or base>, the incidents' slug/role tail; an event, not an incident), and sleep
@@ -1095,6 +1108,7 @@ FALLBACK_MIN_SECONDS="${SWARM_FALLBACK_MIN_SECONDS:-120}"
 fallback_skip() {
   local what
   what="$(codex_why)"; [[ "${CODEX_LIMIT_KIND}" != timeout ]] || what="timed out after ${CFG_codex_minutes} min"
+  codex_end skipped
   echo "codex skipped: ${what} ($2)" >&2; exit "$1"
 }
 
@@ -1156,6 +1170,7 @@ codex_fallback() {
   trap "fallback_close ${full}; exit 143" TERM HUP
   fallback_close "${full}"
   [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
+  codex_end fallback
   echo "reviewed by fallback ${CFG_fallback_reviewer}: codex $(codex_why)"
   cat "${out}"
 }

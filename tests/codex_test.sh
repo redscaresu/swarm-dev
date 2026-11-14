@@ -105,7 +105,15 @@ for r in (r for r in rows if r[1] == "reap"):
     print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
     "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "${1:-}" | no_version
 }
-last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv" | no_version; }
+# last_event — the last codex-review line's "target|outcome", without its tail; ended — that line's tail
+# (codex_end's slug=, role= and codex=) as sorted k=v words, version= left out.
+last_event() { awk -F'\t' '$2 == "codex-review" { o = $5; sub(/ ~~ .*/, "", o); o = $3 "|" o } END { print o }' "${P}/.swarm/events.tsv"; }
+ended() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields
+r = [l.rstrip("\n").split("\t") for l in open(sys.argv[2]) if l.split("\t")[1:2] == ["codex-review"]][-1]
+print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items()) if kv[0] != "version"))' "${SWARM%/*}/lib" "${P}/.swarm/events.tsv"
+}
 
 # --- A codex that sleeps past the limit is stopped, with its child, and named.
 # shellcheck disable=SC2016 # the stub's variable
@@ -126,6 +134,7 @@ review
 check "a codex that ignores TERM is stopped after the limit plus the default grace, within 3 s more" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -ge $((LIMIT + GRACE)) && ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
+check "a timed-out codex-review's line says codex=skipped" "codex=skipped" "$(ended)"
 left "the TERM-trapping timeout case"
 
 # --- One that traps TERM and starts a child every few ms is KILLed with every child it started: its
@@ -233,6 +242,7 @@ review
 check "a run removes a dead pid's marker, leaves none of its own and keeps a .tmp" "${P}/.swarm/state/codex-review.123.tmp" "$(markers)"
 rm "${P}/.swarm/state/codex-review.123.tmp"
 check "a codex that finishes passes its exit and findings through" "0|yes" "${rc}|$(has "P1: x.sh:3 drops the error" "${out}")"
+check "a codex that finishes: its codex-review line says codex=reviewed" "main|ok|codex=reviewed" "$(last_event)|$(ended)"
 check "codex runs as exec review --base origin/main, with no prompt" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
 check "codex reads /dev/null, never the caller's stdin" "" "$(cat "${BIN}/stdin")"
 left "a finished codex case"
@@ -309,6 +319,7 @@ mkdir -p "${P}/.swarm"; printf '2026-10-30\tcode\ts1\tclaude\topus\thigh\t-\n' >
 STORY=s1 AGENT=s1 review
 check "a story's codex past the limit adds one reap line, naming codex-<story>" "$((n0 + 1))|codex-s1|timed out after 10 min" "$(nreaps)|$(reaps | tail -n 1)"
 check "its reap line carries the story's slug and the role of the agent that ran it" "role=code slug=s1" "$(reaps fields | tail -n 1)"
+check "and its codex-review line carries them too, with codex=skipped" "codex=skipped role=code slug=s1" "$(ended)"
 check "a base's reap line, with no story or agent, carries neither" "" "$(reaps fields | head -n 1)"
 printf '2026-10-30\tconduct\tconduct-e1\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"
 AGENT=conduct-e1 review
@@ -338,7 +349,15 @@ review
 check "a usage limit exits as codex did, and the log says failed, not skipped" "1|yes|main|failed (exit 1)" \
   "${rc}|$(has "usage limit" "${out}")|$(last_event)"
 check "a codex that fails leaves no marker" "" "$(markers)"
+check "a usage limit with no fallback: codex=skipped" "codex=skipped" "$(ended)"
 left "the usage limit case"
+
+# --- A codex that fails for no limit, timeout or unreachable output: its exit, and codex=failed.
+stub 'echo "codex crashed"; exit 3'
+STORY=s1 review
+check "a codex that fails for no known reason exits as codex did, its line saying codex=failed" "3|main|failed (exit 3)|codex=failed slug=s1" \
+  "${rc}|$(last_event)|$(ended)"
+left "the unknown failure case"
 
 # --- A child of codex left holding its output does not hold codex-review: tee gets the grace after
 # codex exits, then is stopped, and what codex printed comes through.
