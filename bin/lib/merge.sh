@@ -169,6 +169,20 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent, or review-<slug> for story <slug>'s PR, merges from one"
 }
 
+# pane_review_name — review-<slug> when every tab record for the pane running this (HERDR_PANE_ID)
+# names review-<slug>, not a retired name (-done, -done<N>); else nothing. It reads the records only,
+# never herdr: review_pane's first step, and handed_review's check before it asks herdr anything.
+pane_review_name() {
+  local f tabs=() name
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
+  done
+  [[ ${#tabs[@]} -gt 0 ]] || return 0
+  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
+  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  echo "${name}"
+}
+
 # review_pane <agents> — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact
 # record: every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>),
 # the newest agents.tsv line for its agent name (agent_name) has role review, and in <agents>
@@ -177,13 +191,9 @@ merge_caller() {
 # record left stale (the agent exited, or retire_agent renamed it in herdr but could not rewrite
 # the record) has no such agent in the pane.
 review_pane() {
-  local f tabs=() name role
-  for f in "${STATE_DIR}"/*; do
-    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
-  done
-  [[ ${#tabs[@]} -gt 0 ]] || return 0
-  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
-  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  local name role
+  name="$(pane_review_name)"
+  [[ -n "${name}" ]] || return 0
   role="$(awk -F'\t' -v n="$(agent_name "${name}")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
   [[ "${role}" == review ]] || return 0
   [[ "$(SWARM_PANE="${HERDR_PANE_ID}" SWARM_NAME="$(agent_name "${name}")" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" <<< "$1" 2>/dev/null)" != True ]] \
