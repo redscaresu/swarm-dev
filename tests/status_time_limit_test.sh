@@ -119,7 +119,8 @@ gh_at=$(( $(cat "${ROOT}/gh-at") - ${t0%.*} + 1 + REPORT_SECONDS ))
 
 # slow <var> <what> <read> [deadline] — with the stub <var> slows sleeping STUB_SLEEP, status ends
 # within REPORT_SECONDS of the fast run's time, names <read>, the one cut at the deadline, first on its
-# last line (every read after it is skipped at once and named after it), and still prints its sections.
+# last line (every read after it is skipped at once and named after it), and still prints its section
+# headings, Waiting on you's as skipped: the cut comes before it, so it is due past the deadline.
 # Its output is left in SLOW_OUT for a check of its own.
 slow() {
   local t0 t1 last
@@ -128,7 +129,8 @@ slow() {
   last="$(tail -n 1 <<< "${SLOW_OUT}")"
   is "$2 sleeping past the deadline: the last line names the read cut first" \
     "skipped (over ${4:-${REPORT_SECONDS}} s): $3" "${last%%,*}"
-  is "$2 sleeping past the deadline: status still prints its sections" 1 "$(grep -cx 'Waiting on you' <<< "${SLOW_OUT}" || true)"
+  is "$2 sleeping past the deadline: status prints Waiting on you's heading, skipped" 1 \
+    "$(grep -cx "Waiting on you: skipped (over ${4:-${REPORT_SECONDS}} s)" <<< "${SLOW_OUT}" || true)"
 }
 slow HERDR_SLEEP herdr "herdr agent list"
 slow GH_SLEEP gh "gh pr list" "${gh_at}"

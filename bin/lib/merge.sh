@@ -2224,6 +2224,17 @@ report_read() {
   return "${rc}"
 }
 
+# report_due <section> — succeed while the report's deadline (REPORT_END) is ahead. At or past it,
+# add <section> to the skip file, after the reads already cut there, and fail: the caller runs none of
+# the section and prints `<section>: skipped (over <REPORT_SECONDS> s)` in its place. A section that
+# started before the deadline runs to its end, so a report runs at most the deadline plus its slowest
+# section. Only status calls it.
+report_due() {
+  perl -MTime::HiRes=time -e 'exit(time < shift ? 0 : 1)' -- "${REPORT_END:?report_due: no report_start}" && return 0
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "$1" >> "${REPORT_SKIP_FILE}"
+  return 1
+}
+
 # report_cuts — how many reads report_read has cut or skipped since report_start or the last
 # report_skipped, 0 outside a report: a count that changed between two calls means a read between
 # them was cut.
@@ -3329,7 +3340,9 @@ stacked_lines() {
 # report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
 # to them the same way. A read cut there, or due after it, fails as it would on an error, and
-# report_skipped's line, printed last, names it.
+# report_skipped's line, printed last, names it. The Stacked, Waiting on you and Next (with its idle:
+# lines) sections each start only before the deadline (report_due): one due at or past it is not run,
+# its heading reads `<section>: skipped (over N s)`, and the last line names it after the reads cut.
 # status_time [<section>|total] — with SWARM_REPORT_TIMES=1 (for diagnosis, like SWARM_REPORT_SECONDS;
 # no config key), write `time: <section> <s.mmm>` to stderr: the seconds since the last mark, or with
 # total since the first, by now_ms, run_time_start's clock. No argument only sets the first mark. Any
@@ -3396,26 +3409,40 @@ status_report() {
     upgrade_status
   fi
   status_time agents
-  local stacked; stacked="$(stacked_lines)" || true
-  [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
-  status_time stacked
-  echo; echo "Waiting on you"
-  waiting="$(waiting_on_user)"
-  if [[ "${all}" != --all ]]; then
-    local blocked
-    blocked=$(grep -c '^  blocked:' <<< "${waiting}" || true)
-    waiting="$(grep -v '^  blocked:' <<< "${waiting}" || true)"
-    [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
+  # Each section below runs only while the deadline is ahead (report_due); one due at or past it is
+  # skipped, its heading says so, and the last line names it after the reads cut.
+  local stacked cut="skipped (over ${REPORT_SECONDS} s)"
+  if ! report_due Stacked; then printf '\nStacked: %s\n' "${cut}"
+  else
+    stacked="$(stacked_lines)" || true
+    [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
   fi
-  if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  status_time stacked
+  echo
+  if ! report_due "Waiting on you"; then echo "Waiting on you: ${cut}"
+  else
+    echo "Waiting on you"
+    waiting="$(waiting_on_user)"
+    if [[ "${all}" != --all ]]; then
+      local blocked
+      blocked=$(grep -c '^  blocked:' <<< "${waiting}" || true)
+      waiting="$(grep -v '^  blocked:' <<< "${waiting}" || true)"
+      [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
+    fi
+    if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  fi
   status_time waiting
-  local nx; nx="$(next_lines)"
-  echo; echo "Next"
-  [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
-  status_time next
-  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
-  # next would take goes with it, so the epic that step names gets no idle: line.
-  idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  echo
+  if ! report_due Next; then echo "Next: ${cut}"; status_time next
+  else
+    local nx; nx="$(next_lines)"
+    echo "Next"
+    [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
+    status_time next
+    # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
+    # next would take goes with it, so the epic that step names gets no idle: line.
+    idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  fi
   status_time idle
   local skipped; skipped="$(report_skipped)"
   [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
