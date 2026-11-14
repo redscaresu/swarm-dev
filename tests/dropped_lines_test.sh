@@ -247,6 +247,39 @@ check "a merge of a stacked parent branch is unchecked, with its reason, not dro
 check "a range git cannot read exits 2 saying so" \
   "cannot list the merges in main..nope: fatal: bad revision 'main..nope'"$'\n'"exit 2" "$(scan "${R}" main nope)"
 
+# squashed_parent <name> — new_repo <name> with pr as a stacked build's parent: pr's merge of main keeps
+# three-pr and three-main, dropping main-added on purpose; child, stacked on pr, adds c; then pr
+# squash-merges into main, so main's f no longer has main-added, and pr's merge, still in child's
+# history, is not on main. Leaves child checked out; prints the repo's path.
+squashed_parent() {
+  local d; d="$(new_repo "$1")"; conflict "${d}"
+  lines three-pr three-main | merge "${d}" main - >/dev/null
+  git -C "${d}" checkout -q -b child pr; echo c1 | put "${d}" c
+  on "${d}" main; git -C "${d}" merge -q --squash pr >/dev/null; git -C "${d}" commit -qm 'the parent (#1)'
+  on "${d}" child; echo "${d}"
+}
+
+# A line the base itself no longer has does not count: at main's tip, then also at child's merge base
+# with main, then only there.
+R="$(squashed_parent inherited)"
+check "a stacked child's parent's merge dropped a line main's squash took off, child not merged with main since: nothing" \
+  "exit 0" "$(scan "${R}" main child)"
+merge "${R}" main >/dev/null
+check "the same once child has merged main: nothing" "exit 0" "$(scan "${R}" main child)"
+on "${R}" main; { cat "${R}/f"; echo main-added; } > "${tmp}/f.again"; put "${R}" f < "${tmp}/f.again"; on "${R}" child
+check "the same once main has the line again, after child's merge of main: nothing" "exit 0" "$(scan "${R}" main child)"
+
+# squashed_f [<line>...] — main's f after squashed_parent's squash, with seven replaced by these lines
+squashed_f() { printf '%s\n' one two three-pr three-main "${BASE0[@]:3:3}" "$@" "${BASE0[@]:7}"; }
+
+# child's own merge of main drops a line main still has: main replaces seven with seven-main and
+# seven-added, child with seven-child, and the resolution keeps seven-child and seven-main.
+R="$(squashed_parent owndrop)"
+on "${R}" main; squashed_f seven-main seven-added | put "${R}" f; on "${R}" child; squashed_f seven-child | put "${R}" f
+M="$(squashed_f seven-child seven-main | merge "${R}" main -)"
+check "a stacked child's own merge drops a line main still has: it prints; its parent's merge prints nothing" \
+  "${M:0:7} f: seven-added"$'\n'"exit 1" "$(scan "${R}" main child)"
+
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
 # commits (${tmp}/commits.json, honouring --jq) and logs each call.

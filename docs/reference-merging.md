@@ -228,7 +228,12 @@ once when the merge base's file has no copy of it, as when one change reaches th
 merge and the branch by its own commit. The merge then owes as many copies as the side with more of
 them, so a resolution that keeps one copy has dropped nothing. If the merge base's file already has
 the line, each side's new copy is still owed, since two new copies of a `}` or a `fi` can be two
-separate additions. When `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
+separate additions. A line the base itself no longer has does not count: when the base's file has
+no copy of it at the base's tip, or at the PR's merge base with the base, the line is not printed.
+A stacked build keeps its parent's merges in its history after the parent's squash merge lands on
+the base, so a line one of those merges dropped on purpose stops counting once the squash has taken
+it off the base. A line the PR's own merge drops while the base still has it still prints. When
+`dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
 holds the PR too and says why: `held: <slug> (dropped base lines unchecked: <why>); the user checks the
@@ -1041,6 +1046,7 @@ It changes nothing and logs nothing.
 It works in the clone of `<owner/repo>` (the project, or `<repos_dir>/<name>`), whose origin must be that repo.
 It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/head` and `<base>` into refs of its own, and checks that the fetched commit is `<head>`.
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
+A line counts only while the base still has it, both at the fetched `<base>` and at the PR's merge base with it.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
 Each dropped line prints as `<sha7> <file>: <text>`.
