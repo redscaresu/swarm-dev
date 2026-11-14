@@ -100,6 +100,7 @@ It stops only for decisions that are yours. The common ones:
 - `swarm.sh dash --watch`: the live dashboard in the recording above.
 - `swarm.sh status`: what needs a look and what waits on you.
 - `swarm.sh flow`: what the run cost, where the time went, and how the reviews did.
+- `swarm.sh retro`: the lists a retro goes through with you before a minor release.
 
 ## Cost and safety
 
