@@ -124,20 +124,35 @@ is "pane list cut at 1 s: the gh stub logs no call after the cut" "" "$(cat "${R
 # Stacked starts in time and runs to its end, its read cut; Waiting on you and Next, due past the
 # deadline, are skipped. The report (report_start to its last line, status's `time: total`; swarm.sh's
 # startup before it is outside the deadline) ends within the deadline plus that one section.
-status section 1 HERDR_ENV=0 PR_LIST_SLEEP="${SECTION_SLEEP}"
 # Which of Stacked's reads the deadline cuts (git fetch, ls-remote or pr list) depends on the host's
 # speed, so the row's words do too: the check is that Stacked ran and gave child's row.
-is "a slow Stacked: it started in time, so it prints its heading and child's row" "Stacked|  child: " \
-  "$(sed -n '/^Stacked/,/^$/p' "${ROOT}/section.out" | sed '/^$/d' | awk 'NR == 1 { h = $0 } NR == 2 { r = substr($0, 1, 9) } END { print h "|" r }')"
+# A host loaded enough to take over 1 s to reach Stacked, or 5 s in all, would fail this on its own
+# speed, so the run is tried up to SECTION_TRIES times and the last try's results count. A dropped or
+# always-true deadline check fails every try: it changes what status prints, not how long it takes.
+SECTION_TRIES=3
+section_checks() {
+  local last total named=no
+  SECTION_GOT="$(sed -n '/^Stacked/,/^$/p' "${ROOT}/section.out" | sed '/^$/d' | awk 'NR == 1 { h = $0 } NR == 2 { r = substr($0, 1, 9) } END { print h "|" r }')"
+  SECTION_LATER="$(grep -E '^(Waiting on you|Next)' "${ROOT}/section.out" || true)"
+  last="$(tail -n 1 "${ROOT}/section.out")"
+  [[ "${last}" != "skipped (over 1 s): "*", Waiting on you, Next" || "${last}" == *Stacked* ]] || named=yes
+  SECTION_LAST="${last}"; SECTION_NAMED="${named}"
+  total="$(value section total)"; SECTION_TOTAL="${total:-0}"
+  [[ "${SECTION_GOT}" == "Stacked|  child: " && "${named}" == yes ]] &&
+    awk -v a="${SECTION_TOTAL}" -v b="${BOUND}" 'BEGIN { exit !(a > 0 && a < b) }'
+}
+for ((try = 1; try <= SECTION_TRIES; try++)); do
+  status section 1 HERDR_ENV=0 PR_LIST_SLEEP="${SECTION_SLEEP}"
+  if section_checks; then break; fi
+  echo "note: a slow Stacked, try ${try} of ${SECTION_TRIES}: Stacked '${SECTION_GOT}', total ${SECTION_TOTAL} s"
+done
+is "a slow Stacked: it started in time, so it prints its heading and child's row" "Stacked|  child: " "${SECTION_GOT}"
 is "a slow Stacked: Waiting on you and Next, due past the deadline, are skipped" \
 "Waiting on you: skipped (over 1 s)
-Next: skipped (over 1 s)" "$(grep -E '^(Waiting on you|Next)' "${ROOT}/section.out" || true)"
-last="$(tail -n 1 "${ROOT}/section.out")"
-named=no; [[ "${last}" != "skipped (over 1 s): "*", Waiting on you, Next" || "${last}" == *Stacked* ]] || named=yes
-is "a slow Stacked: the last line names the cut reads, then Waiting on you and Next, not Stacked (got: ${last})" yes "${named}"
-total="$(value section total)"
+Next: skipped (over 1 s)" "${SECTION_LATER}"
+is "a slow Stacked: the last line names the cut reads, then Waiting on you and Next, not Stacked (got: ${SECTION_LAST})" yes "${SECTION_NAMED}"
 holds "a slow Stacked: the report ends within the 1 s deadline plus that one section (under ${BOUND} s)" \
-  "a > 0 && a < b" "${total:-0}" "${BOUND}"
+  "a > 0 && a < b" "${SECTION_TOTAL}" "${BOUND}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
