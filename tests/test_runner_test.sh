@@ -107,6 +107,12 @@ stop_case() {
     sleep 0.1
   done
   [[ -n "${left_now}" ]] || { wait "${pid}"; } 2>/dev/null || true
+  # What is left, by PID, parent, group, state and command, and the run's own output, so a red run says
+  # which process the TERM did not reach.
+  # shellcheck disable=SC2046 # one PID a word
+  [[ -z "${left_now}" ]] || left_now="$(ps -ww -o pid=,ppid=,pgid=,stat=,args= -p "$( (snap_live | cut -d' ' -f1; pgrep -f "${d}/" || true) | sort -u | paste -sd, -)" 2>&1 || true)
+the run's output:
+$(cat "${d}/out")"
   check "${name}: a TERM to make leaves no process of the run within 10 s (it had $(wc -l < "${snap}" | tr -d ' '))" "${left_now:-none}" "none"
   check "${name}: the run printed only the first file's run line besides make's own lines: no second file started" \
     "$(grep -v '^make' "${d}/out" || true)" "run  ${d}/slow_a_test.sh"
