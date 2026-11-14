@@ -122,7 +122,7 @@ check "outside a git checkout it names plugin.json's version and says it is not 
   "written by swarm.sh at version ${version}, not a git checkout"
 check "reading that version imports no json.py from the project" "$([[ -e "${ROOT}/json-imported" ]] && echo imported || echo none)" none
 check "a section that raises prints its error and fails the run" "$(grep '^error:' <<< "${out}") rc=${rc}" "error: aa_boom: broken on purpose rc=1"
-check "the sections still run, in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## memories ## recurring ## zz_lib "
+check "the sections still run, in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## findings ## incidents ## memories ## zz_lib "
 check "a section imports bin/lib's report.py" "$(sed -n '/^## zz_lib$/{n;p;}' <<< "${out}")" "${C}/bin/lib/report.py"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
