@@ -102,17 +102,20 @@ stop_case() {
   # By the clock, not a count of polls: on a busy machine each poll's ps and pgrep take most of a second.
   end=$((SECONDS + 10))
   while :; do
-    left_now="$(snap_live)$(pgrep -f "${d}/" || true)"
+    left_now="$(snap_live; pgrep -f "${d}/" || true)"
     [[ -n "${left_now}" && ${SECONDS} -lt ${end} ]] || break
     sleep 0.1
   done
   [[ -n "${left_now}" ]] || { wait "${pid}"; } 2>/dev/null || true
-  # What is left, by PID, parent, group, state and command, and the run's own output, so a red run says
-  # which process the TERM did not reach.
-  # shellcheck disable=SC2046 # one PID a word
-  [[ -z "${left_now}" ]] || left_now="$(ps -ww -o pid=,ppid=,pgid=,stat=,args= -p "$( (snap_live | cut -d' ' -f1; pgrep -f "${d}/" || true) | sort -u | paste -sd, -)" 2>&1 || true)
-the run's output:
-$(cat "${d}/out")"
+  # What is left, by PID, parent, group, state and command, with the signals each ignores and blocks
+  # where /proc has them (Linux), and the run's own output, so a red run says which process the TERM
+  # did not reach.
+  [[ -z "${left_now}" ]] || left_now="$(left_pids="$( (snap_live | cut -d' ' -f1; pgrep -f "${d}/" || true) | sort -u)"
+    ps -ww -o pid=,ppid=,pgid=,stat=,args= -p "$(paste -sd, - <<< "${left_pids}")" 2>&1 || true
+    for x in ${left_pids}; do
+      [[ ! -r "/proc/${x}/status" ]] || echo "${x} $(grep -E '^Sig(Ign|Blk):' "/proc/${x}/status" | tr '\t\n' '  ')"
+    done
+    echo "the run's output:"; cat "${d}/out")"
   check "${name}: a TERM to make leaves no process of the run within 10 s (it had $(wc -l < "${snap}" | tr -d ' '))" "${left_now:-none}" "none"
   check "${name}: the run printed only the first file's run line besides make's own lines: no second file started" \
     "$(grep -v '^make' "${d}/out" || true)" "run  ${d}/slow_a_test.sh"
