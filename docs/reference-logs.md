@@ -964,7 +964,10 @@ By default it is Claude Code's memory folder for the project: the projects folde
 An empty folder prints `no memory notes: <dir> holds none`, and a missing one `no memory notes: <dir> does not exist`.
 
 **reaped.** The test files and codex runs that were killed for running too long since the tag, from the `reap` lines in `events.tsv`.
-`swarm.sh retro` does not print this list yet.
+It prints one row for each `reap` line on or after the window's day, in local time: the line's local day, its target and its outcome, then its `slug=` and `role=` fields when it has them.
+Then it prints a count for each target, the most first.
+The last line says that a fallback reviewer killed on its timeout writes no `reap` line, so the list is not every kill.
+With no `reap` line since the day it prints `no reap lines since <day> in <events.tsv>`, and with no `events.tsv` it prints `no reap lines: <events.tsv> does not exist`.
 
 **recurring.** The finding kinds that keep coming back and still have no check, with related kinds counted together.
 `swarm.sh retro` does not print this list yet.
