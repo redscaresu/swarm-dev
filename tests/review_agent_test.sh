@@ -189,6 +189,8 @@ check "the brief says to wait for codex-review to exit, never to stop early on a
 # The green step comes before the review: wait-pr, then the triage of check-run notes and alerts.
 # Each swarm.sh call names the project: the agent runs in the story's worktree, outside it.
 flat="$(tr -s '[:space:]' ' ' <<< "${brief}")"; sw="SWARM_PROJECT=${p} ${SWARM}"
+# The follow the brief gives at each place the PR's head moves under a round (follow_moved).
+FOLLOW="run the green step above on the new head, waiting with \`${sw} wait-pr --head <that head, from git rev-parse HEAD> ${PR}\`, then run \`${sw} review-agent --next s1 ${PR}\` and do the round it prints in this session, as following a moved head says above"
 # The sentence finding_rule gives every review agent: which --reviewer value names which reviewer.
 MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's own reading keeps the conductor's old value), and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
@@ -284,8 +286,24 @@ check "the brief has the agent fix or decline each finding and log each with log
   "$(has "Otherwise, fix or decline each finding. One that is real and inside the story is to fix: the builder fixes it, never you." "${flat}")|$(has "log-finding --declined <reason> --reviewer <who> --round <n> <kind> <PR URL>" "${flat}")|$(has "Log each declined one now, as below; log each one to fix only once the builder has pushed, as below. A finding's round is 1 on this first review, then the round \`review-agent --next\` prints." "${flat}")|$(has "Log nothing before then: a fix in this worktree is not on the PR until the push lands. With the PR at that head, read the new diff (\`git diff <the head you reviewed> HEAD\`) and log each finding you sent: as fixed when the diff fixes it, and as declined, with the reason that fits and \`--because \"<the builder's reason, one line>\"\`, when the builder declined it with a reason you accept;" "${flat}")|$(has "report its findings as codex's, under that line, and log each with \`--reviewer fallback\`, as below." "${flat}")"
 check "the declined findings are rebutted in one PR comment with its body given" "yes" \
   "$(has "Rebut the declined ones in the PR, in one comment: \`gh pr comment ${PR} --body '<each declined finding and its reason>'\`." "${flat}")"
-check "the brief waits for the builder before its findings tell, then runs --next on the green head, and stops on a moved head only before any findings went out" "yes|yes|yes|yes" \
-  "$(has "With findings to fix, write it to ${p}/.swarm/reviews/s1.round.md instead, after \`rm -f ${p}/.swarm/reviews/s1.round.md\` (the Write tool refuses to overwrite a file this session has not read), and never to ${p}/.swarm/reviews/s1.md, which would end the round as a finished review." "${flat}")|$(has "Otherwise wait before you tell, so the findings go at once and count their round now: wait for the builder as above, then run \`${sw} tell s1 findings ${p}/.swarm/reviews/s1.round.md\`." "${flat}")|$(has "run \`${sw} review-agent --next s1 ${PR}\` and do the round it prints (codex alone from round 2)" "${flat}")|$(has "When the builder pushed past ${HEAD_SHA} before any findings or wording nudge went to it, write ${p}/.swarm/reviews/s1.md with the Write tool holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <the green head>\`, then stop; once findings went to it, run \`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\` first, as below." "${flat}")"
+check "the brief waits for the builder before its findings tell and then runs --next on the green head; a push before any findings went out is followed with the green step and --next" "yes|yes|yes|yes" \
+  "$(has "With findings to fix, write it to ${p}/.swarm/reviews/s1.round.md instead, after \`rm -f ${p}/.swarm/reviews/s1.round.md\` (the Write tool refuses to overwrite a file this session has not read), and never to ${p}/.swarm/reviews/s1.md, which would end the round as a finished review." "${flat}")|$(has "Otherwise wait before you tell, so the findings go at once and count their round now: wait for the builder as above, then run \`${sw} tell s1 findings ${p}/.swarm/reviews/s1.round.md\`." "${flat}")|$(has "run \`${sw} review-agent --next s1 ${PR}\` and do the round it prints (codex alone from round 2)" "${flat}")|$(has "When the builder pushed past ${HEAD_SHA} before any findings or wording nudge went to it, that head has had no review: ${FOLLOW}; once findings went to it, run \`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\` first, as below." "${flat}")"
+# The two other places a head moves under a round: the worktree at the review's end, and review --head's
+# refusal of the pass. Each follows the new head in the same session, as the green step's push does; if
+# one went back to writing head moved: and stopping, the new head would wait on the conductor's restart.
+check "a worktree whose HEAD moved by the review's end is followed with the green step and --next, writing no review file" "yes" \
+  "$(has "If HEAD moved, the worktree moved under you, so this review is of a head the PR no longer has: drop its findings, wait for the builder as above, and ${FOLLOW}." "${flat}")"
+# Uncommitted changes at the head the review started on are no moved head: --next would refuse them with
+# its round error (no next round, or the round started already), which the follow does not handle. If the
+# brief followed them, the agent would drop its findings and stop on that misleading line. Nor does the
+# review stand once the worktree is clean again: codex-review reads the worktree, committed or not, so it
+# may have read code the head does not have. If the brief kept that review, a pass could land on a head
+# nobody reviewed as it is. The dropped-lines check reads the PR's merges, never the worktree: if the brief
+# dropped its lines too, the second review could pass a head whose merge still drops a base line.
+check "uncommitted changes at the start head drop the review but the dropped-lines check's lines, wait for the builder and check again: follow a moved HEAD, review a clean head again as the same round, else stop with head moved:" "yes" \
+  "$(has "If HEAD is still ${HEAD_SHA} but the worktree has uncommitted changes, the PR's head has not moved: the builder is at work in it. This review may have read those changes, since codex-review reads the worktree, committed or not, so it is no review of ${HEAD_SHA}: drop its verdict and every finding but the dropped-lines check's. That check reads the PR's merges, never the worktree, so what it printed for ${HEAD_SHA} still holds. Wait for the builder as above, then check again. If HEAD moved by then, follow it as just said. If the worktree is clean at ${HEAD_SHA}, review ${HEAD_SHA} again in this session, as the same round: run codex-review once more, as above, and what this round's line has you run with it, then make this check again. Otherwise write ${p}/.swarm/reviews/s1.md with the Write tool holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <what changed>\`, then stop." "${flat}")"
+check "the follow is said once: no review file for the old head, and a second worktree refusal of --next on one head ends it with head moved:" "yes|yes" \
+  "$(has "To follow a moved head, write no review file for the head you were on, run the green step below on the new head, then \`review-agent --next\`" "${flat}")|$(has "When --next refuses because the worktree is not at the PR's head or has uncommitted changes, the builder is still at work: wait for it as above, then follow again from the green step. A second such refusal on the same head ends the follow: write ${p}/.swarm/reviews/s1.md with the Write tool holding two lines, \`head: <the head you were on>\` and \`head moved: <that refusal line>\`, then stop." "${flat}")"
 # Every wait on the builder is wait --stall, which a stall steps up with the ladder on, and one that
 # ends any other way than idle ends the agent's turn: a tell refused as still working then cannot loop.
 check "the brief waits on the builder with wait --stall, carries on when it prints idle or done, and stops when it ends any other way" "yes|yes|yes" \
@@ -912,10 +930,15 @@ check "the merge = agent brief has one review --head and one merge --head comman
   "${a_review}|$(grep -v -e '<new head>' -e 'merge --head <sha> ' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
-# A head pushed since the review is not reviewed in this session: it ends the agent with head moved:
-# and a stop note, on which the conductor starts a new review agent on the new head.
-check "a moved head after a pass writes head moved: and stops, names who restarts the review, and flags a story left in review" "yes|yes|yes|0" \
-  "$(has "When review or merge refuses because the PR's head is no longer ${HEAD_SHA} (a push since your review), that head has had no review, and you do not review it in this session." "${abrief}")|$(has "Write ${p}/.swarm/reviews/h1.md again with the Write tool, holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <the head review or merge named>\`, then send the conductor the stop note, as below, naming that \`head moved:\` line, and stop: the conductor starts a new review agent on the new head on that note (the lead does when no conductor runs)." "${abrief}")|$(has "your reply's first line says \`h1 is in review on <the new head>, which nobody reviewed\`" "${abrief}")|$(grep -c "that head has had no review: run" <<< "${abrief}" || true)"
+# A head pushed since the review: review --head's refusal is followed in this session (the story is not
+# in review yet), once the agent has moved its pass of the old head aside. merge's refusal comes once review put
+# the story in review, so it still ends the agent with head moved: and a stop note, on which the
+# conductor starts a new review agent on the new head.
+AFOLLOW="run the green step above on the new head, waiting with \`SWARM_PROJECT=${p} ${SWARM} wait-pr --head <that head, from git rev-parse HEAD> ${PRA}\`, then run \`SWARM_PROJECT=${p} ${SWARM} review-agent --next h1 ${PRA}\` and do the round it prints in this session, as following a moved head says above"
+check "review's moved-head refusal moves the pass aside first, then follows in the same session with the green step and --next" "yes" \
+  "$(has "When review refuses because the PR's head is no longer ${HEAD_SHA} (a push since your review), that head has had no review, and the story is not in review. First move your pass of ${HEAD_SHA} aside, with \`mv ${p}/.swarm/reviews/h1.md ${p}/.swarm/reviews/h1.md.prev\`, so no review file is there while you follow: a wait on you, or a review agent's start, would read it as a finished review. Then write no review file for the new head yet, and ${AFOLLOW}." "${abrief}")"
+check "merge's moved-head refusal writes head moved:, sends the stop note and stops, names who restarts the review, and flags the story left in review" "yes|yes" \
+  "$(has "When merge refuses because the PR's head is no longer ${HEAD_SHA}, review had already put the story in review, and you do not review that head in this session. Write ${p}/.swarm/reviews/h1.md again with the Write tool, holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <the head merge named>\`, then send the conductor the stop note, as below, naming that \`head moved:\` line, and stop: the conductor starts a new review agent on the new head on that note (the lead does when no conductor runs)." "${abrief}")|$(has "Your reply's first line says \`h1 is in review on <the new head>, which nobody reviewed\`" "${abrief}")"
 # A merge whose base moved merges the base in, waits and merges the new head itself: the review agent
 # leaves it running, reads already merged: as done, nudges the builder on a red or conflicting
 # base-merged head, takes any other base merged, <cause>: refusal as any other, and never runs
@@ -986,6 +1009,155 @@ check "the lead's kept arm starts review-agent once, waits on it (again while bu
 # there), and a multi-PR line's heads may have moved since each agent passed its PR.
 check "the kept arm reads head moved: and stopped: before taking a story in review as a pass, and re-reads each PR's head before a multi-PR review" "yes|yes" \
   "$(python3 -c 'import sys; t = sys.argv[1]; a = t.find(sys.argv[2]); b = t.find(sys.argv[3]); c = t.find(sys.argv[4]); print("yes" if 0 <= a < b < c else "no")' "${kept}" "If it has a \`head moved:\` line" "If the file has a \`stopped:\` line" "Otherwise the file is a pass. If the story is in review with no \`kept:\` line")|$(has "Once every PR has passed, read each PR's head again (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`) and compare it with the head noted for it: a PR whose head moved since has had no review, so start the review agent on it again. Only when every PR's head is still the one that passed, run \`swarm.sh review <slug>\` with every PR URL on the line" "${kept}")"
+
+# --- A head that moves under round 1 with no findings tell is followed in the same session (follow_moved):
+# the brief's green step on the new head, its review-agent --next, the round that prints (its dropped-lines
+# check and a codex review), then its pass step on the new head. The LLM review step is not run: each
+# command is taken from the brief or from what --next prints, and run from the review pane. The stubs log
+# what reached them to ${FLOWLOG}: the CI stub (the merge stub's gh) the head each check-run read named,
+# the reviewer stub (codex) the commit it was run on; the driver adds the dropped-lines head and the verdict.
+FLOWBIN="${ROOT}/flow-bin"; FLOWLOG="${ROOT}/flow.log"; mkdir -p "${FLOWBIN}"
+# gh: --next's and review_at_head's head read (--jq .headRefOid, which the merge stub does not filter) is
+# ${FXH}/head; every other call goes to the merge stub, a check-run read logged with its head first.
+cat > "${FLOWBIN}/gh" <<EOF
+#!/bin/sh
+case "\$*" in
+  *"--jq .headRefOid"*) cat "${FXH}/head"; exit ;;
+  *"/check-runs"*) for a in "\$@"; do p="\${a}"; done; s="\${p#*/commits/}"; echo "ci \${s%%/*}" >> "${FLOWLOG}" ;;
+esac
+exec "${MGH}/gh" "\$@"
+EOF
+cat > "${FLOWBIN}/codex" <<EOF
+#!/bin/sh
+cat > /dev/null; echo "codex \$(git rev-parse HEAD)" >> "${FLOWLOG}"; echo "No findings."
+EOF
+chmod +x "${FLOWBIN}/gh" "${FLOWBIN}/codex"
+# dropped-lines fetches the PR's head from an origin whose URL ends in o/svc: for this block, svc's clone
+# points at such a copy of svc.git, each push published as refs/pull/<n>/head (push_to), put back after.
+FLOWORIGIN="${ROOT}/flow-origin/o/svc.git"; mkdir -p "${FLOWORIGIN%/*}"
+git clone -q --bare "${ROOT}/svc.git" "${FLOWORIGIN}"; git -C "${ROOT}/svc" remote set-url origin "${FLOWORIGIN}"
+# flow_pane <slug> <command> — <command> from review-<slug>'s pane, as from_pane runs it, with the flow
+# stubs first and a minute for a CI read: a slow read is no failure of the follow.
+flow_pane() {
+  local pane; pane="$(awk -v n="review-$1" '$1 == n { p = $2 } END { print p }' "${ROOT}/agents")"
+  (cd "${ROOT}/svc-wt/$1" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID="${pane}" PATH="${FLOWBIN}:${MGH}:${STUB_BIN}:${PATH}" \
+    SWARM_AGENT="review-$1" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=60 bash -c "$2" 2>&1)
+}
+# push_to <slug> <PR URL> — the builder's push: a new commit on <slug>'s worktree, which the PR's head (both
+# gh stubs, and the origin's refs/pull/<n>/head) now names, its CI green as the first head's. Prints it.
+push_to() {
+  local wt="${ROOT}/svc-wt/$1" h
+  h="$("${GIT[@]}" -C "${wt}" commit-tree "HEAD^{tree}" -p HEAD -m "push $1")"; "${GIT[@]}" -C "${wt}" reset -q --hard "${h}"
+  git -C "${wt}" push -q -f origin "${h}:refs/pull/${2##*/}/head"
+  echo "${h}" > "${ROOT}/head"; echo "${h}" > "${FXH}/head"
+  cp "${FXH}/${HEAD_SHA}.checks" "${FXH}/${h}.checks"; cp "${FXH}/${HEAD_SHA}.status" "${FXH}/${h}.status"
+  echo "${h}"
+}
+# follow <slug> <PR URL> <brief> <site sentence> — the follow at one moved-head site: the backquoted
+# commands of <site sentence> (that site's own words and its follow, found whole in <brief> first, so a
+# site that stops instead runs nothing here), run in order with the worktree's HEAD for the head
+# placeholder, then the dropped-lines command --next prints, the brief's codex-review and the pass: the
+# review file written as --next's line says, then the brief's review --head on the new head. Prints
+# --next's output; a step that fails says so on stderr, and the stub log the caller checks lacks it.
+follow() {
+  local cmds c h nxt dl out rc
+  [[ "$3" == *"$4"* ]] || { echo "follow $1: the brief has no such sentence: $4" >&2; return; }
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  cmds="$(grep -o '`[^`]*`' <<< "$4" | tr -d '`')"
+  while IFS= read -r c; do
+    h="$(git -C "${ROOT}/svc-wt/$1" rev-parse HEAD)"; c="${c//<that head, from git rev-parse HEAD>/${h}}"
+    case "${c}" in
+      # Before the green step: a review file still there would be read as a finished review meanwhile.
+      *" wait-pr --head "*) printf 'review-file %s prev %s\n' "$(head -1 "${p}/.swarm/reviews/$1.md" 2>/dev/null || echo none)" \
+                              "$(head -1 "${p}/.swarm/reviews/$1.md.prev" 2>/dev/null || echo none)" >> "${FLOWLOG}"
+                            flow_pane "$1" "${c}" > /dev/null || echo "follow $1: the follow's wait-pr exited non-zero" >&2 ;;
+      *" review-agent --next "*) nxt="$(flow_pane "$1" "${c}")" || echo "follow $1: the brief's --next exited non-zero: ${nxt}" >&2 ;;
+      *) flow_pane "$1" "${c}" > /dev/null || echo "follow $1: the follow's ${c##* swarm.sh } exited non-zero" >&2 ;;
+    esac
+  done <<< "${cmds}"
+  # The command on --next's dropped-lines line, between its first pair of backticks.
+  # shellcheck disable=SC2016 # the backticks are --next's
+  dl="$(sed -n 's/^Before you read this round.s diff, run `\([^`]*\)`.*/\1/p' <<< "${nxt}")"
+  # Logged with its exit and, on a failure, its last line: a check that could not run is no check.
+  out="$(flow_pane "$1" "${dl}")" && rc=0 || rc=$?
+  if [[ ${rc} -eq 0 ]]; then out=""; else out=" exit ${rc}: $(tail -1 <<< "${out}")"; fi
+  printf 'dropped-lines %s%s\n' "$(awk '{ print $(NF - 1) }' <<< "${dl}")" "${out}" >> "${FLOWLOG}"
+  flow_pane "$1" "$(cmd_in "$3" " codex-review ")" > /dev/null || echo "follow $1: the brief's codex-review exited non-zero" >&2
+  h="$(git -C "${ROOT}/svc-wt/$1" rev-parse HEAD)"
+  printf '%s\n' "head: ${h}" "## Findings" "none" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/$1.md"
+  c="$(cmd_in "$3" " review $1 --head ${HEAD_SHA} ")"; c="${c//--head ${HEAD_SHA}/--head ${h}}"
+  if flow_pane "$1" "${c}" > /dev/null; then echo "verdict pass ${h}" >> "${FLOWLOG}"; else echo "verdict refused ${h}" >> "${FLOWLOG}"; fi
+  printf '%s' "${nxt}"
+}
+# m_start <slug> <PR URL> — <slug>, ready under epic e, its worktree at the first head, with review-<slug>
+# started on it (round 1, no findings tell) and idle in its pane. Prints its flattened brief.
+m_start() {
+  sed -e "s/s4/$1/g" -e "s/^status: review$/status: ready/" "${b}/stories/s4.md" > "${b}/stories/$1.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/$1" "${ROOT}/svc-wt/$1" origin/main
+  echo "${HEAD_SHA}" > "${ROOT}/head"; echo "${HEAD_SHA}" > "${FXH}/head"
+  printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-17T09:00:00Z story "$1" - ok >> "${p}/.swarm/events.tsv"
+  run review-agent "$1" "$2" > /dev/null || echo "FAIL review-agent $1 exited non-zero"
+  done_agent "review-$1"
+  tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/review-$1.md"
+}
+# flow_after <head> — the flow log from its last move line on, with <head> as H2 and the first head as H1.
+flow_after() { awk '/^moved$/ { n = 0; delete l; next } { l[++n] = $0 } END { for (i = 1; i <= n; i++) print l[i] }' "${FLOWLOG}" | sed -e "s/$1/H2/g" -e "s/${HEAD_SHA}/H1/g" | awk '!s[$0]++' | paste -sd'|' -; }
+# no_pass_on_h1 <slug> — "none" when <slug>'s review file is no pass of the first head as review_pass
+# (watch's and next's test) reads it, "a pass of H1" when it is. Its libraries load only with set +u.
+# shellcheck disable=SC1090 # swarm.sh's libraries, in this subshell alone
+no_pass_on_h1() {
+  (set +u; BOARD="${b}"; PROJECT_DIR="${p}"; for f in build merge board; do . "${SWARM%/*}/lib/${f}.sh"; done
+   if review_pass "$1" "${HEAD_SHA}"; then echo "a pass of H1"; else echo none; fi)
+}
+# reviews_of <slug> — the ok review lines events.tsv has for <slug>: each one a story put in review.
+reviews_of() { awk -F'\t' -v s="$1" '$2 == "review" && $3 == s && $5 ~ /^ok/' "${p}/.swarm/events.tsv" | wc -l | tr -d ' '; }
+: > "${p}/.claude/swarm/config"; : > "${FLOWLOG}"
+PRM=https://github.com/o/svc/pull/15
+mbrief="$(m_start m1 "${PRM}")"
+# mfollow <slug> <PR URL> — the follow the brief gives at each moved-head site (follow_moved).
+mfollow() { echo "run the green step above on the new head, waiting with \`SWARM_PROJECT=${p} ${SWARM} wait-pr --head <that head, from git rev-parse HEAD> $2\`, then run \`SWARM_PROJECT=${p} ${SWARM} review-agent --next $1 $2\` and do the round it prints in this session"; }
+MFOLLOW="$(mfollow m1 "${PRM}")"
+# Site 1, the green step: the builder pushed past the first head before any findings went out. The brief's
+# plain wait-pr reports the new head green, and the agent follows it.
+M2="$(push_to m1 "${PRM}")"
+flow_pane m1 "$(cmd_in "${mbrief}" " wait-pr ${PRM}")" > /dev/null || echo "FAIL the brief's wait-pr for m1 exited non-zero"
+echo moved >> "${FLOWLOG}"   # after the plain wait-pr: the follow's own green step must read the new head's CI
+SITE="When the builder pushed past ${HEAD_SHA} before any findings or wording nudge went to it, that head has had no review: ${MFOLLOW}"
+check "m1's brief follows a push past its start head in the green step" "yes" "$(has "${SITE}" "${mbrief}")"
+nxt="$(follow m1 "${PRM}" "${mbrief}" "${SITE}")"
+check "the brief's --next from review-m1's pane prints round 1 at the new head, says to follow a worktree that moves again, and m1.head reads it" "yes|yes|yes|0|${M2}" \
+  "$(has "Review round 1 of story m1 again: ${PRM}'s head moved from ${HEAD_SHA} to ${M2}" "${nxt}")|$(has "This is review round 1 of the story." "${nxt}")|$(has "If the worktree moved, write neither: follow the new head as your brief says, with the green step on it, then review-agent --next again." "${nxt}")|$(grep -c "head moved:" <<< "${nxt}" || true)|$(cat "${p}/.swarm/reviews/m1.head")"
+check "after the pass of the new head is written, the brief's review --head on it exits 0 and m1 is in review" "verdict pass ${M2}|review" \
+  "$(grep '^verdict' "${FLOWLOG}" | tail -1)|$(fm_of m1 status)"
+check "site 1: the green step, the dropped-lines check and a review of the new head run, in that order, before the verdict, and nothing records a pass of the first head" \
+  "review-file none prev none|ci H2|dropped-lines H2|codex H2|verdict pass H2|none|1" "$(flow_after "${M2}")|$(no_pass_on_h1 m1)|$(reviews_of m1)"
+# Site 2, the review's end: the agent reviewed the first head, then the worktree moved under it.
+PRM=https://github.com/o/svc/pull/16
+mbrief="$(m_start m2 "${PRM}")"; MFOLLOW="$(mfollow m2 "${PRM}")"
+flow_pane m2 "$(cmd_in "${mbrief}" " codex-review ")" > /dev/null || echo "FAIL the brief's codex-review for m2 exited non-zero"
+echo moved >> "${FLOWLOG}"; M2="$(push_to m2 "${PRM}")"
+SITE="If HEAD moved, the worktree moved under you, so this review is of a head the PR no longer has: drop its findings, wait for the builder as above, and ${MFOLLOW}"
+check "m2's brief follows a worktree whose HEAD moved by the review's end" "yes" "$(has "${SITE}" "${mbrief}")"
+follow m2 "${PRM}" "${mbrief}" "${SITE}" > /dev/null
+check "site 2: the green step, the dropped-lines check and a review of the new head run, in that order, before the verdict, and nothing records a pass of the first head" \
+  "review-file none prev none|ci H2|dropped-lines H2|codex H2|verdict pass H2|none|1|review" "$(flow_after "${M2}")|$(no_pass_on_h1 m2)|$(reviews_of m2)|$(fm_of m2 status)"
+# Site 3, review's refusal: the agent passed the first head and wrote its review file, then a push came
+# before its review --head, which refuses it. The brief has it move that pass aside before the follow.
+PRM=https://github.com/o/svc/pull/17
+mbrief="$(m_start m3 "${PRM}")"; MFOLLOW="$(mfollow m3 "${PRM}")"
+flow_pane m3 "$(cmd_in "${mbrief}" " codex-review ")" > /dev/null || echo "FAIL the brief's codex-review for m3 exited non-zero"
+printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "none" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/m3.md"
+echo moved >> "${FLOWLOG}"; M2="$(push_to m3 "${PRM}")"
+check "the brief's review --head on the first head refuses once the head moved, leaving m3 ready" "1|ready" \
+  "$(set +e; flow_pane m3 "$(cmd_in "${mbrief}" " review m3 --head ${HEAD_SHA} ")" > /dev/null; echo "$?")|$(fm_of m3 status)"
+SITE="When review refuses because the PR's head is no longer ${HEAD_SHA} (a push since your review), that head has had no review, and the story is not in review. First move your pass of ${HEAD_SHA} aside, with \`mv ${p}/.swarm/reviews/m3.md ${p}/.swarm/reviews/m3.md.prev\`, so no review file is there while you follow: a wait on you, or a review agent's start, would read it as a finished review. Then write no review file for the new head yet, and ${MFOLLOW}"
+check "m3's brief follows review's moved-head refusal" "yes" "$(has "${SITE}" "${mbrief}")"
+follow m3 "${PRM}" "${mbrief}" "${SITE}" > /dev/null
+check "site 3: the pass of the first head is aside before the green step, then the dropped-lines check and a review of the new head run, in that order, before the verdict, and nothing records a pass of the first head" \
+  "review-file none prev head: H1|ci H2|dropped-lines H2|codex H2|verdict pass H2|none|1|review|head: ${HEAD_SHA}" \
+  "$(flow_after "${M2}")|$(no_pass_on_h1 m3)|$(reviews_of m3)|$(fm_of m3 status)|$(head -1 "${p}/.swarm/reviews/m3.md.prev")"
+
+git -C "${ROOT}/svc" remote set-url origin "${ROOT}/svc.git"
 
 # --- review --head on a head past the reviewed one (review_heads, base_merges_only): a head that adds only
 # git's own clean merges of the base takes the pass, with a base-accepted line review_pass follows; a
