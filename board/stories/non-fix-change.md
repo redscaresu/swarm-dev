@@ -18,9 +18,10 @@ The check must also hold these rules:
 - Read the story file only at `<commit>^`, the base as the planner left it, so a PR cannot mark its own feature a fix by adding `fix: true` in its own diff.
 - Read `fix:` only from the first front-matter block (fm_text, bin/lib/board.sh:1342-1345), never from the body.
 - Walk the commits with `--full-history` beside `--first-parent`, so a --no-ff merge commit that is TREESAME to its second parent is still checked.
-- Cache only an answer with no `no merged PR has this commit` line (gh's search index can lag a fresh merge), and put a rule version in the cache file's name.
+- Cache only an answer with no `no merged PR has this commit` line (gh's search index can lag a fresh merge), and put a rule version and the normalized board-relative path (board_dir) in the cache file's name, since the answer depends on which paths count as board files and where story files are read.
 
 **Done when:**
+- Changing board_dir with both commits fixed does not reuse the earlier cached answer
 - tests/non_fix_test.sh (new), on a git fixture tagged v1.2.0 with a stub gh that lists merged PRs: a commit from story/s1, whose s1 has fix: true at that commit, is not printed. Commits from story/s2 (no fix: line), story/s3 (fix: yes) and fix/x, and a commit no PR lists, are each printed with their sha7. A commit from story/fix-main-abc1234, which has no story file, is not printed. A board-only commit is not read.
 - Same test: a story PR that deleted its own file is read at the commit's parent. A non-fix story merged before the tag, still on the board at done, plus a fix: true story after it, prints nothing. Adding fix: true to s2 in the checkout, or setting its state to done, changes nothing. With <from> set to a commit after s2's, s2 is not printed while the local tag still points before it.
 - Same test: an invalid <ref>, a failing gh and a board outside the repo each exit 1. A second run on the same SHAs with gh failing prints the first run's answer from the cache; with SWARM_GH_FRESH=1 it exits 1.
