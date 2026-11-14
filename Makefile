@@ -26,8 +26,11 @@ SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh 
   tests/queue_test.sh tests/wait_pr_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
+# The recipe's shell execs the runner, so make's own child is scripts/test.sh and the TERM make passes
+# on when it is killed (select-tests.sh --run execs make) reaches it. Linux's /bin/sh would otherwise
+# stay between them, take that TERM and die, leaving the run going (tests/test_runner_test.sh).
 test:
-	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)
+	@exec env JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)
 
 SHELLCHECK_FILES ?= bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh \
   scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
