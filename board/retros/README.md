@@ -1,7 +1,7 @@
 # Retros
 
 A retro goes through the retro report's lists and decides what becomes of each item.
-Its file is `docs/retros/v<version>.md`, named for the version being released.
+Its file is `retros/v<version>.md` on the board, named for the version being released.
 
 ```
 ---
@@ -21,7 +21,7 @@ Report: written at <commit or version> by swarm.sh.
 - <item>: dropped, <the reason>
 ```
 
-`covers:` is the window the retro covers, from one tag to another, and `done:` is the day it was finished.
+`covers:` is the window the retro covers, from an earlier tag to the version the file is named for, and `done:` is the day it was finished.
 Write each on one line with no quotes, so that a check running in bash 3.2 can read them.
 The body takes every item on the report's lists and says what became of it: a story, a check, a rule (in rules.md, the project's brief or AGENTS.md), or a drop with its reason.
 It also says which swarm.sh wrote the report, by its commit or its version.
