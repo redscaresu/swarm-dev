@@ -6,8 +6,9 @@
 # holds their numbers and exit 0.
 # A config that sets a removed key (pr_per, finished, review_bot, keep_panes) loads with a warning;
 # a made-up key still stops the script.
-# lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
-# files a checks: story instead.
+# lessons, its rule PRs and its rules check stay gone from bin/ and commands/. commands/swarm.md's
+# collect step reads the conductor's report, relays it and closes the conductor; it files no checks:
+# story, and neither it nor AGENTS.md names that filing, which swarm.sh retro's recurring list replaced.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -63,16 +64,22 @@ LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules ch
 if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands" "${REPO}/rules.md")"; then
   echo "FAIL bin/, commands/ or rules.md still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   no lessons, rule PR or rules check in bin/, commands/ or rules.md"; fi
-collect="$(sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md")"
-if grep -q 'checks: <kind>' <<< "${collect}"; then
-  echo "ok   commands/swarm.md's collect step files a checks: story"
-else echo "FAIL commands/swarm.md's collect step does not name checks:"; fails=$((fails + 1)); fi
-# It reads a windowed outcomes, and skips a kind whose check-<kind> board PR, looked up in the
-# project's repo, is open, merged or declined; a board outside the repo is written in place.
-wants=('outcomes --since' 'gh pr list -R <owner/repo> --state all --head board/check-<kind>' 'MERGED' 'written where the board is' '.swarm/checks-filed.tsv')
-missing=""; for w in "${wants[@]}"; do grep -qF -- "${w}" <<< "$(tr -s '[:space:]' ' ' <<< "${collect}")" || missing+="[${w}] "; done
-if [[ -z "${missing}" ]]; then echo "ok   the collect step reads outcomes --since, looks up the kind's board PR in the project's repo, and writes in place outside it"
+collect="$(sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md" | tr -s '[:space:]' ' ')"
+# The collect step reads the report, relays it to the user and closes the conductor.
+# shellcheck disable=SC2016 # the backticks are the command's
+wants=('.swarm/conduct-<epic>.report.md' 'relay what merged, what is left and what waits on the user' 'then `swarm.sh close <agent>`' "\`swarm.sh retro\`'s recurring list")
+missing=""; for w in "${wants[@]}"; do grep -qF -- "${w}" <<< "${collect}" || missing+="[${w}] "; done
+if [[ -z "${missing}" ]]; then echo "ok   the collect step reads the report, relays it, closes the conductor and leaves recurring kinds to retro"
 else echo "FAIL the collect step is missing: ${missing}"; fails=$((fails + 1)); fi
+# Neither commands/swarm.md nor AGENTS.md files a checks: story per recurring kind any more.
+# shellcheck disable=SC2016 # the backticks are the docs'
+if found="$(grep -nE 'checks: <kind>|board/check-<kind>|\.swarm/checks-filed\.tsv|files a `checks:` story' "${REPO}/commands/swarm.md" "${REPO}/AGENTS.md")"; then
+  echo "FAIL commands/swarm.md or AGENTS.md still files a checks: story:"; echo "${found}"; fails=$((fails + 1))
+else echo "ok   commands/swarm.md and AGENTS.md file no checks: story"; fi
+log_finding="$(grep -F -- '- `swarm.sh log-finding ' "${REPO}/AGENTS.md" || true)"
+if grep -qF -- "\`swarm.sh retro\`'s recurring list" <<< "${log_finding}"; then
+  echo "ok   AGENTS.md's log-finding item names swarm.sh retro's recurring list"
+else echo "FAIL AGENTS.md's log-finding item does not name swarm.sh retro's recurring list"; fails=$((fails + 1)); fi
 
 W="[--since YYYY-MM-DD] [--until YYYY-MM-DD]"
 # In a bare project of its own: a test runs from its TMPDIR, outside any project, and never against the checkout.
