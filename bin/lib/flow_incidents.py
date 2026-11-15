@@ -2,7 +2,7 @@
 # `<kind>: <detail>`) counted per local day and kind, whatever the kind: `swarm.sh intervene`'s lead-hand and
 # user-caught among them, whose sum over the last 7 days is dash's interventions light. --epic does not narrow it: an
 # incident's target is an agent name, which may be cut short of its slug. Then, after a blank line,
-# the agent stops (api-error and auto-denied) per epic and kind: the agent's epic is the one outcomes'
+# the agent stops (api-error, model-error and auto-denied) per epic and kind: the agent's epic is the one outcomes'
 # rows give its story (a builder, or review-<slug>), or for conduct-<epic> its `conduct <epic>` start
 # (or its epic in the rows), under its own name or the ones retire_agent renames it to, `-` when none
 # does; --epic keeps that epic's rows. Then, each after a blank line and over every epic: the incidents per kind
@@ -15,7 +15,7 @@ import collections, datetime, os
 from events_outcome import fields, outcome
 from report import STEP_UP, agent_name
 
-STOPS = ("api-error", "auto-denied")
+STOPS = ("api-error", "model-error", "auto-denied")
 STALL_INPUTS = ("bg", "test", "sign")
 INTERVENE_KINDS = ("lead-hand", "user-caught")   # bin/swarm.sh's INTERVENE_KINDS
 

@@ -298,10 +298,9 @@ and epic co-authors, planners, conductors, builders and review agents. A restart
 `swarm.sh upgrade` gives them the values of the session that runs it. When herdr restores a pane, the
 values come from that pane's new shell, since swarm.sh never writes a value to disk. So a key you
 export only in the session that started the agent is gone after a herdr restore; export it from your
-shell's startup files to keep it there. This is how a provider's key
-reaches agents. On Azure Foundry, for example, Claude Code needs `ANTHROPIC_FOUNDRY_RESOURCE` and
-`ANTHROPIC_FOUNDRY_API_KEY`, and the `ANTHROPIC_DEFAULT_*_MODEL` names if your deployments are named
-differently from the models. Without them every agent stops at its start. Each value comes from the
+shell's startup files to keep it there. This is how a provider key that does not pass on its own
+reaches agents: another provider's secret, say, or `ANTHROPIC_BEDROCK_BASE_URL`. Foundry's and
+Bedrock's keys and model pins pass without it; see the exception below. Each value comes from the
 session that starts the agent. A name that session does not have is skipped with a warning, so the
 same board still runs from a session without the provider. When the config loads, `swarm.sh` refuses
 a name that is not `[A-Z_][A-Z0-9_]*` or is reserved, by the same rules as `env:`, and names the line.
@@ -316,9 +315,14 @@ selection above passes from the session that runs swarm.sh, or can go under `env
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
 `gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY`
-reaches agents only when `agent_env` names it. Foundry is the exception: its endpoint and key exist
-only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`, every agent also gets
-the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables, with no `agent_env` line.
+reaches agents only when `agent_env` names it. Foundry and Bedrock are the exceptions. Foundry's
+endpoint and key exist only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`,
+every agent also gets the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables,
+with no `agent_env` line. When `CLAUDE_CODE_USE_BEDROCK` is `1` or `true`, every agent gets the
+session's `AWS_BEARER_TOKEN_BEDROCK` (Bedrock's API key) and `ANTHROPIC_DEFAULT_*_MODEL` variables the
+same way. Without them an agent on Bedrock hangs at its first request. `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are not passed: profile and SSO logins reach agents
+through `HOME` and `AWS_PROFILE`, and a long-lived exported secret stays opt-in through `agent_env`.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
@@ -486,7 +490,7 @@ it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a con
 to each builder whose `wait` printed `auth`.
 A turn can also stop on an API error while the session still reads busy, because background shells
 the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
-in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
+in its pane is Claude Code's own error line (`⏺ API Error: ...` or `⏺ API Error (<model>): ...` at the left margin, with no reply or
 submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
 stopped." and waits again. It logs each one as a `resume` line, not a nudge, conductors included. After three such stops
 in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
@@ -494,7 +498,12 @@ prints `stuck: api error` and exits 4. A pane that still shows the old error aft
 message has not shown yet) is no new stop. An idle session still on that same pane a slice later
 never took the message up. With `goal` on it never resumes a builder: it returns
 `stuck: api error` at once, so the transcript still ends on the error for the goal rule. A conductor
-or review agent is resumed either way. When the transcript ends on an expired login, `wait` prints
+or review agent is resumed either way. A model error skips the resumes, because a resume in the same
+session sends the same model ID again. A model error is an `API Error` line (`API Error:` or
+`API Error (<model>):`) whose status is 400 or 404 and whose text names the model: `model ID`,
+`model identifier`, `inference profile` or `model_not_found`. On it `wait` prints `stuck: model error
+(<the line, cut to 200 characters>)` at once and exits 4, goal on or off. The lead's restart rule for
+an API-error stop then starts the agent in a fresh session, which picks up the corrected settings. When the transcript ends on an expired login, `wait` prints
 `auth` instead, busy session or not, and resumes nothing. `tell`
 treats such an agent as idle and delivers, and `next` names a conductor's stop. Any `wait` also
 prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
@@ -549,7 +558,7 @@ has already reviewed or started on (the findings file's `head:` line, or the hea
 story's new PR has a new head, so it is reported. Watches that run at once share `watch-seen`, and the
 lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
 be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
-The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
+The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. Concurrent watches, such as each conductor's and the lead's, share each poll's reads: the open-PR list, each head's check runs and the check-run and status reads behind a queued line. A watch keeps each of those reads that succeeded in `.swarm/poll-cache/` for 59 seconds, one less than a poll, and another watch takes a read that recent instead of asking GitHub. Two watches that need one at once make one read between them. A failed read is never kept, so the next watch reads again. A shared read can be up to 59 seconds old, so a change can take one poll longer to show. A watch running alone never reads its own entries. The mergeable read is never shared: it is read by PR number, not head, so a kept `MERGEABLE` could hide a new conflict. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so
@@ -750,7 +759,7 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, before its first push and after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it), push once they pass and leave the full suite to CI, run a long test run in the background (Bash `run_in_background`) so its end wakes it and act on the result when it ends, before it pushes stop any test run of its own still going (by its PID or its background task, since the guard refuses `pkill` and `killall`), after the PR opens push what is ready and put further points in the PR body, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, before its first push and after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it), push once they pass and leave the full suite to CI, run a long test run in the background (Bash `run_in_background`) so its end wakes it and act on the result when it ends, before it pushes stop any test run of its own still going (by its background task or its PID, since the guard refuses `pkill` and `killall`; where the worktree has `scripts/select-tests.sh`, a `kill` of the `select-tests.sh` or `make` it started, which `scripts/test.sh` turns into a stop of every job and test of the run), after the PR opens push what is ready and put further points in the PR body, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then swarm-dev's own rules from the plugin's
 [`rules.md`](../rules.md), then the project's own rules from
 `.claude/swarm/brief.md`, then the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
@@ -893,8 +902,20 @@ the limit, stops the agent). A delivery
 that held the story for the lead or stepped the build up leaves `.sent` too, so before it waits for
 the fix the agent reads the story's `held_for:` line, which stops it, and the events log's
 `escalate` line for a findings step-up, after which it tells the new builder nothing and waits on
-it. Every wait on the builder is `wait --stall`, and the agent
-carries on when it prints `idle`, or `done` for a builder with no Claude session. With
+it. Every wait on the builder that is not for a fix is `wait --stall <slug>`, which ends once the
+builder's turn has. That includes the wait before a tell, so the tell goes at once. It also includes
+the wait before the bounded delivery check of a queued tell, so a push cannot end it and leave the
+queued tell to land on another head. Every wait for a fix is `wait --stall --past <head> <slug>`. It
+comes after a findings tell, after a wording nudge or a green-step nudge, after a queued tell is
+delivered (a delivery that stepped the build up too), after the round file goes as a nudge to a
+stepped-up build, and when `review-agent --next` refuses because the builder is still at work in the
+worktree. `<head>` is the head the fix goes on. After a tell,
+that is the worktree's HEAD just before the tell goes. For a queued tell, it is HEAD just before
+the agent waits for the delivery check. A push the builder made before it had the tell then does not end
+the wait. The wait also ends with `pushed <sha>` once the builder has pushed a new head (the
+`wait --past` paragraph above). The agent goes on from it at once and reads the builder's pane for
+declined findings, without waiting for the turn to end. The agent carries on when a wait prints
+`idle`, or `done` for a builder with no Claude session. With
 `escalate_ladder` set, a stall it steps up (`stepped up:`), or a step-up or restart already running
 (`stepping up:`), is waited on again, and a build stepped up after the round's findings were told
 gets the round file as a nudge, since its handover brief pastes only the review file; a wait that

@@ -165,7 +165,11 @@ board_pr() {
       # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
-      [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
+      if [[ -n "${f}" ]]; then
+        # The first epic; after a tab, the clause naming the deleted epic whose agreed: it carries.
+        f="${f%%$'\n'*}"; why=""; [[ "${f}" != *$'\t'* ]] || { why="${f#*$'\t'}"; f="${f%%$'\t'*}"; }
+        die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on)${why}; commit it as status: draft first, then run /swarm-dev:epic ${f}"
+      fi
       # So is one that goes active above the stage the base allows, whatever lead_epics says.
       f="$(stage_gate board_read "${files}")" || die "board-pr: ${f}"
       [[ -z "${f}" ]] || die "board-pr: ${f}"
@@ -3135,6 +3139,148 @@ stop_lines() {
   done
 }
 
+# PLAN_START_GRACE: seconds after a plan agent's start mark (plan_mark) before plan_lines may call it ended.
+# The mark is written before its pane opens, and the agent sits idle until its brief lands, so a poll in
+# between would see an agent that has not begun. It is the longest start_agent can take after the mark:
+# two tries for the pane's shell (ENV_READY_MS each, clean_env's fresh pane), two herdr agent start tries
+# (HERDR_START_MS each), and the brief's delivery, the larger of a fable brief's SLOW_PROMPT_TIMEOUT_MS
+# and deliver_prompt's two tries of PROMPT_TIMEOUT_MS, each followed by as long again of settle reads;
+# then a margin for the pane's opening and the naps between tries (PLAN_START_MARGIN). 10 minutes by
+# default, longer with SWARM_PROMPT_TIMEOUT_MS.
+PLAN_START_MARGIN=60
+PLAN_START_GRACE=$(( (2 * ENV_READY_MS + 2 * HERDR_START_MS \
+  + (SLOW_PROMPT_TIMEOUT_MS > 4 * PROMPT_TIMEOUT_MS ? SLOW_PROMPT_TIMEOUT_MS : 4 * PROMPT_TIMEOUT_MS)) / 1000 + PLAN_START_MARGIN ))
+
+# plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
+# agents have all written their output, and `plan-missing: <epic> <name> ended without its output, exit:
+# /swarm-dev:plan-epic <epic> (it starts that agent again)` for each agent of its attempt that has ended
+# without one. A swarm is a tab record scope-<epic> (has_records' overflow scope-<epic>-<n> too) of an epic
+# on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit, or a
+# .swarm/<slug>/started directory of such an epic or HLD that no record names; planned: only with a record
+# that lists an agent and no plan board PR worktree (plan_pr_open; _board-plan-<hld> for an HLD). Its agents are the record's `<pane>
+# <name>` lines and the attempt's start marks, .swarm/<epic>/started/<name> (plan_mark), newer than the
+# reference below: next_pane prunes a failed or closed pane from the record, never from the marks. Each
+# <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only when it is newer
+# than its planner's resume reference and parses as JSON. The reference is the epic file; for
+# split-critic the scope worktree, so a split critic counts, and can be missing, only while that exists;
+# for an HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing
+# reference counts nothing. planned: needs every agent counted. plan-missing: names a
+# marked agent with no counted output whose mark is PLAN_START_GRACE seconds old and that the poll's
+# herdr list (LEAD_AGENTS) shows in no pane of the swarm's own tab records, or shows idle or done with no background
+# task in flight (bg_running, over its session log); a poll with no herdr list keeps the plan-missing: lines
+# LEAD_SEEN has, as stop_lines does. Board and .swarm files, one python3 for a swarm's fresh outputs' JSON,
+# one for the herdr list once an agent may have ended, and bg_running's per idle agent; no gh.
+plan_lines() {
+  local f label kind slug item groups="" names listed name n ref out exit done_list files rows seen bad mark started fresh
+  local live live_read hname age wt panes
+  for f in "${STATE_DIR}"/scope-?* "${STATE_DIR}"/plan-?*; do
+    [[ -f "${f}" ]] || continue
+    label="${f##*/}"
+    [[ "${label}" != *.* ]] || continue   # a codex brief copy or a temporary file, as cut_names skips
+    kind="${label%%-*}"; slug="${label#*-}"
+    item="${BOARD}/epics"; [[ "${kind}" == scope ]] || item="${BOARD}/hld"
+    if [[ ! -f "${item}/${slug}.md" && "${slug}" =~ ^(.+)-[0-9]+$ && -f "${item}/${BASH_REMATCH[1]}.md" ]]; then
+      slug="${BASH_REMATCH[1]}"   # an overflow tab of the same swarm
+    fi
+    [[ -f "${item}/${slug}.md" ]] || continue
+    groups+="${kind} ${slug}"$'\n'
+  done
+  # A plan with start marks but no tab record: its first agent's start failed before a tab opened. Its
+  # epic's (else its HLD's) swarm, unless a record already names the slug.
+  for f in "${PROJECT_DIR}"/.swarm/*/started; do
+    [[ -d "${f}" ]] || continue
+    slug="${f%/started}"; slug="${slug##*/}"
+    ! grep -qxF -e "scope ${slug}" -e "plan ${slug}" <<< "${groups}" || continue
+    if [[ -f "${BOARD}/epics/${slug}.md" ]]; then groups+="scope ${slug}"$'\n'
+    elif [[ -f "${BOARD}/hld/${slug}.md" ]]; then groups+="plan ${slug}"$'\n'; fi
+  done
+  while read -r kind slug; do
+    [[ -n "${slug}" ]] || continue
+    if [[ "${kind}" == scope ]]; then
+      wt=""; ! plan_pr_open "${slug}" || wt=1
+      exit="/swarm-dev:plan-epic ${slug}"
+    else
+      wt=""; [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || wt=1
+      exit="/swarm-dev:plan-hld ${slug}"
+    fi
+    listed=""; panes=""; live=""; live_read=""
+    for f in "${STATE_DIR}/${kind}-${slug}" "${STATE_DIR}/${kind}-${slug}"-*; do
+      { [[ -f "${f}" ]] && label_record "${f}" "${kind}-${slug}"; } || continue
+      listed+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+      panes+=" $(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { printf "%s ", $1 }' "${f}")"
+    done
+    names="${listed}"
+    for f in "${PROJECT_DIR}/.swarm/${slug}/started"/*; do [[ ! -f "${f}" ]] || names+="${f##*/}"$'\n'; done
+    # rows: "<n> <name> <started 0|1> <fresh 0|1>" per agent, each <n> once.
+    done_list=""; files=(); rows=""; seen=" "
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      n="${name%-"${slug}"}"
+      [[ "${seen}" != *" ${n} "* ]] || continue
+      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"; mark="${PROJECT_DIR}/.swarm/${slug}/started/${name}"
+      if [[ "${kind}" == plan ]]; then
+        ref="${PROJECT_DIR}/.swarm/${slug}/base-rev"; [[ "${BOARD_IN_REPO}" == 1 ]] || ref="${BOARD}/hld/${slug}.md"
+      elif [[ "${n}" == split-critic ]]; then ref="$(worktree_for "${PROJECT_DIR}" "_board-scope-${slug}")"
+      else ref="${BOARD}/epics/${slug}.md"; fi
+      # -nt alone is true against a missing reference.
+      started=0; [[ ! -f "${mark}" || ! -e "${ref}" || ! "${mark}" -nt "${ref}" ]] || started=1
+      # A mark from an earlier attempt, of an agent no longer in the record, is no agent of this one.
+      [[ ${started} == 1 ]] || grep -qxF -- "${name}" <<< "${listed}" || continue
+      fresh=0; if [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]]; then fresh=1; files+=("${out}"); fi
+      rows+="${n} ${name} ${started} ${fresh}"$'\n'; seen+="${n} "
+    done < <(awk '!seen[$0]++' <<< "${names}")
+    [[ -n "${rows}" ]] || continue
+    bad=""
+    if [[ ${#files[@]} -gt 0 ]]; then
+      # The fresh outputs that do not parse, one per line.
+      bad="$(python3 -I -c 'import json, sys
+for p in sys.argv[1:]:
+    try:
+        with open(p, encoding="utf-8") as fh:
+            json.load(fh)
+    except Exception:
+        print(p)' "${files[@]}" 2>/dev/null)" || continue
+    fi
+    out=""
+    while read -r n name started fresh; do
+      [[ -n "${n}" ]] || continue
+      if [[ ${fresh} == 1 ]] && ! grep -qxF -- "${PROJECT_DIR}/.swarm/${slug}/${n}.json" <<< "${bad}"; then
+        done_list+=", ${n}"; continue
+      fi
+      done_list="-"   # an agent without its output: no planned: line
+      [[ ${started} == 1 ]] || continue
+      age="$(perl -e 'print time - (stat shift)[9]' "${PROJECT_DIR}/.swarm/${slug}/started/${name}" 2>/dev/null)" || age=0
+      (( ${age:-0} >= PLAN_START_GRACE )) || continue
+      if [[ -z "${live_read}" ]]; then
+        live_read=1
+        [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+        # "<name> <status>" for each agent in a pane of this swarm's own tab records: another plan's
+        # agent of the same bare name (critic, lead) says nothing about this one.
+        [[ -n "${LEAD_AGENTS_OK}" ]] \
+          && live="$(SWARM_PANES="${panes}" json "'\n'.join('%s %s' % (a.get('name') or '-', a.get('agent_status') or 'unknown') for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" \
+          || live_read=none
+      fi
+      if [[ "${live_read}" == none ]]; then
+        grep -F "plan-missing: ${slug} ${n} ended without its output, " "${LEAD_SEEN}" 2>/dev/null || true; continue
+      fi
+      no_agent_name hname "${name}"
+      case "$(awk -v n="${hname}" '$1 == n { print $2; exit }' <<< "${live}")" in
+        "") ;;   # in no pane of this swarm's records: its pane closed, it never started, or another holds the name
+        # A turn that ended with a background task in flight still waits on it.
+        idle|done) ! bg_running "${hname}" || continue ;;
+        *) continue ;;
+      esac
+      out+="plan-missing: ${slug} ${n} ended without its output, exit: ${exit} (it starts that agent again)"$'\n'
+    done <<< "${rows}"
+    # While the plan's board PR worktree exists the plan is in its board PR, or about to be: no planned: line,
+    # but an agent that ended without its output is still named (/plan-hld makes the worktree before any agent).
+    # planned: needs a tab record that lists an agent: marks alone outlive a finished plan's closed tab.
+    [[ -n "${wt}" || -z "${listed//$'\n'/}" || "${done_list}" == -* || -z "${done_list}" ]] \
+      || echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+    printf '%s' "${out}"
+  done < <(awk '!seen[$0]++' <<< "${groups}")
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
@@ -3148,22 +3294,28 @@ stop_lines() {
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
 # whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
-# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
+# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list, and plan_lines'
+# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output and
+# `plan-missing: <epic> <name> ended without its output, exit: ...` for one of its agents that ended without it. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
 # with stuck_lines' just before them and main_red_lines' `main-red:` lines (from events.tsv and the file the
 # last heads pass wrote, lead_bases), reported_lines' and sign_blocked_lines' after.
-# It never calls gh. It drops
+# It fails, with that read's status, when a story's held_for: or the holds (on a second read) cannot be read. It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
 # whose check fails keeps the ones the last poll saw.
 lead_queue() {
   local f held tag line v keep="" holds shown slug prs seen=" "
-  holds="$(protected_holds)"
+  # A read that fails (a state file or story file that cannot be read, whose die ends only its $(...))
+  # fails the queue with its status, so lead_wake keeps LEAD_SEEN as the last good read left it. The holds
+  # are read twice before that: a merge's reconcile can remove a state file between protected_holds' list
+  # and its awk, and the second read, listing the board again, skips a file that is gone. Only the second says why.
+  holds="$(protected_holds 2>/dev/null)" || holds="$(protected_holds)" || return
   while IFS= read -r f; do
-    held="$(get_fm "${f}" held_for)"
+    held="$(get_fm "${f}" held_for)" || return
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
     elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
   done < <(board stories)
@@ -3191,6 +3343,7 @@ lead_queue() {
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
   stop_lines
+  plan_lines
   stuck_lines
   pr_lines
   main_red_lines
@@ -4824,35 +4977,42 @@ LEAD_QUEUE_RC=0
 
 # lead_exit <status> — wait --lead's EXIT trap: kill the poll's sleep, remove the pid file while it
 # still names this run, and, for a non-zero <status> with nothing said (LEAD_ENDED), print
-# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>.
+# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>, even
+# when that write fails (a HUP from a closed terminal leaves no stdout): under set -e a failed echo would make it 1.
 lead_exit() {
-  trap '' USR1 TERM   # a signal now would add a second line
+  trap '' USR1 TERM INT HUP   # a signal now would add a second line
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   [[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"
-  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead"
+  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead" || true
 }
 
-# lead_signal [replaced] — wait --lead's USR1 and TERM traps, set before its argument checks. USR1 comes
-# only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`. A TERM is anyone
-# else's (a tool's timeout, a kill by hand): print nothing here, so lead_exit's wait-failed: line says it.
-# Either kills the poll's sleep and exits 143, as a TERM did before. A run that has already said why it
-# ends (LEAD_ENDED) ignores both: one more line would follow its own.
+# lead_signal <status> [replaced] — wait --lead's USR1, TERM, INT and HUP traps, set before its argument
+# checks. USR1 comes only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`.
+# A TERM, INT or HUP is anyone else's (a tool's timeout, a kill by hand, Ctrl-C, a closed terminal): print
+# nothing here, so lead_exit's wait-failed: line says it. Each kills the poll's sleep and exits <status>:
+# 143 for USR1 and TERM, as a TERM did before, 130 for INT and 129 for HUP (128 plus the signal's number).
+# Untrapped, bash 3.2 still ran the EXIT trap, but with a $? that is not the signal's: an INT printed
+# `wait-failed: exit 129` and exited 129, a HUP printed nothing. A run that has already said why it ends (LEAD_ENDED) ignores them all: one more line would follow its own.
 lead_signal() {
   [[ -z "${LEAD_ENDED}" ]] || return 0
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   LEAD_SLEEP=""
-  [[ -z "${1:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
-  exit 143
+  # A failed write (no stdout) still exits <status>, as lead_exit's does.
+  [[ -z "${2:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now" || true; }
+  exit "$1"
 }
 
 # lead_sleep <seconds> — sleep in the background and wait for it, so a signal runs lead_signal at once:
 # bash runs a trap only once the foreground command it cut into ends.
 lead_sleep() { sleep "$1" & LEAD_SLEEP=$!; wait "${LEAD_SLEEP}"; LEAD_SLEEP=""; }
 
-# lead_traps — wait --lead's EXIT, USR1 and TERM traps (lead_exit, lead_signal). wait_command sets them as
-# soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with --lead)
-# ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
-lead_traps() { trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM; }
+# lead_traps — wait --lead's EXIT, USR1, TERM, INT and HUP traps (lead_exit, lead_signal). wait_command sets
+# them as soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with
+# --lead) ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
+lead_traps() {
+  trap 'lead_exit $?' EXIT; trap 'lead_signal 143 replaced' USR1; trap 'lead_signal 143' TERM
+  trap 'lead_signal 130' INT; trap 'lead_signal 129' HUP
+}
 
 # lead_gone — true once LEAD_PID names no live wait --lead, within 5 s.
 lead_gone() {
@@ -4904,9 +5064,9 @@ lead_poll() {
 #   replaced: a newer wait --lead watches now   a newer run stopped this one (lead_lock's USR1, lead_signal);
 #     exit 143.
 #   wait-failed: exit <rc>, exit: swarm.sh wait --lead   any other non-zero exit with nothing printed (an
-#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM), from its EXIT trap
-#     (lead_exit); exit <rc>.
-# The EXIT, USR1 and TERM traps (lead_traps) are set before the argument checks: by wait_command as soon as
+#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM, INT or HUP), from its
+#     EXIT trap (lead_exit); exit <rc>, 143 for a TERM, 130 for an INT, 129 for a HUP.
+# The EXIT, USR1, TERM, INT and HUP traps (lead_traps) are set before the argument checks: by wait_command as soon as
 # its arguments name --lead, ahead of its own check of --past with --lead, and here again.
 # It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
@@ -4944,14 +5104,18 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # (moved, or a conductor already on the version told to carry on), left- (left on its old version),
 # kept- (already on the version, with a problem), busy- (busy when its restart came), rheld- (the
 # review-agent hold that kept a builder back in its last round, upgrade_hold's), hint- (how to
-# resume it, while a restart is under way); summary, the lines it prints at the end; and why, a failed
-# restart's. UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's
-# agent list, read once per round (upgrade_herdr). UPGRADE_WANT and UPGRADE_NEW: the run's agents
-# (upgrade_want) and version.
+# resume it, while a restart is under way), closed- (skipped as closed, upgrade_closed), closing- (its
+# session gone by upgrade_one's idle check, for upgrade_restart to skip it); summary, the
+# lines it prints at the end; closed, the names skipped as closed; checked, made once the closed check
+# ran (upgrade_reread); and why, a failed restart's. UPGRADE_SAID: how upgrade_say sent its last text,
+# prompt or note. UPGRADE_HERDR: herdr's agent list, read once per round (upgrade_herdr).
+# UPGRADE_CLAUDE: Claude Code's list of its sessions, read once for the closed check (upgrade_claude).
+# UPGRADE_WANT and UPGRADE_NEW: the run's agents (upgrade_want) and version.
 UPGRADE_PID="${PROJECT_DIR}/.swarm/upgrade.pid"
 UPGRADE_DIR=""
 UPGRADE_SAID=""
 UPGRADE_HERDR=""
+UPGRADE_CLAUDE=""
 UPGRADE_WANT=""
 UPGRADE_NEW=""
 UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_mine)
@@ -4965,9 +5129,10 @@ UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_min
 # and names that one, failing when that one's scope does not cover this one's. It works in rounds
 # (upgrade_round) until no agent waits, or until UPGRADE_WAIT_MS has passed (upgrade_end), then prints
 # one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or already on this
-# version, and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
-# names the agents it had not moved and tells each conductor it paused to carry on first
-# (upgrade_stopped). A run that never read herdr's list fails, saying no agent was moved. Worktrees are never touched. Fails when any agent was left on its old version.
+# version, then one `skipped (closed):` line naming the agents it skipped as closed (upgrade_closed),
+# and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
+# names the agents it had not moved and tells each conductor it paused, but one skipped as closed, to
+# carry on first (upgrade_stopped). A run that never read herdr's list fails, saying no agent was moved. Worktrees are never touched. Fails when any agent was left on its old version.
 upgrade_agents() {
   local epic="" fg="" a new log end name pane role cur f rc=0
   [[ "${SWARM_UPGRADE_WORKER:-}" != 1 ]] || fg=1
@@ -5010,7 +5175,7 @@ upgrade_agents() {
   trap - TERM
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${cur}" == new ]] || continue
-    [[ -e "${UPGRADE_DIR}/done-${name}" || -e "${UPGRADE_DIR}/left-${name}" || -e "${UPGRADE_DIR}/kept-${name}" ]] || echo "${name}: already on ${new}"
+    [[ -e "${UPGRADE_DIR}/done-${name}" || -e "${UPGRADE_DIR}/left-${name}" || -e "${UPGRADE_DIR}/kept-${name}" || -e "${UPGRADE_DIR}/closed-${name}" ]] || echo "${name}: already on ${new}"
   done <<< "$(upgrade_list "${UPGRADE_WANT}" "${new}")"
   cat "${UPGRADE_DIR}/summary" 2>/dev/null || true
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || rc=1; break; done
@@ -5025,9 +5190,11 @@ upgrade_agents() {
 upgrade_mine() { [[ "$(exec sh -c 'echo "${PPID}"')" == "${UPGRADE_SHELL}" ]]; }
 
 # upgrade_tally <done|stopped> <exit> — the log's last line: how many agents this run moved to a new
-# version (their `<old> -> <new>` lines) and how many it left on an old one.
+# version (their `<old> -> <new>` lines) and how many it left on an old one. The agents it skipped as
+# closed (upgrade_closed) count as neither: they are named on one line just before it.
 upgrade_tally() {
   local f moved left=0
+  [[ ! -s "${UPGRADE_DIR}/closed" ]] || echo "skipped (closed):$(cat "${UPGRADE_DIR}/closed")"
   moved="$(grep -c ' -> ' "${UPGRADE_DIR}/summary" 2>/dev/null)" || moved=0
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || left=$((left + 1)); done
   echo "upgrade $1: ${moved} moved, ${left} left (exit $2)"
@@ -5036,9 +5203,10 @@ upgrade_tally() {
 # upgrade_stopped <exit> — on a TERM (143): each agent in the run still on its old version and not
 # paused is left, with its resume hint when its restart was cut off (a hint- file names it even when
 # herdr no longer lists it); then each
-# conductor this run asked for a handover and has not moved is told which of its builders were
-# restarted and to carry on as before, and its pause marker removed, so none stays paused with
-# nobody to wake it. Then the summary and the tally, and it exits <exit>. A KILL or a reboot leaves
+# conductor this run asked for a handover and has neither moved nor been skipped as closed is told
+# which of its builders were restarted and to carry on as before, and its pause marker removed, so
+# none stays paused with nobody to wake it. One skipped as closed (upgrade_closed) is told nothing,
+# and stays skipped. Then the summary and the tally, and it exits <exit>. A KILL or a reboot leaves
 # them paused: the marker stops holding back tell's wake prompt once it is an hour old.
 upgrade_stopped() {
   local f n name pane role cur about
@@ -5053,12 +5221,12 @@ upgrade_stopped() {
   done <<< "$(upgrade_list "${UPGRADE_WANT}" "${UPGRADE_NEW}" </dev/null | upgrade_open)"
   for f in "${UPGRADE_DIR}"/hint-*; do
     n="${f##*/hint-}"
-    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/hand-${n}" ]] || continue
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/closed-${n}" && ! -e "${UPGRADE_DIR}/hand-${n}" ]] || continue
     upgrade_left "${n}" "the upgrade was stopped$(upgrade_hint "${n}")"
   done
   for f in "${UPGRADE_DIR}"/hand-*; do
     n="${f##*/hand-}"
-    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" ]] || continue
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/closed-${n}" ]] || continue
     pane="$(agent_field "${n}" pane_id </dev/null)"
     about="$(upgrade_about "$(upgrade_epic "${n}" conduct)" "${UPGRADE_NEW}")"
     upgrade_say "${n}" "${pane}" "swarm.sh upgrade was stopped before it moved you. ${about} Ignore its request, and carry on as before, on the version you run." </dev/null \
@@ -5154,9 +5322,9 @@ upgrade_status() {
 # again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
 # builder whose conductor is idle with its handover in, and whose Claude review agent is not busy
 # (upgrade_hold, read after the builder's own state, so a gone one is left at once), is restarted
-# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone or
-# unknown is left, a busy one waits; last, each conductor whose builders are all moved or left is
-# moved (upgrade_conductor).
+# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone is
+# skipped as closed (upgrade_closed), a busy or unknown one waits; last, each conductor whose builders
+# are all moved or left is moved (upgrade_conductor).
 # Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
 # rather than as one with nothing left to move. A conductor paused here that a good list no longer
 # holds is left.
@@ -5190,7 +5358,7 @@ upgrade_round() {
       wait) held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
-    # Its review agent holds it only once its own session is known to be there: a gone one is left now.
+    # Its review agent holds it only once its own session is known to be there: a gone one is skipped now.
     if [[ "${st}" != gone ]]; then
       h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
       if [[ "${h}" == "review "* ]]; then echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue; fi
@@ -5198,7 +5366,7 @@ upgrade_round() {
     case "${st}" in
       idle) rc=0; upgrade_restart "${name}" "${pane}" "${role}" "$2" "$(upgrade_round_end "$3")" || rc=$?
             [[ ${rc} -ne 2 ]] || held+="${e} " ;;
-      gone) upgrade_left "${name}" "its Claude session is gone, so it is not restarted" ;;
+      gone) upgrade_closed "${name}" ;;
       *) held+="${e} " ;;   # busy, or unknown: a bad read of Claude Code's list, read again next round
     esac
   done <<< "${list}"
@@ -5213,14 +5381,20 @@ upgrade_round() {
 
 # upgrade_reread <want> <version> — read herdr's list (upgrade_read_herdr, for the round) and save the
 # run's agents (list); fails when herdr's list cannot be read. Not in $(...): the round keeps the read.
+# The first time, before the first round acts on any agent, it runs the closed check over that read
+# (upgrade_skip_closed); when that first read fails, it says so, and the check never runs.
 # An agent the last read held that still waited (on its old version, or paused for its handover) and
 # this one does not is left, never forgotten; a paused conductor's pause marker goes, and its
 # builders no longer wait on it (gone-).
 upgrade_reread() {
   local prev name pane role cur d="${UPGRADE_DIR}"
-  upgrade_read_herdr || return 1
+  if ! upgrade_read_herdr; then
+    [[ -e "${d}/checked" ]] || { : > "${d}/checked"; echo "herdr's agent list could not be read before the first round, so the closed check did not run" >> "${d}/summary"; }
+    return 1
+  fi
   prev=""; [[ ! -f "${d}/list" ]] || prev="$(upgrade_open < "${d}/list")"
   upgrade_list "$1" "$2" > "${d}/list"
+  [[ -e "${d}/checked" ]] || { : > "${d}/checked"; upgrade_skip_closed "$1"; }
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && ( "${cur}" == old || -e "${d}/hand-${name}" ) ]] || continue
     ! grep -q "^${name}"$'\t' "${d}/list" || continue   # loose-match: ok agent names are [a-z0-9_-], anchored by ^ and a tab
@@ -5260,8 +5434,10 @@ upgrade_held_why() {
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
 
-# upgrade_end <want> <version> — at the end of the wait: each conductor marked ready is read again (it
-# may have gone busy since), each builder still waiting is left, then each conductor idle with its
+# upgrade_end <want> <version> — at the end of the wait: each conductor asked for its handover is read
+# again: one marked ready may have gone busy since, and one whose session is gone is done with
+# (upgrade_conductor_gone: skipped as closed once its handover is in, else left), so it holds no
+# builder and is told nothing. Each builder still waiting is left, then each conductor idle with its
 # handover in is moved (upgrade_conductor); one whose handover is not, or that
 # stayed busy after it, is told to carry on as before, by prompt once it is idle (UPGRADE_GRACE_MS
 # more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
@@ -5275,9 +5451,14 @@ upgrade_end() {
   else echo "herdr's agent list could not be read during the run, so no agent was moved" >> "${UPGRADE_DIR}/summary"; list=""; fi
   UPGRADE_HERDR=""   # each state read from here on asks herdr afresh: the end may wait minutes
   while IFS=$'\t' read -r name pane role cur; do
-    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" ]] || continue
-    [[ "$(upgrade_state "${name}" "${pane}" </dev/null)" == idle ]] || rm -f "${UPGRADE_DIR}/ready-${name}"
+    [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
+    case "$(upgrade_state "${name}" "${pane}" </dev/null)" in
+      idle) ;;
+      gone) upgrade_conductor_gone "${name}" ;;
+      *) rm -f "${UPGRADE_DIR}/ready-${name}" ;;
+    esac
   done <<< "${list}"
+  list="$(upgrade_open <<< "${list}")"   # less a conductor that went: it holds no builder, and is told nothing
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
@@ -5301,13 +5482,84 @@ upgrade_end() {
   done <<< "${list}"
 }
 
-# upgrade_open — upgrade_list's lines on stdin, but those of the agents this run already moved or left.
+# upgrade_open — upgrade_list's lines on stdin, but those of the agents this run already moved, left
+# or skipped as closed.
 upgrade_open() {
   local l
   while IFS= read -r l; do
-    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/kept-${l%%$'\t'*}" ]] || continue
+    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/kept-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/closed-${l%%$'\t'*}" ]] || continue
     printf '%s\n' "${l}"
   done
+}
+
+# upgrade_skip_closed <want> — the closed check, run once over the first round's reads of herdr's
+# list (UPGRADE_HERDR, the run's list) and of Claude Code's (one claude_agents call, UPGRADE_CLAUDE,
+# no read per agent): each agent in the list whose Claude session reads gone (upgrade_session), and
+# each Claude agent in <want> (empty: any) that a tab record in .swarm/state puts in a pane while
+# herdr lists it in none of this project's (upgrade_missing), is skipped as closed (upgrade_closed),
+# its epic kept (upgrade_epic) so its conductor hears of it (upgrade_about). A Claude Code list that
+# cannot be read skips no session as gone, and says so.
+upgrade_skip_closed() {
+  local name pane role cur
+  if [[ -s "${UPGRADE_DIR}/list" ]]; then
+    if UPGRADE_CLAUDE="$(claude_agents </dev/null)" && [[ "$(json 'isinstance(d, list)' <<< "${UPGRADE_CLAUDE}" 2>/dev/null)" == True ]]; then
+      while IFS=$'\t' read -r name pane role cur; do
+        [[ -n "${name}" && "$(upgrade_session "${name}" "$(upgrade_sid "${name}" "${pane}")" </dev/null)" == gone ]] || continue
+        upgrade_epic "${name}" "${role}" >/dev/null; upgrade_closed "${name}"
+      done < "${UPGRADE_DIR}/list"
+    else echo "Claude Code's list of its sessions could not be read before the first round, so the closed check skipped no agent for a gone session" >> "${UPGRADE_DIR}/summary"; fi
+    UPGRADE_CLAUDE=""
+  fi
+  while IFS=$'\t' read -r name role; do [[ -z "${name}" ]] || { upgrade_epic "${name}" "${role}" >/dev/null; upgrade_closed "${name}"; }; done <<< "$(upgrade_missing "$1")"
+}
+
+# upgrade_missing <want> — the Claude agents (newest agents.tsv line) in <want> (empty: any) that a
+# tab record in .swarm/state puts in a pane (its name mapped to agents.tsv's, upgrade_record_name),
+# but the run's list (upgrade_list, over a herdr list read successfully) does not hold: their pane
+# was closed outside swarm.sh, which drops a pane's record when it closes one. The lead's own pane is
+# never one; in record order, each name once, with its role, tab-separated.
+upgrade_missing() {
+  local f pane name extra rec seen=" "
+  for f in "${STATE_DIR}"/*; do
+    [[ -f "${f}" ]] || continue
+    while read -r pane name extra; do
+      [[ -n "${name}" && -z "${extra}" && "${pane}" =~ ^[A-Za-z0-9]+:[A-Za-z0-9]+$ ]] || continue   # a tab record: "<pane> <name>"
+      name="$(upgrade_record_name "${f##*/}" "${name}")"
+      [[ "${seen}" != *" ${name} "* ]] || continue
+      seen+="${name} "
+      [[ ( -z "$1" || "$1" == *" ${name} "* ) && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
+      rec="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 "\t" $2 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" || rec=""
+      [[ "${rec%%$'\t'*}" == claude ]] || continue
+      awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || printf '%s\t%s\n' "${name}" "${rec#*$'\t'}"
+    done < <(cat "${f}" 2>/dev/null || true)
+  done
+}
+
+# upgrade_record_name <label> <name> — the agents.tsv name of a tab record's <name>, in the tab file
+# <label>. A conductor's record reads `conductor` (start_conductor's pane name): it is the conductor
+# of the epic the label names, the backlog conductor when the label is its own name (its tab is), and
+# when a full tab's next, <label>-<n>, holds it, the label without that -<n>, whichever agents.tsv
+# records. Any other record holds the full name, which agents.tsv cuts (agent_name).
+upgrade_record_name() {
+  local n
+  if [[ "$2" != conductor ]]; then agent_name "$2"; return; fi
+  n="$(upgrade_label_conductor "$1")"
+  if [[ "$1" =~ -[0-9]+$ ]] && ! awk -F'\t' -v n="${n}" 'NF == 7 && $3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    n="$(upgrade_label_conductor "${1%-*}")"
+  fi
+  printf '%s' "${n}"
+}
+
+# upgrade_label_conductor <label> — the conductor whose tab <label> is: the backlog conductor's tab
+# takes its name (start_conductor), any other the epic's.
+upgrade_label_conductor() { if [[ "$1" == "$(conductor_name backlog)" ]]; then printf '%s' "$1"; else conductor_name "$1"; fi; }
+
+# upgrade_closed <name> — this run skips <name> as closed: its pane or its Claude session is gone, so
+# it is never waited on, sent a key or restarted, and counts as neither moved nor left; upgrade_tally
+# names it, once, on its `skipped (closed):` line.
+upgrade_closed() {
+  [[ ! -e "${UPGRADE_DIR}/closed-$1" ]] || return 0
+  : > "${UPGRADE_DIR}/closed-$1"; printf ' %s' "$1" >> "${UPGRADE_DIR}/closed"
 }
 
 # upgrade_moved <name> <line> / upgrade_left <name> <why> — this run is done with <name>: moved, or
@@ -5376,10 +5628,11 @@ upgrade_reviewer() {
 # upgrade_review_busy <reviewer> — succeed while <reviewer> is in the run's last read of its agents
 # (list, a Claude agent) on its old version, not moved since, and neither idle nor gone (upgrade_state).
 # One left on its old version still holds: it is still reviewing its builder's PR. A codex review agent
-# is in no list, so it holds nothing.
+# is in no list, so it holds nothing; one skipped as closed (upgrade_closed) holds nothing either, and
+# its state is not read.
 upgrade_review_busy() {
   local name pane role cur
-  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" ]] || return 1
+  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" && ! -e "${UPGRADE_DIR}/closed-$1" ]] || return 1
   while IFS=$'\t' read -r name pane role cur; do
     [[ "${name}" == "$1" && "${cur}" == old ]] || continue
     case "$(upgrade_state "${name}" "${pane}" </dev/null)" in idle|gone) return 1 ;; *) return 0 ;; esac
@@ -5391,8 +5644,9 @@ upgrade_review_busy() {
 # first time, its env: names are checked (refused: it is left, asked for nothing), then it is asked
 # (upgrade_request). One asked by note, in its inbox, that is idle with no handover is asked again by
 # prompt. Ready while the file is written and it is idle, read again each round, since an ended turn
-# reads idle while a background watch can still wake it; left at once when its session is gone.
-# Fails while it waits.
+# reads idle while a background watch can still wake it. One whose session is gone is skipped as
+# closed (upgrade_closed) once its handover is written, and left at once before that. Fails while it
+# waits.
 upgrade_ask() {
   local d="${UPGRADE_DIR}" names day file n=1 st
   if [[ ! -e "${d}/hand-$1" ]]; then
@@ -5405,12 +5659,20 @@ upgrade_ask() {
   : > "$(upgrade_paused "$1")" || true
   st="$(upgrade_state "$1" "$2")"
   case "${st}" in
-    gone) rm -f "$(upgrade_paused "$1")"; upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; return 0 ;;
+    gone) upgrade_conductor_gone "$1"; return 0 ;;
     idle) if [[ -s "$(cat "${d}/hand-$1")" ]]; then : > "${d}/ready-$1"; return 0; fi
           [[ "$(cat "${d}/asked-$1")" != note ]] || upgrade_request "$1" "$2" "$4" || true ;;
   esac
   rm -f "${d}/ready-$1"
   return 1
+}
+
+# upgrade_conductor_gone <conductor> — the asked conductor's Claude session is gone: its pause and
+# ready markers go, and it is skipped as closed (upgrade_closed) once its handover is written, else
+# left, as one that wrote none.
+upgrade_conductor_gone() {
+  rm -f "$(upgrade_paused "$1")" "${UPGRADE_DIR}/ready-$1"
+  if [[ -s "$(cat "${UPGRADE_DIR}/hand-$1")" ]]; then upgrade_closed "$1"; else upgrade_left "$1" "its Claude session is gone, so it wrote no handover"; fi
 }
 
 # upgrade_request <conductor> <pane> <version> — mark it paused (upgrade_paused), then ask it
@@ -5427,16 +5689,19 @@ upgrade_request() {
 # upgrade_restart <name> <pane> <role> <version> <end-ms> [then] — restart <name> (upgrade_one) and
 # tell it (upgrade_told) in a subshell, so a die stops that agent alone; its env: names first, before
 # anything is sent. A die's message is why it is left, with upgrade_one's resume hint once its claude
-# has exited (upgrade_hint). Exits 2, leaving nothing, when the agent was busy by <end-ms>.
+# has exited (upgrade_hint). Exits 2, leaving nothing, when the agent was busy by <end-ms>. One whose
+# session is gone by upgrade_one's own idle check (its closing- file) is skipped as closed
+# (upgrade_closed), not left, and it exits 0.
 upgrade_restart() {
   local why="${UPGRADE_DIR}/why" w
-  rm -f "${why}" "${UPGRADE_DIR}/hint-$1" "${UPGRADE_DIR}/busy-$1"
+  rm -f "${why}" "${UPGRADE_DIR}/hint-$1" "${UPGRADE_DIR}/busy-$1" "${UPGRADE_DIR}/closing-$1"
   # shellcheck disable=SC2034 # DIE_FILE and DIE_LEVEL are die's, this subshell's own
   if ( DIE_FILE="${why}"; DIE_LEVEL="${BASH_SUBSHELL}"
        names="$(upgrade_env "$1" "$3" "$(upgrade_epic "$1" "$3")")" || die "$1: ${names}, left on $(agent_version "$1")"
        upgrade_one "$1" "$2" "${names}" "$4" "$5"
        upgrade_told "$1" "$2" "$4" "${6:-}" ) </dev/null; then return 0; fi
   if [[ -e "${UPGRADE_DIR}/busy-$1" ]]; then rm -f "${UPGRADE_DIR}/busy-$1"; return 2; fi
+  if [[ -e "${UPGRADE_DIR}/closing-$1" ]]; then rm -f "${UPGRADE_DIR}/closing-$1"; upgrade_closed "$1"; return 0; fi
   w="$(cat "${why}" 2>/dev/null)" || w=""
   w="${w#"$1: "}"
   upgrade_left "$1" "$(sed -E 's/[,;] (left )?on [^ ]+$//' <<< "${w:-its restart failed}")$(upgrade_hint "$1")"
@@ -5444,7 +5709,8 @@ upgrade_restart() {
 }
 
 # upgrade_conductor <conductor> <pane> <old|new> <version> <end-ms> — move a conductor whose handover
-# is in, told its handover and which of its builders were restarted and which left: restarted
+# is in, told its handover and which of its builders were restarted, left or skipped as closed
+# (upgrade_about): restarted
 # (upgrade_restart), or, already on <version>, only told to carry on. One whose restart failed while
 # its claude still runs (it ended its turn for upgrade) is told to carry on where it is; one whose
 # claude exited got its resume hint from upgrade_one. Exits 2, still paused, when it was busy by
@@ -5469,17 +5735,18 @@ upgrade_conductor() {
 }
 
 # upgrade_about <epic> <version> — the line that tells <epic>'s conductor which of its builders this
-# run restarted and which it left.
+# run restarted, which it left and, when it skipped any as closed (upgrade_closed), which.
 upgrade_about() {
-  local f n c moved="" left=""
+  local f n c moved="" left="" closed=""
   c="$(conductor_name "$1")"
   for f in "${UPGRADE_DIR}"/epic-*; do
     n="${f##*/epic-}"
     [[ -e "${f}" && "${n}" != "${c}" && "$(cat "${f}")" == "$1" ]] || continue
     [[ ! -e "${UPGRADE_DIR}/done-${n}" ]] || moved+=" ${n}"
     [[ ! -e "${UPGRADE_DIR}/left-${n}" ]] || left+=" ${n}"
+    [[ ! -e "${UPGRADE_DIR}/closed-${n}" ]] || closed+=" ${n}"
   done
-  echo "Builders restarted on swarm-dev $2:${moved:- none}. Left on their old version:${left:- none}."
+  echo "Builders restarted on swarm-dev $2:${moved:- none}. Left on their old version:${left:- none}.${closed:+ Skipped as closed:${closed}.}"
 }
 
 # upgrade_want <epic>|backlog — the agent names upgrade moves, space-separated with a space each side:
@@ -5588,7 +5855,10 @@ upgrade_one() {
   old="$(agent_version "${name}")"
   names="$(agent_env_names)"; names="${names}${names:+ }$3"   # as start_agent gives every agent
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
-  [[ ${rc} -ne 2 ]] || die "${name}: its Claude session is gone, so it is not restarted; left on ${old}"
+  if [[ ${rc} -eq 2 ]]; then
+    [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/closing-${name}"
+    die "${name}: its Claude session is gone, so it is not restarted; left on ${old}"
+  fi
   if [[ ${rc} -ne 0 ]]; then
     [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/busy-${name}"
     die "${name}: still busy at the end of the wait, left on ${old}"
@@ -5660,30 +5930,59 @@ upgrade_flags() {
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
+# upgrade_sid finds that session and upgrade_session reads its state, both shared with the closed check
+# (upgrade_skip_closed): for agents.tsv's session it is session_state's word, the one read_state gives,
+# over upgrade_claude's list, and read_state itself is called only when no session is recorded, for
+# herdr's status.
 upgrade_state() {
-  local s sid cur
-  sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
-  if [[ -z "${sid}" ]]; then   # herdr lists none (0.9.5): agents.tsv's, followed to where a /clear moved it, as upgrade_one resumes
-    cur="$(recorded_current "$1")"
-    [[ "${cur}" == "$(recorded_session "$1")" ]] || sid="${cur}"
-  fi
-  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
-  else
-    s="$(claude_agents </dev/null | python3 -I -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except ValueError:
-    print("unknown"); sys.exit()
-e = next((x for x in d if isinstance(x, dict) and x.get("sessionId") == sys.argv[1]), None) if isinstance(d, list) else None
-print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("status") or "unknown")' "${sid}")" || s=unknown
-  fi
+  local s sid
+  sid="$(upgrade_sid "$1" "$2")"
+  s="$(upgrade_session "$1" "${sid}" </dev/null)"
+  [[ "${s}" != herdr ]] || s="$(read_state "$1" </dev/null)"   # no session anywhere: herdr's status
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
     busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid:-$(recorded_session "$1")}"; then echo idle; else echo busy; fi ;;
     *) echo busy ;;
   esac
+}
+
+# upgrade_sid <name> <pane> — the session herdr has in <pane> now (upgrade_herdr); with none listed
+# (herdr 0.9.5), the one a /clear moved agents.tsv's session to (recorded_current), as upgrade_one
+# resumes it; nothing when neither, so agents.tsv's session stands (session_state).
+upgrade_sid() {
+  local sid cur
+  sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
+  if [[ -z "${sid}" ]]; then   # herdr lists none (0.9.5): agents.tsv's, followed to where a /clear moved it, as upgrade_one resumes
+    cur="$(recorded_current "$1")"
+    [[ "${cur}" == "$(recorded_session "$1")" ]] || sid="${cur}"
+  fi
+  printf '%s\n' "${sid}"
+}
+
+# upgrade_claude — Claude Code's list of its sessions: the closed check's copy (UPGRADE_CLAUDE) while
+# it runs, else read now (claude_agents).
+upgrade_claude() { if [[ -n "${UPGRADE_CLAUDE}" ]]; then printf '%s\n' "${UPGRADE_CLAUDE}"; else claude_agents </dev/null; fi; }
+
+# upgrade_session <name> <sid> — Claude Code's own state for session <sid> (upgrade_claude), unknown
+# when its list cannot be read (the read fails, or gives no list) and gone when the list has no such
+# session; with no <sid>, the state session_state gives for agents.tsv's session over that same list,
+# herdr when none is recorded.
+upgrade_session() {
+  local s
+  if [[ -z "$2" ]]; then
+    s="$(upgrade_claude)" || s=""   # a failed read is no list, whatever it printed: unknown, never gone
+    session_state "$1" "${s}"; return
+  fi
+  s="$(upgrade_claude | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    print("unknown"); sys.exit()
+e = next((x for x in d if isinstance(x, dict) and x.get("sessionId") == sys.argv[1]), None) if isinstance(d, list) else None
+print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("status") or "unknown")' "$2")" || s=unknown
+  echo "${s}"
 }
 
 # turn_over <session> — succeed when <session>'s log ends on an assistant message that ended its turn
