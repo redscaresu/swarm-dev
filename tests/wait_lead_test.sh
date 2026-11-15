@@ -938,9 +938,17 @@ printf '{"result":{"process_info":{"pane_id":"w:b","shell_pid":%s}}}\n' "$$" > "
 check "a builder whose pane runs a test suite: no stuck: line" test -z "$(poll)"
 kill "${tpid}" 2>/dev/null || true; wait "${tpid}" 2>/dev/null || true; tpid=""; rm -f "${FX}/pi"
 mkdir -p "${CLAUDE_CONFIG_DIR}/projects/p"
-printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
-  > "${CLAUDE_CONFIG_DIR}/projects/p/s-wl-stuck.jsonl"
+# bg_launch <minutes ago> — the builder's transcript: one background task launched that long ago, with no end.
+bg_launch() {
+  printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
+    "$(python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60 * int(sys.argv[1]))))' "$1")" \
+    > "${CLAUDE_CONFIG_DIR}/projects/p/s-wl-stuck.jsonl"
+}
+bg_launch 0
 check "a builder whose transcript has a live background task: no stuck: line" test -z "$(poll)"
+# Past 3 times stall_minutes (30), a task with no end, as a shell hung for good (#891), hides nothing.
+bg_launch 180
+check "a background task launched 3 hours ago with no end: the stuck: line is back" test "$(poll)" == "${SLINE}"
 rm -rf "${CLAUDE_CONFIG_DIR}/projects/p"
 check "with the task gone, the line is back" test "$(poll)" == "${SLINE}"
 rm -f "${FX}/agents" "${FX}/prs.json" "${FX}/claude.json" "${P}/.swarm/state/wl-stuck" "${P}/.swarm/agents.tsv"

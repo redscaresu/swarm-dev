@@ -510,7 +510,13 @@ treats such an agent as idle and delivers, and `next` names a conductor's stop. 
 prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
 herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
 transcript shows no background task still running (a shell, an async subagent or a monitor it
-started, with no `<task-notification>` carrying a `<status>` for it since). A test suite running in
+started, with no `<task-notification>` carrying a `<status>` for it since) that it launched less than
+3 times `stall_minutes` ago. An older task, a background test run included, no longer counts, because a
+task can hang for good: on #891 a review agent's background shell waited 17.5 hours on a read that
+never ended, and nothing reported a stall. A background command that is only swarm.sh's own waits
+(`wait`, `watch`, `wait-pr` or `merge`, each of which ends on its own, with `swarm.sh tell` and shell
+glue such as `unset`, `cd` and `echo` beside them) still counts at any age, so a conductor on a long
+`watch` is not stuck. One that runs anything else as well is held to the bound. A test suite running in
 its pane (`make test`, `make check` or `scripts/test.sh`, as under `stall_minutes`) also keeps it
 from being stuck, for a conductor as for a builder, for as long as the run is alive, with no limit on
 its age. It sends nothing when it says `stuck`: read the pane. `stuck` is
@@ -527,7 +533,7 @@ and `dash` show `usage-limit` for the agent in place of working or idle. `wait -
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, own work in the session log or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
 worktree, its own work in its session log, a PR update, a swarm action on its story, a background
-task its session waits on, up to 3 times `stall_minutes` old, or a test suite running in its pane, at
+task its session waits on, up to 3 times `stall_minutes` old or a swarm.sh wait at any age, or a test suite running in its pane, at
 any age) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
 Before it calls a builder stalled, once its PRs show no update either, it asks the signer probe
 (`sign_blocked`, over the builder's worktree) whether git can sign the uncommitted work there without a
