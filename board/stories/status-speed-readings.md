@@ -16,3 +16,7 @@ The epic's Done when wants flow run_times' median under 30 s, and every story pr
 **Done when:**
 - The real-board section times and the median per load band, with runs and window, are recorded in the PR that finishes this story or the v0.31.0 checkpoint file, against the 30 s bar.
 - The user's answer is recorded and board/epics/status-speed.md matches it.
+
+## The user's answer (2026-11-15)
+
+Agreed the narrowing: status gets no reuse across runs, next gets no budget, dash gets no target, and the median moves to this reading. The board PR that finishes this story edits board/epics/status-speed.md to match.
