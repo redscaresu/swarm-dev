@@ -18,7 +18,11 @@ from collections import Counter
 # removed in one place and added back in another, is no second report. So a copy the base added
 # (beyond the PR side's, for a line new to F), or one both sides had, that the resolution dropped
 # prints, and a copy the PR's own commits removed does not, whatever other copies of L the file
-# holds. Each side's F is read
+# holds. A line the base itself no longer has is no drop: when <base>'s F, or the F of `git merge-base
+# <base> <head>`, has no copy of L, L does not print, so a merge a stacked build's parent made, still in
+# the build's history once the parent's squash merge is on <base>, stops counting a line that squash took
+# off. Those two commits' F is read as the other sides' is, and one with no such file under any name git
+# finds still counts L. Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
 # part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
@@ -195,6 +199,16 @@ def scan(m, pr, base_side, ours):
             got = read(rev, renamed(rev)[after])
         return got
 
+    def gone(path, after, text):
+        """whether the base itself no longer has text in this file: at <base> or at the PR's merge base
+        with it (LATER), the file, read under that commit's own name for it, has no copy; a commit with
+        no such file under any name git finds still counts the line"""
+        for rev in LATER:
+            got = copies(rev, path, after)
+            if got is not None and not got[text]:
+                return True
+        return False
+
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
     for path, after, section, text in removed(out):
         if not text.strip() or section not in (OUTSIDE, ours):
@@ -208,7 +222,8 @@ def scan(m, pr, base_side, ours):
         side, root = copies(pr, path, after) or Counter(), copies(mb, path, after) or Counter()
         kept = (read(m, after) or Counter()) if after is not None else Counter()
         if (path, text) not in short:
-            short[path, text] = owed(base[text], side[text], root[text]) - kept[text] if base[text] else 0
+            short[path, text] = (owed(base[text], side[text], root[text]) - kept[text]
+                                 if base[text] and not gone(path, after, text) else 0)
         if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
             short[path, text] -= 1
             found.append("%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
@@ -223,6 +238,12 @@ if rc != 0:
     stop("cannot list the merges in %s..%s: %s" % (BASE, HEAD, err))
 merges = [m for m in out.decode().split() if not sys.argv[4:] or m in wanted]
 checks = [(m,) + sides(m, BASE) for m in merges]   # every merge is checkable before any line prints
+LATER = [BASE]   # where the base must still have a line for its drop to count (gone)
+if checks:
+    rc, out, err = git("merge-base", "--end-of-options", BASE, HEAD)
+    if rc not in (0, 1):
+        stop("cannot find the merge base of %s and %s: %s" % (BASE, HEAD, err))
+    LATER += out.decode().split()   # none on rc 1: no common ancestor
 dropped = [line for c in checks for line in scan(*c)]   # every remerge read before any line prints
 for line in dropped:
     say(line)

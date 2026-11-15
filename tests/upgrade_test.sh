@@ -9,7 +9,8 @@
 # restarted once idle, and one still busy at the end of the wait is named as left on its old
 # version. One whose session is gone, or whose pane herdr no longer lists, is skipped as closed:
 # named once on a skipped (closed) line, never touched, and counted neither moved nor left; a closed
-# pane is found through its tab record, a conductor's reading `conductor`. An agent whose newest record is codex is
+# pane is found through its tab record, a conductor's reading `conductor`; a new agent under a skipped
+# one's name, in another pane, is moved after all. An agent whose newest record is codex is
 # left alone. One that cannot be told the new path stays on its old version; a restart that fails once
 # claude has exited says how to resume it; a second run skips the agents already on this version. A
 # busy conductor gets the request in its inbox. A conductor already on this version is paused while
@@ -46,6 +47,13 @@
 # stub's call numbered in ${H}/arm has made ${H}/armed (each claude call logs "claude <n>"); a prompt
 # telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
 # restart it while ${H}/sayfail does. Every call is logged.
+# Only the case's own run meets agent list's failures and ${H}/onlist, and only its claude calls are
+# counted: upgrade() numbers each run (UPGRADE_TEST_RUN, kept in ${H}/run while it runs, else 0;
+# the count is kept in ${H}/runs, so a run from a subshell still gets a number of its own; a swarm.sh
+# call outside upgrade() carries none, so it meets neither, even while ${H}/run is being rewritten). A note to a busy conductor
+# leaves a wake check behind (note_wake_later) that reads both stubs a minute later, in a later case;
+# it gets the plain list and JSON, uncounted, so it cannot use up a failure or a count set for that
+# case's run (a stray read once took listfail1, and the conductor it should leave was moved).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -102,15 +110,16 @@ cat >> "${H}/bin/herdr" <<'STUB'
 [ "$1" = --version ] && { echo "herdr 0.9.5"; exit 0; }
 { for a in "$@"; do printf '%s ' "$a"; done; echo; } >> "$H/herdr.log"
 case "$1 $2" in
-  "agent list") [ ! -e "$H/listdown" ] || exit 1
-                [ ! -e "$H/listfail1" ] || { rm -f "$H/listfail1"; exit 1; }
-                if [ -e "$H/listfail" ]; then   # fails three times, then is gone
+  "agent list") if [ -n "${UPGRADE_TEST_RUN:-}" ] && [ "${UPGRADE_TEST_RUN}" = "$(cat "$H/run" 2>/dev/null)" ]; then mine=1; else mine=""; fi   # the case's own run
+                [ -z "$mine" ] || [ ! -e "$H/listdown" ] || exit 1
+                [ -z "$mine" ] || [ ! -e "$H/listfail1" ] || { rm -f "$H/listfail1"; exit 1; }
+                if [ -n "$mine" ] && [ -e "$H/listfail" ]; then   # fails three times, then is gone
                   n=$(($(cat "$H/listfail.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/listfail.count"
                   [ "$n" -lt 3 ] || rm -f "$H/listfail" "$H/listfail.count"; exit 1; fi
                 awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"idle\"%s}", (NR > 1 ? "," : ""), $1, $2, ($3 == "-" ? "" : ",\"agent_session\":{\"value\":\"" $3 "\"}") }
                      END { print "]}}" }' "$H/agents"
-                [ ! -e "$H/armed" ] || [ ! -x "$H/onlist" ] || { rm -f "$H/armed"; "$H/onlist"; } ;;   # after the list it printed
+                [ -z "$mine" ] || [ ! -e "$H/armed" ] || [ ! -x "$H/onlist" ] || { rm -f "$H/armed"; "$H/onlist"; } ;;   # after the list it printed
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "pane process-info") p="$4"; [ -e "$H/pifail" ] && exit 1
                 if [ -e "$H/exited-$p" ]; then echo '{"result":{"process_info":{"foreground_processes":[{"argv":["zsh"]}]}}}'
@@ -135,6 +144,7 @@ chmod +x "${H}/bin/herdr"
 printf '#!/bin/sh\nH="%s"\n' "${H}" > "${H}/bin/claude"
 cat >> "${H}/bin/claude" <<'STUB'
 [ "$*" = "agents --json" ] || { echo "claude stub: unexpected call: $*" >&2; exit 1; }
+{ [ -n "${UPGRADE_TEST_RUN:-}" ] && [ "${UPGRADE_TEST_RUN}" = "$(cat "$H/run" 2>/dev/null)" ]; } || { cat "$H/claude.json"; exit 0; }   # not the case's own run: uncounted
 n=$(($(cat "$H/claude.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/claude.count"
 echo "claude $n" >> "$H/herdr.log"
 [ "$n" != "$(cat "$H/arm" 2>/dev/null)" ] || touch "$H/armed"
@@ -149,10 +159,13 @@ claude_list idle idle idle
 
 mkdir -p "${H}/tmp"
 ENVV=(TMPDIR="${H}/tmp" SWARM_PROJECT="${P}" PROVIDER_KEY=provider-key HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 PATH="${H}/bin:${H}/old/0.21.0/bin:${H}/shared:${PATH}")
+echo 0 > "${H}/run"; echo 0 > "${H}/runs"   # run: 0 between runs, so no call is the case's own; runs: the last number given
 upgrade() { # [epic] — run upgrade --foreground from the project, its output in ${H}/out and exit code in rc
   : > "${LOG}"; rc=0; rm -f "${H}/claude.count" "${P}/.swarm/inbox/conduct-e.md"
-  (cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
+  RUN=$(($(cat "${H}/runs") + 1)); echo "${RUN}" > "${H}/runs"; echo "${RUN}" > "${H}/run"   # a file, so a call in a subshell numbers its run too
+  (cd "${P}" && env "${ENVV[@]}" UPGRADE_TEST_RUN="${RUN}" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
     bash "${SWARM}" upgrade "$@" --foreground > "${H}/out" 2>&1) || rc=$?
+  echo 0 > "${H}/run"
 }
 
 fails=0
@@ -296,6 +309,97 @@ claude_list idle idle idle; echo '1 s/{"sessionId":"s1","status":"idle"},//' > "
 upgrade e
 check "a session gone by its round is skipped as closed, not left" "0|1|0|upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): b1' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(tail -1 "${H}/out")"
+
+# Same-name restart: b1 and b2 are skipped as closed at the check (their sessions gone). Before the
+# round reaches its builders, the conductor starts a new b1 in pane w:b9 (session s9), as it writes
+# its handover. That new b1 is moved, named once, and counted as moved; b2, with no replacement,
+# stays skipped. If the closed markers keyed on the name alone, b1 would stay skipped.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s9","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cp "${H}/agents" "${H}/agents.same"; cp "${P}/.swarm/state/e" "${H}/state-e.same"; cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.same"
+CMD=(claude); argv b1 sonnet --session-id s9 > "${H}/argv-w:b9"
+cat > "${H}/onhandover" <<EOF
+#!/bin/sh
+sed -i.bak 's/^b1 w:b1 s1\$/b1 w:b9 s9/' "${H}/agents"
+echo 'w:b9 b1' >> "${P}/.swarm/state/e"
+printf '2026-10-22\tcode\tb1\tclaude\tsonnet\thigh\ts9\n' >> "${P}/.swarm/agents.tsv"
+EOF
+chmod +x "${H}/onhandover"
+upgrade e
+rm -f "${H}/onhandover" "${H}/argv-w:b9"
+cp "${H}/agents.same" "${H}/agents"; cp "${H}/state-e.same" "${P}/.swarm/state/e"; cp "${H}/agents.tsv.same" "${P}/.swarm/agents.tsv"
+check "a new agent under a closed agent's name is moved, not skipped; one with no replacement stays skipped" \
+  "0|1|yes|b1: 0.21.0 -> ${NEW}|1|upgrade done: 2 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'skipped (closed): b2' "${H}/out")|$(has 'agent start b1 --kind claude --pane w:b9' "$(calls 'agent start b1')")|$(grep -- '^b1: .* -> ' "${H}/out")|$(grep -cx 'b1: a new agent in pane w:b9 took its name after it was skipped as closed, so it is moved' "${H}/out")|$(tail -1 "${H}/out")"
+check "its conductor hears b1 was restarted and only b2 skipped" "yes" \
+  "$(has "Builders restarted on swarm-dev ${NEW}: b1. Left on their old version: none. Skipped as closed: b2. Carry on" "$(calls 'agent prompt w:c')")"
+
+# A conductor writes its handover, then its session goes when b2's start runs, while b1 is still busy:
+# it is skipped as closed. A new conductor then takes conduct-e's name, in pane w:c9 (session sc9),
+# which herdr's list holds from the round after. It is asked for its own handover, not handed the old
+# one's, and moved with b1 last; b1 goes idle once it writes it. If reopening kept the old
+# conductor's handover records, the new one would never be asked.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"busy"},{"sessionId":"s2","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cp "${H}/agents" "${H}/agents.cond"; cp "${P}/.swarm/state/e" "${H}/state-e.cond"; cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.cond"
+CMD=(claude); argv conduct-e opus --session-id sc9 > "${H}/argv-w:c9"
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak 's/{"sessionId":"sc","status":"idle"},//' "${H}/claude.json"
+touch "${H}/armed"
+EOF
+cat > "${H}/onlist" <<EOF
+#!/bin/sh
+sed -i.bak 's/^conduct-e w:c sc\$/conduct-e w:c9 sc9/' "${H}/agents"
+echo 'w:c9 conductor' >> "${P}/.swarm/state/e"
+printf '2026-10-22\tconduct\tconduct-e\tclaude\topus\thigh\tsc9\n' >> "${P}/.swarm/agents.tsv"
+sed -i.bak 's/^\[/[{"sessionId":"sc9","status":"idle"},/' "${H}/claude.json"
+touch "${H}/newcond"
+EOF
+cat > "${H}/onhandover" <<EOF
+#!/bin/sh
+[ -e "${H}/newcond" ] || exit 0   # the new conductor's handover, not the old one's
+sed -i.bak 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2" "${H}/onlist" "${H}/onhandover"
+upgrade e
+rm -f "${H}/onstart-b2" "${H}/onlist" "${H}/onhandover" "${H}/newcond" "${H}/armed" "${H}/argv-w:c9"
+cp "${H}/agents.cond" "${H}/agents"; cp "${H}/state-e.cond" "${P}/.swarm/state/e"; cp "${H}/agents.tsv.cond" "${P}/.swarm/agents.tsv"
+check "a new conductor under a closed one's name is asked for its own handover, then moved with its builder" \
+  "0|1|1|yes|yes|0|upgrade done: 3 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'conduct-e: a new agent in pane w:c9 took its name after it was skipped as closed, so it is moved' "${H}/out")|$(calls 'agent prompt w:c9' | grep -c 'Write a handover')|$(has 'agent start conduct-e --kind claude --pane w:c9' "$(calls 'agent start conduct-e')")|$(has 'agent start b1' "$(calls 'agent start b1')")|$(grep -c 'skipped (closed)' "${H}/out")|$(tail -1 "${H}/out")"
+
+# A conductor reopened by the round's second read of herdr's list, the one after another conductor's
+# handover, is asked in the next round. Every agent is in scope: conduct-e's session is gone at the
+# check and its builders are on this version already; conduct-other is idle on the old one. As
+# conduct-other writes its handover, a new conduct-e appears in pane w:c9 (session sc9), so the
+# round's second read reopens it after the round asked for handovers. If that round did not wait,
+# the run would end with the new conduct-e still on its old version.
+for n in conduct-e conduct-other; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+for n in b1 b2 x1; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sco","status":"idle"},{"sessionId":"s1","status":"idle"},{"sessionId":"s2","status":"idle"},{"sessionId":"sx","status":"idle"}]' > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"
+cp "${H}/agents" "${H}/agents.second"; cp "${P}/.swarm/agents.tsv" "${H}/agents.tsv.second"
+echo 'conduct-other w:co sco' >> "${H}/agents"; echo 'w:co conductor' > "${P}/.swarm/state/other"
+printf '2026-10-22\tconduct\tconduct-other\tclaude\topus\thigh\tsco\n' >> "${P}/.swarm/agents.tsv"
+CMD=(claude); argv conduct-other opus --session-id sco > "${H}/argv-w:co"; argv conduct-e opus --session-id sc9 > "${H}/argv-w:c9"
+cat > "${H}/onhandover" <<EOF
+#!/bin/sh
+[ ! -e "${H}/swapped" ] || exit 0   # once: at conduct-other's handover
+touch "${H}/swapped"
+sed -i.bak 's/^conduct-e w:c sc\$/conduct-e w:c9 sc9/' "${H}/agents"
+echo 'w:c9 conductor' >> "${P}/.swarm/state/e"
+printf '2026-10-22\tconduct\tconduct-e\tclaude\topus\thigh\tsc9\n' >> "${P}/.swarm/agents.tsv"
+sed -i.bak 's/^\[/[{"sessionId":"sc9","status":"idle"},/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onhandover"
+cp "${P}/.swarm/state/e" "${H}/state-e.second"
+upgrade
+rm -f "${H}/onhandover" "${H}/swapped" "${H}/argv-w:co" "${H}/argv-w:c9" "${P}/.swarm/state/other" "${P}/.swarm/versions/conduct-other"
+echo 0.21.0 > "${P}/.swarm/versions/x1"   # as it was: later cases keep x1 on the old version
+cp "${H}/agents.second" "${H}/agents"; cp "${H}/state-e.second" "${P}/.swarm/state/e"; cp "${H}/agents.tsv.second" "${P}/.swarm/agents.tsv"
+check "a conductor reopened by a round's second read is asked in the next round and moved" \
+  "0|1|1|conduct-e: 0.21.0 -> ${NEW}|conduct-other: 0.21.0 -> ${NEW}|0|upgrade done: 2 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'conduct-e: a new agent in pane w:c9 took its name after it was skipped as closed, so it is moved' "${H}/out")|$(calls 'agent prompt w:c9' | grep -c 'Write a handover')|$(grep -- '^conduct-e: .* -> ' "${H}/out")|$(grep -- '^conduct-other: .* -> ' "${H}/out")|$(grep -c 'skipped (closed)' "${H}/out")|$(tail -1 "${H}/out")"
 
 # A conductor whose session is gone at the check is skipped before it is asked: no prompt, no note,
 # and its builders, with no conductor to pause, are restarted.
