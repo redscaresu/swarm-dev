@@ -579,7 +579,7 @@ has already reviewed or started on (the findings file's `head:` line, or the hea
 story's new PR has a new head, so it is reported. Watches that run at once share `watch-seen`, and the
 lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
 be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
-The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. Concurrent watches, such as each conductor's and the lead's, share each poll's reads: the open-PR list, each head's check runs and the check-run and status reads behind a queued line. A watch keeps each of those reads that succeeded in `.swarm/poll-cache/` for 59 seconds, one less than a poll, and another watch takes a read that recent instead of asking GitHub. Two watches that need one at once make one read between them. A failed read is never kept, so the next watch reads again. A shared read can be up to 59 seconds old, so a change can take one poll longer to show. A watch running alone never reads its own entries. The mergeable read is never shared: it is read by PR number, not head, so a kept `MERGEABLE` could hide a new conflict. A codex
+The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. Concurrent watches, such as each conductor's and the lead's, share each poll's reads: the open-PR list, each head's check runs and the check-run and status reads behind a queued line. A watch keeps each of those reads that succeeded in `.swarm/poll-cache/` for 59 seconds, one less than a poll, and another watch takes a read that recent instead of asking GitHub. Two watches that need one at once make one read between them. A failed read is never kept, so the next watch reads again. A shared read can be up to 59 seconds old, so a change can take one poll longer to show. A watch running alone never reads its own entries. The mergeable read is never shared: it is read by PR number, not head, so a kept `MERGEABLE` could hide a new conflict. `swarm.sh next`'s `queued:` lines use the same cached check-run and status reads: a `next` run within 59 seconds of a watch's poll takes that poll's reads of a head instead of asking GitHub, and a watch takes `next`'s. A head that moved since is read fresh, as its reads are kept by head. The open, mergeable PR list that `next` reads first is never shared, for the same reason. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so
@@ -742,7 +742,7 @@ and each PR whose review agent never started or went,
 with its exit (§ The lead). Then it lists the agents that need a look (waiting on a prompt, an empty
 pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose login expired,
 which only your `/login` clears), what waits on you, and the next step. A Stacked section, shown
-only when it has a line, lists each stacked build that has to catch up with a parent. It reads the
+only when it has a line or was skipped at the deadline, lists each stacked build that has to catch up with a parent. It reads the
 parents the child's current build stacked on, and compares them with the child's branch on origin,
 so a merge the child has not pushed still shows: `<child>: merge origin/story/<p>` when the parent's
 open PR has commits the child lacks, `<child>: merge origin/<base> (<p> merged)` once the parent
@@ -1049,9 +1049,15 @@ review file is written only on a pass or a stop (above).
 `review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
 head or has uncommitted changes, when its findings file is a pass of the PR's head and the story is
-no longer `ready`, or when
+no longer `ready`, when another agent of the project runs under `review-<slug>`'s agent name, or when
 `review-<slug>` is still working or still open with no findings file (idle while its codex runs, not
-finished). It moves the last review's file aside
+finished). Agent names are compared at herdr's 32-character cut. herdr refuses a longer name, so
+swarm.sh cuts every name to its first 32 characters. Two slugs that share those characters then share
+one herdr agent: `review-review-pane-closes-after-merge` and `review-review-pane-closes-after-handover`
+were both `review-review-pane-closes-after-`, and the second story's review read the first one's agent
+as its own review still running. So when the cut name is held by an agent with a different full name,
+`review-agent` (and `swarm.sh agent`) refuses with a line naming both agents and the limit. Two names
+within 32 characters are never cut and start as before. It moves the last review's file aside
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
 the agent has started. When the start fails, `review-agent` first reads the error. If herdr may
 have sent the brief (its reply could not be read, or the brief was sent and not taken up) and
@@ -1326,6 +1332,9 @@ Deleting the file clears it.
 A read cut off there, or due after it, counts as a failed read, so its section shows what it shows when that read fails, and a last line such as `skipped (over 30 s): herdr agent list, gh pr list` names it.
 Each run reads the board's story, epic and HLD files, and their board state, once at its start, so an edit made to them during the run shows on the next run.
 A board-state change any swarm.sh makes during the run shows on the next run too, as a file edit does.
+The Stacked, Waiting on you and Next sections (Next with its `idle:` lines) each start only before the deadline.
+One due at or past it does not run: its heading reads, for example, `Waiting on you: skipped (over 30 s)` with no rows, and the last line names it after the cut reads (`skipped (over 30 s): herdr pane list, Stacked, Waiting on you, Next`).
+A section that started in time runs to its end, so a run takes at most the deadline plus its slowest section.
 
 **`swarm.sh story [--strict] <slug>`**
 Build one story.
