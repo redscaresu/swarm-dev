@@ -352,7 +352,8 @@ cache off (the tests whose `gh` stub changes between runs do).
 
 `swarm.sh wait-pr` and `swarm.sh watch` keep their CI reads in `.swarm/poll-cache/`
 (`bin/lib/poll_cache.py`) for under one poll. Waits on one head share them, and so do watches on one
-repo (the open-PR list and the check-run and status reads). Each file is one read's output, named by a
+repo (the open-PR list and the check-run and status reads), and `swarm.sh next`'s `queued:` lines
+share the check-run and status reads with them. Each file is one read's output, named by a
 hash of the gh command and its output filter, and holding both and when the read started. A different
 command never reads it, neither does the same path read with another filter, and a slow read is kept
 as old as it is. A read is kept only once it parsed whole (for watch's own reads, once gh exited 0),
