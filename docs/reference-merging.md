@@ -28,8 +28,19 @@ here and on origin. A merged story's build always goes; if its builder is still 
 closes it first, which counts nothing while the story is in review. It closes the story's review
 agent, `review-<slug>`, too. When reconcile runs in that agent's own pane, as a `swarm.sh merge` run
 there does, it retires the agent instead, under a `-done` name (`review-<slug>-done` for a short
-slug), so the pane running the merge stays open; `swarm.sh tidy --yes` closes it later. Its session
-is archived to `.swarm/sessions` when it is retired, so that copy stops at the merge. A review
+slug), so the pane running the merge stays open. A detached waiter then closes that pane once the
+merge has exited and the agent's turn has ended, and logs `close-when-idle review-<slug> closed`. If
+the agent is still not idle 20 minutes after the merge exited, the waiter leaves the pane open and
+logs `close-when-idle review-<slug> left open: ...`, naming its state. Close it then with
+`swarm.sh tidy --yes`. Its session is archived to `.swarm/sessions` when it is retired, so that copy stops
+at the merge. The review pane closes the same way after a handover. With `merge = human` and no HLD
+`merge` grant over the story, the review agent hands the PR to you with `swarm.sh review` and merges
+nothing. When that command runs in `review-<slug>`'s own pane, it retires the agent, and the waiter
+closes the pane once the command has exited and the agent's turn has ended. Run from any other pane
+(yours, a conductor's), or under `merge = agent` or a `merge` grant, it closes nothing. Each herdr
+call it makes for the close has a time limit. If herdr hangs, or cannot rename the agent, the story
+stays in review, the pane stays open, and `swarm.sh review` says which command closes it:
+`swarm.sh close review-<slug>` for an agent it did not retire, `swarm.sh tidy --yes` for one it did. A review
 agent that is working or waiting in another pane is left open, and reconcile says so: it may be
 running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
@@ -176,7 +187,7 @@ sets an epic `active` with no ticket, as `board-pr open` does (§ The lead), or 
 its stage ([§ Writing an epic](reference-planning.md#writing-an-epic), Staged epics). Once the head is green,
 it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
 lists the PR's files at that head. A renamed epic is read at its old path on the base (GitHub's
-`previous_filename`), as `board-pr open` reads it: its `agreed:` is compared under any heading, its `active` carries over only while the heading is the same; the epic guard's list of the PR's files (`merge_files`) is read once per merge, within `BASE_MOVED_WAIT`, and read again only after a transient gh error, as the pinned list is. Any read error refuses, as does a 404 at the head on a file the PR
+`previous_filename`), as `board-pr open` reads it: its `agreed:` is compared under any heading, its `active` carries over only while the heading is the same. An `agreed:` date that an epic the PR removes or renames away had on the base is no ticket for any epic the PR sets `active`, including one GitHub lists as added, and the refusal names the deleted epic. § The lead says what to do when two epics were agreed the same day. The epic guard's list of the PR's files (`merge_files`) is read once per merge, within `BASE_MOVED_WAIT`, and read again only after a transient gh error, as the pinned list is. Any read error refuses, as does a 404 at the head on a file the PR
 does not remove or rename away. For a story PR each of those reads, the file list included, stops after
 60 seconds (`BASE_MOVED_WAIT`) and refuses the same way. For a `--board` PR the epic and HLD reads and the
 epic guard's file list stop there; the path list `--board` checks first has no limit. A read cut off that
@@ -228,7 +239,14 @@ once when the merge base's file has no copy of it, as when one change reaches th
 merge and the branch by its own commit. The merge then owes as many copies as the side with more of
 them, so a resolution that keeps one copy has dropped nothing. If the merge base's file already has
 the line, each side's new copy is still owed, since two new copies of a `}` or a `fi` can be two
-separate additions. When `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
+separate additions. A line the base itself no longer has does not count: when the base's file has
+no copy of it at the base's tip, or at the PR's merge base with the base, the line is not printed.
+A file the base deleted, or renamed past what git detects, still counts its lines, since the two
+look the same. A stacked build keeps its parent's merges in its history after the parent's squash
+merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
+squash has taken it off the base. A line the PR's own merge drops while the base still has it still
+prints. When
+`dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
 holds the PR too and says why: `held: <slug> (dropped base lines unchecked: <why>); the user checks the
@@ -754,7 +772,8 @@ Every builder, review agent and conductor brief lists the forms the guard passes
 `cd <dir> || exit 1 && <command>`, a merge run alone in its call (the brief gives its own merge
 command, or none under `merge = human`, so the rule names none), and the brief's own waits. A
 builder's is `swarm.sh wait-pr --head`. A review agent's are
-`swarm.sh wait --stall` and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
+`swarm.sh wait --stall`, `swarm.sh wait --stall --past <sha> <slug>` for a fix (it also ends once
+the builder pushes past `<sha>`) and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
 conductor's are its own `swarm.sh watch --epic <epic>` (or `--backlog`) and `swarm.sh wait`, since
 it never waits on CI. Text that mentions a merge goes through the Write tool, or into a `gh pr`
 command as a quoted heredoc (`--body "$(cat <<'EOF' ... EOF)"`). A `gh api` call that carries it is
@@ -848,6 +867,11 @@ the run; its conductor hears it was skipped. All of them are named once, on one 
 <names>` line. When that first read of herdr's list fails, upgrade says the closed check did not
 run; when Claude Code's list cannot be read, it says the check skipped no agent for a gone session.
 Either way a session found gone later in the run is still skipped.
+A skip holds only for the agent it saw, in that pane with that session. When a later round finds a
+new agent under the same name, in another pane or with another session (its conductor started it
+again), upgrade moves the new one and counts it as moved. It drops the name from the
+`skipped (closed):` line and says so on a `<name>: a new agent in pane <pane> took its name after it
+was skipped as closed, so it is moved` line.
 A builder also waits while its story's review agent (`review-<slug>`), which reviews its PR, is a
 Claude agent on the old version that is not idle. The review agent is restarted once it is idle, as
 any agent is. One left on the old version (its restart failed) still holds its builder while it is
@@ -1041,6 +1065,7 @@ It changes nothing and logs nothing.
 It works in the clone of `<owner/repo>` (the project, or `<repos_dir>/<name>`), whose origin must be that repo.
 It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/head` and `<base>` into refs of its own, and checks that the fetched commit is `<head>`.
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
+A line counts only while the base still has it, both at the fetched `<base>` and at the PR's merge base with it.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
 Each dropped line prints as `<sha7> <file>: <text>`.
