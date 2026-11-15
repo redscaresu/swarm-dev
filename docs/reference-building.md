@@ -897,14 +897,16 @@ the limit, stops the agent). A delivery
 that held the story for the lead or stepped the build up leaves `.sent` too, so before it waits for
 the fix the agent reads the story's `held_for:` line, which stops it, and the events log's
 `escalate` line for a findings step-up, after which it tells the new builder nothing and waits on
-it. Two waits are `wait --stall <slug>`, which ends once the builder's turn has. One is the wait
-before a tell, so the tell goes at once. The other is the wait for a queued tell's delivery, so a
-push cannot end it and leave the queued tell to land on another head. Every wait for a fix is
-`wait --stall --past <head> <slug>`. It comes after a findings tell, after a wording nudge or a
-green-step nudge, after a queued tell is delivered, and when `review-agent --next` refuses because
-the builder is still at work in the worktree. `<head>` is the head the fix goes on. After a tell,
+it. Every wait on the builder that is not for a fix is `wait --stall <slug>`, which ends once the
+builder's turn has. That includes the wait before a tell, so the tell goes at once. It also includes
+the wait before the bounded delivery check of a queued tell, so a push cannot end it and leave the
+queued tell to land on another head. Every wait for a fix is `wait --stall --past <head> <slug>`. It
+comes after a findings tell, after a wording nudge or a green-step nudge, after a queued tell is
+delivered (a delivery that stepped the build up too), after the round file goes as a nudge to a
+stepped-up build, and when `review-agent --next` refuses because the builder is still at work in the
+worktree. `<head>` is the head the fix goes on. After a tell,
 that is the worktree's HEAD just before the tell goes. For a queued tell, it is HEAD just before
-the agent waits for the delivery. A push the builder made before it had the tell then does not end
+the agent waits for the delivery check. A push the builder made before it had the tell then does not end
 the wait. The wait also ends with `pushed <sha>` once the builder has pushed a new head (the
 `wait --past` paragraph above). The agent goes on from it at once and reads the builder's pane for
 declined findings, without waiting for the turn to end. The agent carries on when a wait prints

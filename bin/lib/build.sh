@@ -1526,11 +1526,12 @@ EOF
 # wait review-<slug>); with findings to fix, to the .round.md beside it, which it tells the builder (tell
 # counts the round, and may step the build up or hold it) after waiting for it, then waits for its push,
 # with wait --stall --past on the head the fix goes on, after a tell the worktree's HEAD just before it
-# goes (or before a queued one's delivery wait), so an earlier push is no fix (every wait for a fix: after findings, a wording
-# or green-step nudge, a queued tell's delivery, and --next's worktree refusal), which ends at once on
-# `pushed <sha>` while the builder's turn may still run; the wait before a tell and the wait for a
-# queued tell's delivery stay plain turn waits, so a tell goes at once and lands on the head it is
-# about. Then it runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
+# goes (or before a queued one's delivery check), so an earlier push is no fix. Every wait for a fix is
+# one: after findings, a wording or green-step nudge, a queued tell's delivery (a delivery that stepped
+# the build up too), the round file nudged to a stepped-up build, and --next's worktree refusal. It
+# ends at once on `pushed <sha>` while the builder's turn may still run. The waits before a tell and
+# before a queued tell's delivery check, and every wait on the builder that is not for a fix, stay
+# plain turn waits, so a tell goes at once and lands on the head it is about. Then it runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
 # in the same session. Findings that are all wording go as a nudge instead, no round, and the head it pushes
 # is checked with review-agent --recheck (review_recheck), whose pass writes <findings file>, then review_handoff; its
 # refusal naming --next counts the round (review_rounds), and --next runs the full round. A stop before a
@@ -1588,7 +1589,7 @@ restart of it is running: in both cases, wait on it the same way. A build steppe
 round's findings were told has none of them in its handover brief (that brief pastes ${4}, which
 holds no findings to fix): once the new builder is idle, send it ${round} as a nudge, which is no
 round (write ${nudge} as below holding what ${round} holds, then \`${sw} tell $1 nudge ${nudge}\`),
-and wait on it again."
+and wait for its fix with \`${sw} wait --stall --past <HEAD before the tell> $1\`, as below."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, commit or push here:
 the builder changes the code. Merge only as the pass step below says. The files you write are
@@ -1620,8 +1621,8 @@ head the builder pushed, as this brief says for a pushed head: its turn need not
 read its pane (\`herdr agent read ${agent} --source recent-unwrapped\`) for any finding it declined.
 On \`idle\` or \`done\`, go on as after the wait above. Every other wait on the builder is the plain
 wait above. Before a tell it must be: a tell sent once the builder's turn has ended goes at once,
-not queued, and the wait for a queued tell's delivery must not end on a push, or the queued tell
-would land on a head it was not about.
+not queued, and the wait before a queued tell's delivery check must not end on a push, or the queued
+tell would land on a head it was not about.
 
 A tell to a busy builder is queued, not refused: it prints \`queued: ${agent} (busy); delivered when
 its turn ends, so do not tell it again\` and exits 0, and its queue's check sends it once the
@@ -1642,8 +1643,8 @@ delivery did before you wait on the builder, since a delivery of findings that h
 the lead or steps the build up leaves \`.sent\` too: when ${story} now has a \`held_for:\` line, stop
 with \`held for the lead: <that line>\`, as below; when ${PROJECT_DIR}/.swarm/events.tsv gained an
 \`escalate\` line for $1 since your tell whose outcome starts \`ok (findings-\`, the delivery stepped
-the build up with the findings in its handover brief: tell it nothing, and wait on the new builder
-as above. Otherwise the builder has the tell: wait for its fix with
+the build up with the findings in its handover brief: tell it nothing, and wait for the new builder's
+fix with \`${sw} wait --stall --past <HEAD before the delivery> $1\`, as above. Otherwise the builder has the tell: wait for its fix with
 \`${sw} wait --stall --past <HEAD before the delivery> $1\`, as above.
 
 ${4} is read as a finished review of the head on its \`head:\` line the moment it exists, so write it
