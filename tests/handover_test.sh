@@ -42,8 +42,9 @@ echo '{"result":{"agents":[{"name":"a","agent_status":"working","pane_id":"w1:p1
 EOF
 chmod +x "${STUB_BIN}/gh" "${STUB_BIN}/herdr"
 # board.patch keeps a/ and b/, and no colour, all the same.
-# board.patch is a patch whatever the user's git config: no prefixes, colour, external diff or textconv.
-printf '[diff]\n\tnoprefix = true\n\texternal = echo\n[diff "upper"]\n\ttextconv = tr a-z A-Z <\n[color]\n\tdiff = always\n[core]\n\tattributesFile = %s\n' \
+# board.patch is a patch whatever the user's git config: no prefixes, colour, external diff, textconv
+# or zero-line context.
+printf '[diff]\n\tnoprefix = true\n\tcontext = 0\n\texternal = echo\n[diff "upper"]\n\ttextconv = tr a-z A-Z <\n[color]\n\tdiff = always\n[core]\n\tattributesFile = %s\n' \
   "${ROOT}/attributes" > "${ROOT}/gitconfig"
 echo '*.md diff=upper' > "${ROOT}/attributes"
 export GH_PWD="${ROOT}/gh-pwd" PATH="${STUB_BIN}:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp" TZ=UTC \
@@ -79,6 +80,10 @@ echo 'w7:p7 hidden' > "${P}/.swarm/state/token-pane"   # named like a token: nev
 # an agent agents.tsv names (rotate-api-key, a builder of a story no longer on the board).
 mkdir -p "${P}/.swarm/board-state/stories"
 echo 'status: review' > "${P}/.swarm/board-state/stories/prompt-stop-key"
+# A known slug's name never makes a credential file copyable: not its type (.pem), nor a word in a
+# suffix swarm.sh never gives a record (.token).
+echo 'not-a-real-key' > "${P}/.swarm/prompt-stop-key.pem"; echo 'not-a-real-token' > "${P}/.swarm/prompt-stop-key.token"
+echo 'not-a-real-key' > "${P}/.swarm/a.pem"   # a known slug's stem and no credential word: its type alone skips it
 echo 'w2:p2 rotate-api-key' > "${P}/.swarm/state/rotate-api-key"
 printf '2026-11-01\tcode\trotate-api-key\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"
 echo 'brief for a' > "${P}/.swarm/briefs/a.md"
@@ -119,6 +124,11 @@ check "events.tsv keeps its line, with the session id as -" \
   "$(cat "${H}/swarm/events.tsv")"
 check "RESTORE.md lists the token-named file as skipped" \
   "- swarm/gh-token.txt: its name looks like a credential, so it was not read" "$(grep -F 'gh-token' "${H}/RESTORE.md")"
+check "a known slug's .pem and .token files are skipped and listed, while its board state is copied" \
+  "- swarm/a.pem: its name looks like a credential, so it was not read
+- swarm/prompt-stop-key.pem: its name looks like a credential, so it was not read
+- swarm/prompt-stop-key.token: its name looks like a credential, so it was not read|status: review" \
+  "$(grep -E '^- swarm/(a\.pem|prompt-stop-key\.)' "${H}/RESTORE.md")|$(cat "${H}/swarm/board-state/stories/prompt-stop-key")"
 check "RESTORE.md lists what belongs to this machine as skipped" \
   "- swarm/launch/: agent launch wrappers, which hold the environment values an agent started with, credentials among them
 - swarm/locks/: this machine's locks

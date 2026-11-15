@@ -20,7 +20,8 @@ It writes into <out>:
                name the handover by HANDOVER_DIR, not by <out>, so it can move; and every path it skipped.
 A file or folder whose name looks like a credential (token, key, secret, password ...) is never opened,
 not even to read a pane record: it is listed in RESTORE.md as skipped. In .swarm/, a name that is a slug
-swarm.sh knows (known_slugs) is its own record, whatever words the slug holds. So is anything that is not a
+swarm.sh knows (known_slugs), alone or with .md, is its own record, whatever words the slug holds; a
+credential file's type (.pem, .key, .env ...) is skipped whatever its name. So is anything that is not a
 regular file or folder (a symlink could lead out of the folder to anything).
 """
 import datetime
@@ -30,7 +31,11 @@ import re
 import subprocess
 import sys
 
-CREDENTIAL = re.compile(r"token|secret|key|credential|passw|netrc|\.pem$|\.p12$|\.pfx$|^\.env|^id_(rsa|dsa|ecdsa|ed25519)", re.I)
+# A credential's name: a word one holds (which a slug can hold too), or a credential file's type, which
+# no slug exemption overrides.
+CREDENTIAL_WORD = re.compile(r"token|secret|key|credential|passw", re.I)
+CREDENTIAL_FILE = re.compile(r"\.(pem|p12|pfx|key|keystore|jks|env)$|^\.env|netrc|^id_(rsa|dsa|ecdsa|ed25519)", re.I)
+SLUG_SUFFIXES = ("", ".md")   # the names swarm.sh gives a record by slug: <slug> and <slug>.md
 SESSION_LOG = re.compile(r"\.jsonl(\.gz)?$")
 SESSIONS_DIR = "sessions"
 STATE_DIR = "state"   # STATE_DIR in bin/swarm.sh
@@ -109,8 +114,12 @@ def known_slugs(swarm, board, checkout):
 
 
 def credential_named(name, known):
-    """<name> looks like a credential's, and is no slug in <known> (alone, or before its first dot)."""
-    return bool(CREDENTIAL.search(name)) and name not in known and name.split(".", 1)[0] not in known
+    """<name> looks like a credential's: a credential file's type, whatever its stem, or a credential word,
+    unless <name> is a slug in <known> as swarm.sh names a record by it (SLUG_SUFFIXES). No such name has a
+    credential file's type today; the type is checked first so that one never would, were SLUG_SUFFIXES to grow."""
+    if CREDENTIAL_FILE.search(name):
+        return True
+    return bool(CREDENTIAL_WORD.search(name)) and not any(name == k + x for x in SLUG_SUFFIXES for k in known if name.startswith(k))
 
 
 def readable(path, name, known):

@@ -77,16 +77,16 @@ handover_report() {
   # project's other files would run their clean filters and hash them, and one it cannot read would stop
   # the handover. ls-files takes a path that matches nothing (a board with no hld/ yet), which git add
   # refuses, and an empty list stages nothing (git add -A with none would take every file). The prefixes,
-  # --no-color, --no-ext-diff and --no-textconv are set, as diff.noprefix would drop the a/ and b/ that
-  # RESTORE.md's git apply expects, color.diff = always would add escapes, and a diff.external or textconv
-  # driver would write something else than a patch.
+  # --no-color, --no-ext-diff, --no-textconv and --unified=3 are set, as diff.noprefix would drop the a/
+  # and b/ that RESTORE.md's git apply expects, color.diff = always would add escapes, a diff.external or
+  # textconv driver would write something else than a patch, and diff.context = 0 hunks git apply refuses.
   { GIT_INDEX_FILE="${tmp}/index" git -C "${top}" read-tree HEAD \
       && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" ls-files -z --cached --others --exclude-standard -- "${paths[@]}" \
         > "${tmp}/files" \
       && { [[ ! -s "${tmp}/files" ]] || GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="${tmp}/index" git -C "${top}" add -A \
         --pathspec-from-file="${tmp}/files" --pathspec-file-nul; } \
       && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" diff --cached --binary --no-renames --no-color --no-ext-diff --no-textconv \
-        --src-prefix=a/ --dst-prefix=b/ \
+        --unified=3 --src-prefix=a/ --dst-prefix=b/ \
         HEAD -- "${paths[@]}" > "${out}/board.patch"
   } || { rm -rf "${tmp}"; die "handover: cannot write the board patch from ${top}"; }
   rm -rf "${tmp}"
