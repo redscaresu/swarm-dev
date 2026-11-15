@@ -742,7 +742,7 @@ and each PR whose review agent never started or went,
 with its exit (§ The lead). Then it lists the agents that need a look (waiting on a prompt, an empty
 pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose login expired,
 which only your `/login` clears), what waits on you, and the next step. A Stacked section, shown
-only when it has a line, lists each stacked build that has to catch up with a parent. It reads the
+only when it has a line or was skipped at the deadline, lists each stacked build that has to catch up with a parent. It reads the
 parents the child's current build stacked on, and compares them with the child's branch on origin,
 so a merge the child has not pushed still shows: `<child>: merge origin/story/<p>` when the parent's
 open PR has commits the child lacks, `<child>: merge origin/<base> (<p> merged)` once the parent
@@ -1311,6 +1311,9 @@ Deleting the file clears it.
 A read cut off there, or due after it, counts as a failed read, so its section shows what it shows when that read fails, and a last line such as `skipped (over 30 s): herdr agent list, gh pr list` names it.
 Each run reads the board's story, epic and HLD files, and their board state, once at its start, so an edit made to them during the run shows on the next run.
 A board-state change any swarm.sh makes during the run shows on the next run too, as a file edit does.
+The Stacked, Waiting on you and Next sections (Next with its `idle:` lines) each start only before the deadline.
+One due at or past it does not run: its heading reads, for example, `Waiting on you: skipped (over 30 s)` with no rows, and the last line names it after the cut reads (`skipped (over 30 s): herdr pane list, Stacked, Waiting on you, Next`).
+A section that started in time runs to its end, so a run takes at most the deadline plus its slowest section.
 
 **`swarm.sh story [--strict] <slug>`**
 Build one story.
