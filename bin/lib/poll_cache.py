@@ -4,7 +4,7 @@
 # - ci_gate's pages() (through below), when the call sets SWARM_POLL_CACHE (the directory,
 #   <project>/.swarm/poll-cache) and SWARM_POLL_CACHE_SECONDS (the oldest entry it takes, in whole
 #   seconds; 0 or unset is off). wait-pr sets both on its ci_gate head call, and watch on queued_line's
-#   ci_gate age call.
+#   ci_gate age call, which next's queued: lines make with watch's max age.
 # - The command form, for bash: `poll_cache.py <dir> <max-age> -- <command...>` prints the command's
 #   stdout, from an entry or from a run, and exits as the command did. Only a run that exits 0 is kept; a
 #   failed one's stdout and then its stderr pass through, and the next reader runs it again. A max age of

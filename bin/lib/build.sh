@@ -733,7 +733,8 @@ build_story() {
 # findings file. It reviews the
 # PR's head, and only when the worktree is at it with nothing uncommitted; the file's head: line
 # names that commit. Refused, starting nothing and touching no file, when
-# the board has a story named review-<slug> (its builder would hold the same agent name), when its
+# the board has a story named review-<slug> (its builder would hold the same agent name), when another
+# agent of this project runs under review-<slug>'s agent name, cut to 32 characters (name_clash), when its
 # findings file is a pass of the PR's head (review_pass) and the story has left ready (the pass's
 # hand-off ran), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
@@ -766,6 +767,8 @@ review_agent() {
   # story still ready never got that hand-off (review --head failed), so a new review is its way on.
   [[ "$(fm "${story}" status)" == ready ]] || ! review_pass "${slug}" "${head}" \
     || die "review-agent: ${out} is a pass of ${head}, the PR's head, and ${slug} is no longer ready, so its hand-off (review, then merge or the user's merge) has the PR; nothing was started: a conductor starts nothing for this head, and the lead moves ${out} aside first to review it again"
+  # Before the state checks below, which would read another story's review agent as this one.
+  name_clash review-agent "review-${slug}"
   # An open review-<slug> with no findings file is still reviewing (idle while its codex runs), and
   # free_agent_name would retire it as finished.
   [[ -f "${out}" || -z "$(agent_field "$(agent_name "review-${slug}")" pane_id)" ]] \
@@ -820,6 +823,21 @@ review_agent() {
   done
   rm -f "${errf}"
   echo "${head}" > "${out%.md}.head"
+}
+
+# name_clash <command> <name> [pane-name] — fail, starting nothing, when another of this project's
+# agents runs under <name>'s herdr agent name. herdr refuses a name over AGENT_NAME_MAX (32) characters,
+# so agent_name cuts each name there, and two names that share their first 32 characters share one
+# herdr name: every check on that name would then read the other agent's state as this one's.
+# [pane-name] (default <name>) is the full name the start records for its pane (its tab record), which
+# pane_name_of reads back for the holder. When neither name runs past the limit nothing was cut, so
+# the start goes on as before, and free_agent_name decides.
+name_clash() {
+  local name holder full="${3:-$2}"
+  name="$(agent_name "$2")"; holder="$(pane_name_of "${name}")"
+  [[ -z "${holder}" || "${holder}" == "${full}" ]] && return 0
+  (( ${#2} > AGENT_NAME_MAX || ${#holder} > AGENT_NAME_MAX )) || return 0
+  die "$1: ${full} would run as ${name}, its first ${AGENT_NAME_MAX} characters (herdr's limit on an agent name), and ${holder} already runs under that name; nothing was started: herdr cannot tell the two apart, so ${full} cannot start while ${holder} runs. Close ${holder} once it is done, or give one of them a name that differs within its first ${AGENT_NAME_MAX} characters"
 }
 
 # STARTS_PER_REVIEW: how many starts review_agent makes of review-<slug>, and build_story of a

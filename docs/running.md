@@ -73,7 +73,7 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, how long a green PR waited for its next review round, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs. [reference.md § Commands](reference.md#commands)
-links to the Commands table at the end of each reference file.
+links to the Commands section at the end of each reference file.
 
 ## Workspace labels
 
