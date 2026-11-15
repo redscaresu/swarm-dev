@@ -770,6 +770,55 @@ check "it prints one wait-failed: line on stdout, and nothing else there" test "
 check "seen keeps the last good read, without the failed read's line" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
 check "the wait-failed: line is no queue item: not in seen, not logged" no_exit_lines
 
+# --- a failed read inside the real lead_queue, no stub: each file below cannot be read, so a $(...) in it fails
+# (a die, or awk's error), and the poll ends as above, with that read's status, never on a queue missing what
+# it skipped.
+# failed_nonzero — failed_with, for whatever non-zero status the run exited with: the failed read's own
+# (state_value's die is 1, awk's open error 2), never a timeout's 1 with its line.
+failed_nonzero() { [[ "$(rc)" =~ ^[1-9][0-9]*$ ]] && failed_with "$(rc)"; }
+# unread <what> <file> — make <file> unreadable after a good first read, run wait --lead, and check the run.
+unread() {
+  lead 0; cp "${P}/.swarm/lead/seen" "${ROOT}/seen.before"; again
+  chmod 000 "$2"
+  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
+    bash "${SWARM}" wait --lead 3000 > "${ROOT}/out" 2> "${ROOT}/err") && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+  chmod 644 "$2"
+  check "$1: one wait-failed: line for its non-zero exit, no timeout: line" failed_nonzero
+  check "$1: seen stays as the last good read left it" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
+}
+# A story's board-state file: protected_holds' awk fails on it, and so would held_for's read (state_value's die).
+fresh; mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: ready\nstatus@base: ready\n' > "${P}/.swarm/board-state/stories/h"
+unread "a story's board-state file it cannot read" "${P}/.swarm/board-state/stories/h"
+check "its stderr names the file" grep -q '.swarm/board-state/stories/h' "${ROOT}/err"
+rm -rf "${P}/.swarm/board-state"
+# An epic's board-state file: only protected_holds reads it.
+fresh; mkdir -p "${P}/docs/epics" "${P}/.swarm/board-state/epics"; printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+printf 'status: active\nstatus@base: active\n' > "${P}/.swarm/board-state/epics/e"
+unread "an epic's board-state file it cannot read" "${P}/.swarm/board-state/epics/e"
+rm -rf "${P}/.swarm/board-state" "${P}/docs/epics"
+# A story file: only held_for's read fails on it (get_fm's awk; protected_holds reads no story file).
+fresh; unread "a story file it cannot read" "${B}/h.md"
+
+# --- INT and HUP from outside end a run as a TERM does: one wait-failed: line, the signal's exit code, and no pid
+# file left. Untrapped, bash 3.2 ran its EXIT trap with the wrong $?: an INT gave `wait-failed: exit 129` and exit
+# 129, a HUP no line. A job a script starts with & ignores INT, which bash cannot then trap: perl puts both back
+# to the default first.
+for sig in INT:130 HUP:129; do
+  fresh; before="$(seen_id)"
+  # shellcheck disable=SC2016 # $SIG, @ARGV and $! are perl's
+  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
+    perl -e '$SIG{INT} = $SIG{HUP} = "DEFAULT"; exec @ARGV or die "exec: $!"' bash "${SWARM}" wait --lead 20000 > "${ROOT}/out" 2>&1) 2>/dev/null \
+    && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc" &
+  lpid=$!
+  must "the ${sig%:*} run read the board once" first_read "${before}"
+  held_pid="$(cat "${P}/.swarm/lead/pid" 2>/dev/null)" || held_pid=""
+  check "the ${sig%:*} run holds the pid file" test -n "${held_pid}"
+  [[ -z "${held_pid}" ]] || kill "-${sig%:*}" "${held_pid}" 2>/dev/null || true
+  check "${sig%:*} from outside ends the run within 5 s" returned 50
+  check "it prints one wait-failed: exit ${sig#*:} line and exits ${sig#*:}" failed_with "${sig#*:}"
+  check "it leaves no pid file after ${sig%:*}" test ! -e "${P}/.swarm/lead/pid"
+done
+
 # --- a running conductor does not hide a new held story, and a poll asks herdr only for its agent list.
 fresh
 start 20000

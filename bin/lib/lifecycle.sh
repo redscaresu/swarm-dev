@@ -3167,16 +3167,18 @@ for p in sys.argv[1:]:
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
 # with stuck_lines' just before them and main_red_lines' `main-red:` lines (from events.tsv and the file the
 # last heads pass wrote, lead_bases), reported_lines' and sign_blocked_lines' after.
-# It never calls gh. It drops
+# It fails, with that read's status, when the holds or a story's held_for: cannot be read. It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
 # whose check fails keeps the ones the last poll saw.
 lead_queue() {
   local f held tag line v keep="" holds shown slug prs seen=" "
-  holds="$(protected_holds)"
+  # A read that fails (a state file or story file that cannot be read, whose die ends only its $(...))
+  # fails the queue with its status, so lead_wake keeps LEAD_SEEN as the last good read left it.
+  holds="$(protected_holds)" || return
   while IFS= read -r f; do
-    held="$(get_fm "${f}" held_for)"
+    held="$(get_fm "${f}" held_for)" || return
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
     elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
   done < <(board stories)
@@ -4840,33 +4842,38 @@ LEAD_QUEUE_RC=0
 # still names this run, and, for a non-zero <status> with nothing said (LEAD_ENDED), print
 # `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>.
 lead_exit() {
-  trap '' USR1 TERM   # a signal now would add a second line
+  trap '' USR1 TERM INT HUP   # a signal now would add a second line
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   [[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"
   (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead"
 }
 
-# lead_signal [replaced] — wait --lead's USR1 and TERM traps, set before its argument checks. USR1 comes
-# only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`. A TERM is anyone
-# else's (a tool's timeout, a kill by hand): print nothing here, so lead_exit's wait-failed: line says it.
-# Either kills the poll's sleep and exits 143, as a TERM did before. A run that has already said why it
-# ends (LEAD_ENDED) ignores both: one more line would follow its own.
+# lead_signal <status> [replaced] — wait --lead's USR1, TERM, INT and HUP traps, set before its argument
+# checks. USR1 comes only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`.
+# A TERM, INT or HUP is anyone else's (a tool's timeout, a kill by hand, Ctrl-C, a closed terminal): print
+# nothing here, so lead_exit's wait-failed: line says it. Each kills the poll's sleep and exits <status>:
+# 143 for USR1 and TERM, as a TERM did before, 130 for INT and 129 for HUP (128 plus the signal's number).
+# Untrapped, bash 3.2 still ran the EXIT trap, but with a $? that is not the signal's: an INT printed
+# `wait-failed: exit 129` and exited 129, a HUP printed nothing. A run that has already said why it ends (LEAD_ENDED) ignores them all: one more line would follow its own.
 lead_signal() {
   [[ -z "${LEAD_ENDED}" ]] || return 0
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   LEAD_SLEEP=""
-  [[ -z "${1:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
-  exit 143
+  [[ -z "${2:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
+  exit "$1"
 }
 
 # lead_sleep <seconds> — sleep in the background and wait for it, so a signal runs lead_signal at once:
 # bash runs a trap only once the foreground command it cut into ends.
 lead_sleep() { sleep "$1" & LEAD_SLEEP=$!; wait "${LEAD_SLEEP}"; LEAD_SLEEP=""; }
 
-# lead_traps — wait --lead's EXIT, USR1 and TERM traps (lead_exit, lead_signal). wait_command sets them as
-# soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with --lead)
-# ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
-lead_traps() { trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM; }
+# lead_traps — wait --lead's EXIT, USR1, TERM, INT and HUP traps (lead_exit, lead_signal). wait_command sets
+# them as soon as its arguments name --lead, before any check of them, so a flag it refuses (--past with
+# --lead) ends with the wait-failed: line too; wait_lead sets them again, for a call from anywhere else.
+lead_traps() {
+  trap 'lead_exit $?' EXIT; trap 'lead_signal 143 replaced' USR1; trap 'lead_signal 143' TERM
+  trap 'lead_signal 130' INT; trap 'lead_signal 129' HUP
+}
 
 # lead_gone — true once LEAD_PID names no live wait --lead, within 5 s.
 lead_gone() {
@@ -4918,9 +4925,9 @@ lead_poll() {
 #   replaced: a newer wait --lead watches now   a newer run stopped this one (lead_lock's USR1, lead_signal);
 #     exit 143.
 #   wait-failed: exit <rc>, exit: swarm.sh wait --lead   any other non-zero exit with nothing printed (an
-#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM), from its EXIT trap
-#     (lead_exit); exit <rc>.
-# The EXIT, USR1 and TERM traps (lead_traps) are set before the argument checks: by wait_command as soon as
+#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM, INT or HUP), from its
+#     EXIT trap (lead_exit); exit <rc>, 143 for a TERM, 130 for an INT, 129 for a HUP.
+# The EXIT, USR1, TERM, INT and HUP traps (lead_traps) are set before the argument checks: by wait_command as soon as
 # its arguments name --lead, ahead of its own check of --past with --lead, and here again.
 # It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,

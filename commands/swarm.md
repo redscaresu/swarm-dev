@@ -441,7 +441,7 @@ Repeat until a step below says stop:
      item. `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` (exit 1) means its timeout
      passed with nothing new. `wait-failed: exit <rc>, exit: swarm.sh wait --lead` means it stopped on
      an error before anything new came in: a bad argument, a lock it could not take, a failed read
-     of the queue, or a TERM from outside it (exit 143). Read its stderr for the cause and fix it if it is yours before you start it again.
+     of the queue, or a TERM (exit 143), INT (exit 130) or HUP (exit 129) from outside it. Read its stderr for the cause and fix it if it is yours before you start it again.
      Only one runs at a time: a new one stops the earlier one, which then prints
      `replaced: a newer wait --lead watches now` (exit 143), or, when it was still in a slow read 5 s
      later, exits 137 with nothing printed. After a newer run took over, either needs nothing from you,
