@@ -83,7 +83,15 @@ exited, the conductor is idle and a `close` of it has been tried since its repor
 Until then the conductor still has a report to collect, and `next` finds it only by its pane. If that
 takes longer than 20 minutes, the merge leaves it open and logs `close-when-idle conduct-<epic> left
 open: ...`; collect's close then closes it. When another
-project's agent holds the conductor's name, it says so and starts none. While a conductor works, `next` prints `also: lead <slug> blocks <slugs>` after the wait's why. It names each story that a blocked story an agent builds depends on, when no agent builds the named story: a ready story of a kind no agent builds (a `lead` story), or such a story that is blocked with no `depends_on` (only the lead can ready it). A story of a kind an agent builds, blocked with no `depends_on`, gets no `also:` line, because `finish` would close it unbuilt. A story in a draft or `later` epic gets none, and neither does one with `after:`. `status` reads a blocked story's line, of any kind, as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step such as `operator:<x>`. With an open parent an agent builds, or an open epic, it reads `blocked: <slug> (by <parents>)`. A draft, `later` or `split` epic's stories start nothing, and
+project's agent holds the conductor's name, it says so and starts none.
+While a conductor works, `next` prints `also: lead <slug> blocks <slugs>` after the wait's why.
+It names each story that a blocked story an agent builds depends on, when no agent builds the named story: a ready story of a kind no agent builds (a `lead` story), or such a story that is blocked with no `depends_on` (only the lead can ready it).
+A story of a kind an agent builds, blocked with no `depends_on`, gets no `also:` line, because `finish` would close it unbuilt.
+A story in a draft or `later` epic gets none, and neither does one with `after:`.
+`status` reads a blocked story's line, of any kind, as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds.
+That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step such as `operator:<x>`.
+With an open parent an agent builds, or an open epic, it reads `blocked: <slug> (by <parents>)`.
+A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
 and epic file, and than the state files swarm.sh keeps in `.swarm/board-state` for that epic and its
@@ -579,7 +587,20 @@ has already reviewed or started on (the findings file's `head:` line, or the hea
 story's new PR has a new head, so it is reported. Watches that run at once share `watch-seen`, and the
 lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
 be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
-The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. Concurrent watches, such as each conductor's and the lead's, share each poll's reads: the open-PR list, each head's check runs and the check-run and status reads behind a queued line. A watch keeps each of those reads that succeeded in `.swarm/poll-cache/` for 59 seconds, one less than a poll, and another watch takes a read that recent instead of asking GitHub. Two watches that need one at once make one read between them. A failed read is never kept, so the next watch reads again. A shared read can be up to 59 seconds old, so a change can take one poll longer to show. A watch running alone never reads its own entries. The mergeable read is never shared: it is read by PR number, not head, so a kept `MERGEABLE` could hide a new conflict. A codex
+The lead's bare `watch` never prints it.
+It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued.
+A poll that reports one PR reads nothing past it.
+A failed read counts as `UNKNOWN` for that poll and is said on stderr.
+A failed list is said once, until a list succeeds again, and watch polls on.
+A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds.
+Concurrent watches, such as each conductor's and the lead's, share each poll's reads: the open-PR list, each head's check runs and the check-run and status reads behind a queued line.
+A watch keeps each of those reads that succeeded in `.swarm/poll-cache/` for 59 seconds, one less than a poll, and another watch takes a read that recent instead of asking GitHub.
+Two watches that need one at once make one read between them.
+A failed read is never kept, so the next watch reads again.
+A shared read can be up to 59 seconds old, so a change can take one poll longer to show.
+A watch running alone never reads its own entries.
+The mergeable read is never shared: it is read by PR number, not head, so a kept `MERGEABLE` could hide a new conflict.
+A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so
@@ -780,7 +801,10 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, before its first push and after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it), push once they pass and leave the full suite to CI, run a long test run in the background (Bash `run_in_background`) so its end wakes it and act on the result when it ends, before it pushes stop any test run of its own still going (by its background task or its PID, since the guard refuses `pkill` and `killall`; where the worktree has `scripts/select-tests.sh`, a `kill` of the `select-tests.sh` or `make` it started, which `scripts/test.sh` turns into a stop of every job and test of the run), after the PR opens push what is ready and put further points in the PR body, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green,
+before its first push and after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it), push once they pass and leave the full suite to CI, run a long test run in the background (Bash `run_in_background`) so its end wakes it and act on the result when it ends,
+before it pushes stop any test run of its own still going (by its background task or its PID, since the guard refuses `pkill` and `killall`; where the worktree has `scripts/select-tests.sh`, a `kill` of the `select-tests.sh` or `make` it started, which `scripts/test.sh` turns into a stop of every job and test of the run),
+after the PR opens push what is ready and put further points in the PR body, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then swarm-dev's own rules from the plugin's
 [`rules.md`](../rules.md), then the project's own rules from
 `.claude/swarm/brief.md`, then the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's

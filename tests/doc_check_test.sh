@@ -11,12 +11,15 @@
 # A removed command that prints a pointer is still an arm, so it passes. tests/doc_check_known.txt
 # lists the stale references found when this landed (file, tab, text); they pass until fixed, and an
 # entry no longer found fails, so the list only shrinks.
+# No line outside a code fence in README.md, AGENTS.md, docs/*.md, commands/*.md, skills/swarm-dev/ or
+# templates/ runs past LINE_CAP words: git conflicts by line, so a long line is where parallel PRs clash.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KNOWN="${REPO}/tests/doc_check_known.txt"
+LINE_CAP=150   # under the shortest line a replay of the docs' conflicts found hot (155 words)
 
 # doc_check <docs root> — one `file<TAB>text` line per stale reference in the docs under <docs root>,
 # checked against ${REPO}'s bin/swarm.sh and tree.
@@ -155,6 +158,28 @@ for rel in files + [f for f in tracked if f in LINKS_ONLY]:
 EOF
 }
 
+# line_cap <docs root> — one `file:line<TAB><n> words` line for each tracked line under <docs root> past
+# LINE_CAP words (split on whitespace), outside a code fence.
+line_cap() {
+  python3 - "$1" "${LINE_CAP}" <<'EOF'
+import os, re, subprocess, sys
+root, cap = sys.argv[1], int(sys.argv[2])
+tracked = subprocess.run(["git", "-C", root, "ls-files", "-z", "README.md", "AGENTS.md", "docs", "commands",
+                          "skills/swarm-dev", "templates"], check=True, capture_output=True, text=True).stdout.split("\0")[:-1]
+for rel in tracked:
+    if not re.fullmatch(r"(README|AGENTS)\.md|(docs|commands)/[^/]+\.md|(skills/swarm-dev|templates)/.+", rel) \
+            or not os.path.isfile(os.path.join(root, rel)):   # tracked, but deleted in the working tree
+        continue
+    fence = False
+    with open(root + "/" + rel, errors="replace") as f:
+        for n, line in enumerate(f, 1):
+            if line.lstrip().startswith("```"):
+                fence = not fence
+            elif not fence and len(line.split()) > cap:
+                print("%s:%d\t%d words" % (rel, n, len(line.split())))
+EOF
+}
+
 # unknown <found> <known> — the findings <known> does not allow. gone <found> <known> — the entries of
 # <known> that are no longer found.
 unknown() { LC_ALL=C comm -23 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
@@ -262,6 +287,33 @@ if [[ "${stale}" == $'README.md\tswarm.sh stale' ]]; then
   echo "ok   fixture known list: an entry no longer found is reported gone"
 else
   echo "FAIL fixture known list: want swarm.sh stale gone, got:"; echo "${stale}"; fails=$((fails + 1))
+fi
+
+# The line cap. The real docs have no line past it, and in a fixture a 151-word line is named in each
+# scanned place, AGENTS.md included, while a 150-word line, a fenced 300-word line, an untracked file and
+# files outside the scanned places are not.
+long="$(line_cap "${REPO}")"
+if [[ -z "${long}" ]]; then
+  echo "ok   no docs line outside a code fence runs past ${LINE_CAP} words"
+else
+  echo "FAIL these docs lines run past ${LINE_CAP} words; put each sentence, list item or block on its own line (AGENTS.md, Docs move with behaviour):"
+  echo "${long}"; fails=$((fails + 1))
+fi
+words() { local i; for ((i = 0; i < $1; i++)); do printf 'w%d ' "${i}"; done; }
+cap="${tmp}/capfix"
+mkdir -p "${cap}/docs/sub" "${cap}/commands" "${cap}/skills/swarm-dev/refs" "${cap}/skills/other" "${cap}/templates/docs" "${cap}/tests"
+for f in README.md AGENTS.md docs/a.md commands/c.md skills/swarm-dev/refs/s.md templates/docs/t.md; do
+  { echo "# Head"; echo; echo "  $(words 151)"; words 150; echo; echo '```'; words 300; echo; echo '  ```'; } > "${cap}/${f}"
+done
+for f in docs/sub/deep.md skills/other/o.md tests/t.md llms.txt; do words 151 > "${cap}/${f}"; done
+git -C "${cap}" init -q && git -C "${cap}" add -A
+words 151 > "${cap}/docs/untracked.md"
+want=$'AGENTS.md:3\t151 words\nREADME.md:3\t151 words\ncommands/c.md:3\t151 words\ndocs/a.md:3\t151 words\nskills/swarm-dev/refs/s.md:3\t151 words\ntemplates/docs/t.md:3\t151 words'
+got="$(line_cap "${cap}" | LC_ALL=C sort)"
+if [[ "${got}" == "${want}" ]]; then
+  echo "ok   fixture docs: a line one word past ${LINE_CAP} is named by file and line in each scanned place, and a ${LINE_CAP}-word line, a fenced one and unscanned files are not"
+else
+  echo "FAIL fixture line cap: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

@@ -14,7 +14,7 @@ listed below, or a part of one (a ### heading or a bold paragraph) in one of the
 
 ## Commands
 
-Each group file ends with a `## Commands` section for the commands its sections document:
+Each group file ends with a `## Commands` section for the commands its sections document, one block per command (a bold command line, then one sentence per line), not a table:
 
 - [`reference-lead.md`](reference-lead.md#commands): the lead's commands: waiting, restarts, board PRs, finish and drop, hold
 - [`reference-planning.md`](reference-planning.md#commands): `/epic` and the HLD grants
