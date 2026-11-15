@@ -394,10 +394,12 @@ share the check-run and status reads with them. Each file is one read's output, 
 hash of the gh command and its output filter, and holding both and when the read started. A different
 command never reads it, neither does the same path read with another filter, and a slow read is kept
 as old as it is. A read is kept only once it parsed whole (for watch's own reads, once gh exited 0),
-written to a temp file and renamed. While one wait or watch makes a read, a `.lock` file holding its
-pid makes the others wait for the result instead of reading too. A lock whose pid has exited, or one
-older than the waiting reader's max age (its reader stopped, hung, or killed before it wrote its pid),
-no longer holds the others, and neither does any lock once a reader has waited its max age. Any file
+written to a temp file and renamed. While one wait, watch or `next` makes a read, a `.lock` file
+holding its pid makes the others wait for the result instead of reading too. `next` waits only until
+its report deadline (`SWARM_REPORT_SECONDS`, 30 s by default, counted from its start), which can come
+before the 59 s it would otherwise wait; the read is then cut and named `ci_gate age` on its
+`skipped:` line. A lock whose pid has exited, or one older than the waiting reader's max age (its
+reader stopped, hung, or killed before it wrote its pid), no longer holds the others, and neither does any lock once a reader has waited its max age. Any file
 in the directory older than 10 minutes is deleted whenever a read is kept.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
