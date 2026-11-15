@@ -24,14 +24,19 @@ from collections import Counter
 # off. Those two commits' F is read as the other sides' is, and one with no such file under any name git
 # finds still counts L. A line the PR's head holds again is no drop either: once every merge is read,
 # L of F prints only while <head>'s F, read under the head's own name for it, holds fewer copies of L
-# than a merge that printed L owes it. A merge owes the copies its F kept, plus the ones it printed, plus
-# any the base added since (the F of `git merge-base <base> <head>` beyond its base side's F); the merge
-# that owes the most counts, and L prints once per copy the head is short of that, the newest merges'
-# lines first, since a commit that puts a line back comes after the merge that dropped it. So a later
-# commit that restores the line clears it, and one that restores one of two dropped copies leaves one.
-# A copy the PR adds after the merge for its own sake counts as one put back, as a count cannot tell
-# the two apart. Where that merge base has no such file under any name git finds, every L prints.
-# Each side's F is read
+# than a merge that printed L owes it. A merge owes the larger of two counts. One is the copies its F
+# kept plus the ones it printed, which keeps a drop the PR's own copies hide: a head with as many copies
+# as the base, one of them the PR's, still lacks the base's. The other is the copies the F of
+# `git merge-base <base> <head>` holds, less those the PR's own commits had removed before the merge
+# (the ones its parents' merge base has beyond the PR side's), which keeps a drop that a copy the base
+# added since hides. The two are never summed: a stacked build's parent's own copies reach the base by
+# its squash merge, and a sum would owe them twice. The merge that owes the most counts, and L prints
+# once per copy the head is short of that, the newest merges' lines first, since a commit that puts a
+# line back comes after the merge that dropped it. So a later commit that restores the line clears it,
+# and one that restores one of two dropped copies leaves one. A count cannot tell copies apart: a copy
+# the PR adds after the merge for its own sake counts as one put back, and so does one the base adds
+# after it where the PR side holds a copy the base does not. Where that merge base has no such file
+# under any name git finds, every L prints. Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
 # part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
@@ -226,16 +231,16 @@ def scan(m, pr, base_side, ours):
 
     def owing(path, text, printed):
         """(the head's file and text, the copies of text the head owes merge m, the copies it holds): the
-        merge's copies, plus the ones it printed, plus those the base added since; no bound where the merge
-        base of <base> and <head> has no such file"""
-        after, base, kept = counts[path, text]
+        larger of the merge's copies plus the ones it printed, and those the merge base of <base> and <head>
+        holds less the ones the PR side had removed; no bound where that merge base has no such file"""
+        after, kept, cut = counts[path, text]
         name, now = named(HEAD, path, after)
         since = copies(MERGE_BASE, path, after) if MERGE_BASE else None
-        need = (kept + printed + max(0, since[text] - base)) if since is not None else float("inf")
+        need = max(kept + printed, since[text] - cut) if since is not None else float("inf")
         return (name, text) if name is not None else (None, path, text), need, (now or Counter())[text]
 
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
-    counts = {}  # (file, text): its name in the merge, and the base side's and the merge's copies of text
+    counts = {}  # (file, text): its name in the merge, the merge's copies of text, those the PR side had removed
     for path, after, section, text in removed(out):
         if not text.strip() or section not in (OUTSIDE, ours):
             continue
@@ -250,7 +255,7 @@ def scan(m, pr, base_side, ours):
         if (path, text) not in short:
             short[path, text] = (owed(base[text], side[text], root[text]) - kept[text]
                                  if base[text] and not gone(path, after, text) else 0)
-            counts[path, text] = after, base[text], kept[text]
+            counts[path, text] = after, kept[text], max(0, root[text] - side[text])
         if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
             short[path, text] -= 1
             found.append((path, text, "%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS])))

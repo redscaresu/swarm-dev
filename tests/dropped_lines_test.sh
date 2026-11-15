@@ -160,7 +160,7 @@ M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; printf '%s
 check "a base copy of a line the PR removed another copy of, which the resolution dropped, prints" \
   "${M:0:7} d: c-main"$'\n'"${M:0:7} d: return nil"$'\n'"exit 1" "$(scan "${R}" main pr)"
 # A PR commit then puts both back: the head holds one 'return nil' to main's two, the PR having removed the
-# other on purpose, and the merge owes the head only its own (none kept, one dropped).
+# other on purpose. The head owes the one the merge dropped, and main's two less the one the PR removed.
 printf '%s\n' a b c-pr c-main 'return nil' d e | put "${R}" d
 check "the same once a PR commit puts both back, one 'return nil' to main's two: nothing" "exit 0" "$(scan "${R}" main pr)"
 
@@ -323,7 +323,8 @@ check "the same once a later PR commit puts one of the two back: it prints once"
 
 # main adds main-added again, after eleven, once pr's merge has dropped its first copy, and pr's second
 # merge of main brings that copy in cleanly: the head holds one copy to main's two, and the dropped one is
-# still missing. The merge owes the head what it kept, what it dropped and what main added since.
+# still missing. The head owes as many copies as main has at its merge base with it, so main's later copy
+# does not stand in for the dropped one.
 R="$(new_repo readded)"; conflict "${R}"
 M="$(lines three-pr three-main | merge "${R}" main -)"
 on "${R}" main; { lines three-main main-added; echo main-added; } | put "${R}" f; on "${R}" pr
@@ -332,6 +333,45 @@ check "a dropped line main added again since, brought in by a clean merge: the h
   "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
 { lines three-pr three-main main-added; echo main-added; } | put "${R}" f
 check "the same once a PR commit puts the dropped copy back: nothing" "exit 0" "$(scan "${R}" main pr)"
+
+# The head's copies are read under the head's own name for the file: a later pr commit moves f to g, where
+# the merge's name for it finds nothing, and the next puts main-added back in g.
+R="$(new_repo restoredrenamed)"; conflict "${R}"
+M="$(lines three-pr three-main | merge "${R}" main -)"
+git -C "${R}" mv f g; git -C "${R}" commit -qm 'move f to g'
+check "a dropped line of a file a later PR commit renamed, not put back: it prints under the merge's name" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+lines three-pr three-main main-added | put "${R}" g
+check "the same once a PR commit puts it back in the renamed file: nothing" "exit 0" "$(scan "${R}" main pr)"
+
+# Two merges drop the same line, and the one that owes the most counts. main's f holds main-added twice:
+# pr's first merge drops both, a pr commit puts one back, main changes three-main, and pr's second merge
+# drops that one again. The head holds neither of main's two, so two lines print, not three, the newest
+# first: the second merge's, then one of the first's.
+R="$(new_repo twice)"; lines three-main main-added main-added | put "${R}" f; on "${R}" pr; lines three-pr | put "${R}" f
+M1="$(lines three-pr three-main | merge "${R}" main -)"
+lines three-pr three-main main-added | put "${R}" f
+on "${R}" main; lines three-main-2 main-added main-added | put "${R}" f; on "${R}" pr
+M2="$(lines three-pr three-main-2 | merge "${R}" main -)"
+check "two copies of a line, both dropped, one put back, then dropped by a second merge: it prints twice" \
+  "${M1:0:7} f: main-added"$'\n'"${M2:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The second merge alone owes the head one copy and the first owes two, so one copy back leaves one line.
+lines three-pr three-main-2 main-added | put "${R}" f
+check "the same once a PR commit puts one back: it prints once, under the newer merge" \
+  "${M2:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# A stacked build whose parent put its dropped line back: pr adds a '}' after seven, its merge of main
+# drops the '}' main added after two, and a pr commit puts that one back. child is stacked on pr, pr
+# squash-merges into main and child merges main, so the head and main hold three '}' each. main's third
+# is pr's own, which pr's merge already owed, so it is not owed a second time.
+R="$(new_repo stackedrestored)"; lines '}' three | put "${R}" f; on "${R}" pr; at_seven '}' | put "${R}" f
+at_seven '}' | merge "${R}" main - >/dev/null
+printf '%s\n' one two '}' "${BASE0[@]:2:5}" '}' "${BASE0[@]:7}" | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+on "${R}" child; merge "${R}" main >/dev/null
+check "a stacked child whose parent put its dropped line back, after the parent's squash and child's merge of main: nothing" \
+  "exit 0" "$(scan "${R}" main child)"
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
