@@ -17,3 +17,7 @@ The epic's Done when bullet 4 (flaky runs per 100 PRs under 3) needs a reading n
 - The flake reading against the bar, with window and sample, is recorded in the PR that finishes this story or the v0.31.0 checkpoint file.
 - Three later stories, one per class follow-up, are on the board.
 - The user's answer is recorded and board/epics/flaky-tests.md matches it.
+
+## The user's answer (2026-11-15)
+
+Agreed both changes: six stories where the epic said three, and queue_test's wait-on-a-condition fix moved into the cleanup story. The board PR that finishes this story edits board/epics/flaky-tests.md to match.

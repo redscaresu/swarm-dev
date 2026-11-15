@@ -16,3 +16,7 @@ The epic's Done when wants `flow gh_calls` to show a drop against the v0.30.0 bu
 **Done when:**
 - The gh_calls reading, by caller, against 40,380 is recorded in the PR that finishes this story or the v0.31.0 checkpoint file.
 - Both answers are recorded, and any rejection has its story on the board.
+
+## The user's answer (2026-11-15)
+
+Accepted: a codex usage limit is not retried. codex-unavailable-fallback hands the review to the fallback reviewer when codex cannot run.
