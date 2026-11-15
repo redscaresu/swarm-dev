@@ -364,7 +364,7 @@ dataset_report() {
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
-#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     each after a blank line: TSV epic kind stops (api-error, model-error and auto-denied per epic; --epic keeps
 #     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
 #     event (each stalled incident and stalled step-up's escalate line, - for an input it does not carry)
 #     and the false stalls line (those rows with an input at 1, and lead-hand and user-caught lines with
@@ -454,7 +454,9 @@ dataset_report() {
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
 #     1, 2, 3-4, 5+); then the 5 slowest, TSV start seconds branch at_once status. Then TSV
 #     builder_runs median_s p90_s over the builders' runs (branch story/*) of every filter, shards
-#     left out. Nothing with no log, a line in place of the full runs' blocks with none in the window.
+#     left out. None of these with no log, a line in place of the full runs' blocks with none in the
+#     window. Last, with or without the log, TSV timeouts: the reap lines test.sh writes to events.tsv
+#     (outcome `TIMEOUT after <n>s`, not codex-review's) whose local day is in the window, 0 with none.
 #     --epic does not narrow it.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
 #     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.

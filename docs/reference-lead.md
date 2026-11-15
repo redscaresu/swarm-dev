@@ -383,9 +383,10 @@ The kinds and their exits:
   `wait` answers it.
 - `login`: the turn ended on "Please run /login". Exit: `the user runs /login, then swarm.sh tell
   <agent> resume <file>`.
-- `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
+- `api-error`: the turn ended on Claude Code's `API Error:` (or `API Error (<model>):`) line, a model
+  error among them. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
-  up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. Exit: `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
@@ -594,14 +595,36 @@ then; a start that fails with no agent running puts the note back. It reads the 
 when it parses as JSON and is newer than its planner's resume reference. For `/plan-epic` that is
 the epic file, and for its split critic the plan's board PR worktree. For `/plan-hld` it is
 `.swarm/<hld>/base-rev`, or the HLD file on a board outside the repo. A malformed file, or one
-from an earlier attempt, does not count, and neither does a `.partial`. There is no line while
+from an earlier attempt, does not count, and neither does a `.partial`. There is no `planned:` line while
 the plan's board PR worktree exists (`<repo>-wt/_board-scope-<epic>`, or `_board-plan-<hld>`),
 from `board-pr start` until `board-pr done`: the plan is then in its board PR, or about to be.
 As `/plan-hld` makes its worktree before it starts an agent, an HLD's plan gets this line only
 when its worktree is gone. The lead runs the exit, which reuses the outputs and starts the next step.
-The next step's agents change the names, so the line comes again when that step ends. It reads
-the tab records, the board and `.swarm` files, with one `python3` for the JSON, and makes no gh or
-herdr call. It is an alert, so a run's first read prints it.
+The next step's agents change the names, so the line comes again when that step ends.
+
+An agent that ended without its output gets a line of its own:
+`plan-missing: <epic> <name> ended without its output, exit: /swarm-dev:plan-epic <epic> (it starts that agent again)`,
+with the `/swarm-dev:plan-hld <hld>` exit for an HLD's plan. The record alone cannot say which
+agents a plan expects: a start that fails closes its pane, you can close one by hand, and the next
+start in the tab then drops that pane's line from the record. So `swarm.sh agent` also leaves a start mark,
+`.swarm/<epic>/started/<name>`, before it opens the pane. The plan's agents are the record's and
+those whose mark is newer than the same resume reference; an older mark is an earlier attempt's.
+A plan with marks and no record at all, because its first start failed before a tab opened, is read
+too. It can get `plan-missing:` lines but never `planned:`, which needs a record that lists an agent:
+the marks stay after a finished plan's tab is closed.
+A marked agent gets the line when its file does not count, its mark is older than the longest
+a start can take (10 minutes by default: two tries at the pane's shell, two at herdr's start, and
+the brief's delivery, which a larger `SWARM_PROMPT_TIMEOUT_MS` makes longer), and the poll's herdr list shows it in no pane of this plan's own
+tab records, or shows it idle or done with no background task still running in its session. An agent
+of the same name in another plan's pane does not count: plan agents share bare names such as
+`critic`. While any agent's file does not count, there is no `planned:` line. The board PR
+worktree does not hold this line back, so an in-repo HLD plan, which runs with its worktree there
+from the start, gets it too. A split critic can be named only while that worktree, its reference,
+exists. A poll
+whose herdr list failed keeps the `plan-missing:` lines it saw last. Both lines read the tab
+records, the start marks, the board and `.swarm` files, with one `python3` for the JSON, one for
+the poll's herdr list and one for each idle agent's session log, and make no gh or herdr call of their own. Both are alerts, so a run's first
+read prints them.
 
 **A conductor that reported with agent work left wakes the lead too.** A conductor writes
 `.swarm/conduct-<epic>.report.md` as its last act, and a new `swarm.sh conduct` removes an earlier

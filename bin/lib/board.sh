@@ -475,6 +475,8 @@ next_step() {
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
       elif [[ "${stop}" == stuck ]]; then
         echo "wait ${slug}"; echo "stuck: the conductor ${slug} stopped on an API error; swarm.sh wait --until-report ${slug} resumes it"
+      elif [[ "${stop}" == model ]]; then
+        echo "wait ${slug}"; echo "stuck: the conductor ${slug} stopped on a model error, which no resume in its session clears; swarm.sh wait --until-report ${slug} prints stuck: model error at once, and the restart rule starts it in a fresh session"
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
@@ -605,13 +607,16 @@ running_conductors() {
 }
 
 # conductor_stop <conductor> — auth when it stopped on an expired login (as in wait, only an idle
-# session, or a busy one stopped on an API error, is auth), stuck when it stopped on an API error, else
-# nothing.
+# session, or a busy one stopped on an API error, is auth), model when it stopped on a model error
+# (stop_kind's model-error, which wait never resumes), stuck when it stopped on any other API error,
+# else nothing.
 conductor_stop() {
-  local pane
+  local pane k
   pane="$(agent_field "$1" pane_id)"
-  if { [[ "$(session_state "$1")" == idle ]] || api_stopped "$1" "${pane}"; } && login_expired "$1"; then echo auth
-  elif api_stopped "$1" "${pane}"; then echo stuck; fi
+  k="$(stop_kind "$1" "${pane}")" || k=""
+  if { [[ "$(session_state "$1")" == idle ]] || [[ -n "${k}" ]]; } && login_expired "$1"; then echo auth
+  elif [[ "${k}" == model-error ]]; then echo model
+  elif [[ -n "${k}" ]]; then echo stuck; fi
 }
 
 # conductors_queued — queued_lines for each working conductor (running_conductors with no report yet),

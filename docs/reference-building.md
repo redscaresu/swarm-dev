@@ -490,7 +490,7 @@ it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a con
 to each builder whose `wait` printed `auth`.
 A turn can also stop on an API error while the session still reads busy, because background shells
 the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
-in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
+in its pane is Claude Code's own error line (`⏺ API Error: ...` or `⏺ API Error (<model>): ...` at the left margin, with no reply or
 submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
 stopped." and waits again. It logs each one as a `resume` line, not a nudge, conductors included. After three such stops
 in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
@@ -498,7 +498,12 @@ prints `stuck: api error` and exits 4. A pane that still shows the old error aft
 message has not shown yet) is no new stop. An idle session still on that same pane a slice later
 never took the message up. With `goal` on it never resumes a builder: it returns
 `stuck: api error` at once, so the transcript still ends on the error for the goal rule. A conductor
-or review agent is resumed either way. When the transcript ends on an expired login, `wait` prints
+or review agent is resumed either way. A model error skips the resumes, because a resume in the same
+session sends the same model ID again. A model error is an `API Error` line (`API Error:` or
+`API Error (<model>):`) whose status is 400 or 404 and whose text names the model: `model ID`,
+`model identifier`, `inference profile` or `model_not_found`. On it `wait` prints `stuck: model error
+(<the line, cut to 200 characters>)` at once and exits 4, goal on or off. The lead's restart rule for
+an API-error stop then starts the agent in a fresh session, which picks up the corrected settings. When the transcript ends on an expired login, `wait` prints
 `auth` instead, busy session or not, and resumes nothing. `tell`
 treats such an agent as idle and delivers, and `next` names a conductor's stop. Any `wait` also
 prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
