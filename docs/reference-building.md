@@ -859,10 +859,11 @@ the builder declined with a reason the agent accepts as declined, with the build
 with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
 to fix is a pass, and the agent writes its review file, `.swarm/reviews/<slug>.md`, first: a
 `wait review-<slug>` (the lead's, for a kept story) ends on that file, and once the PR merges, the merge's reconcile retires the agent and
-removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <slug> --head <SHA> <PR URL>` with the head it reviewed, which
+removes its worktree; its pane closes once the agent's turn ends (§ Merging). Then it hands the PR on itself. It runs `swarm.sh review <slug> --head <SHA> <PR URL>` with the head it reviewed, which
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
-handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
+handoff, and the PR waits on your merge; `swarm.sh review` then retires the agent, and its pane closes
+once its turn ends (§ Merging). A `grants` that fails is run once more, and a second failure
 hands the PR over too. `review --head` and `merge --head` refuse a head pushed since the review,
 unless the push added only git's own clean merges of the base. `review --head` also needs that head's
 own CI green, since the agent waited for green on the head it reviewed. It then puts the story in
@@ -1220,7 +1221,7 @@ It reads herdr's agent list once and answers every later agent list from it.
 A read still running at that point is cut, the step is worked out without it, and a `skipped (over 30 s): <reads>` line after the step names each cut read, such as `herdr agent list`, `gh pr list` or `ci_gate age`.
 A cut read can change the step.
 Without herdr's agent list it can miss a working conductor.
-Without `claude agents` or `herdr agent read` it can show a conductor stopped on an expired login or an API error as still working.
+Without `claude agents` or `herdr agent read` it can show a conductor stopped on an expired login, an API error or a model error as still working. For a conductor stopped on a model error, the step is `wait <conductor>` with a `stuck:` line: a resume in the same session cannot clear it, so the restart rule starts the conductor in a fresh session.
 Once a read that decides a start is cut, next starts no conductor, and names each one it would have started: `no conductor started: <conductor>: a read it needs was cut at the report's deadline; run swarm.sh next again`.
 So run `next` again whenever it prints a skipped line.
 Writes, and a start once begun, are never cut, so a slow start runs to its end.

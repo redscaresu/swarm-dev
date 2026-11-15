@@ -49,7 +49,9 @@ def newest(paths):
             best = t
     return best
 
-sid = session_id(sys.argv[1], sys.argv[2])
-path = session_log(sys.argv[3], sid) if sid else ""
-side = glob.glob(os.path.join(glob.escape(path[:-len(".jsonl")]), "subagents", "*.jsonl")) if path else []
-print(newest([path] + side) if path else "")
+# Run as a script (session_mtime): <agents.tsv> <name> <projects>. Imported (prompt_lines), the functions alone.
+if __name__ == "__main__":
+    sid = session_id(sys.argv[1], sys.argv[2])
+    path = session_log(sys.argv[3], sid) if sid else ""
+    side = glob.glob(os.path.join(glob.escape(path[:-len(".jsonl")]), "subagents", "*.jsonl")) if path else []
+    print(newest([path] + side) if path else "")

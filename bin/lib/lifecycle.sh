@@ -2035,6 +2035,89 @@ tidy_panes() {
   echo "closed ${n}"
 }
 
+# CLOSE_IDLE_SECONDS: how long close_when_idle's waiter waits for a retired review agent's turn to end
+# once the command that retired it has exited, before it leaves the pane open (under 30 minutes, so a
+# stuck agent is not waited on for long). CLOSE_CMD_SECONDS: how long it waits for that command to exit
+# first; a merge's own waits end well inside it. CLOSE_IDLE_POLL: how often it looks, in seconds.
+# CLOSING_DIR holds each waiter's <name>.pid while it runs, and its output, <name>.log.
+CLOSE_IDLE_SECONDS="${SWARM_CLOSE_IDLE_SECONDS:-1200}"
+CLOSE_CMD_SECONDS=1200
+CLOSE_IDLE_POLL="${SWARM_CLOSE_IDLE_POLL:-5}"
+CLOSING_DIR="${PROJECT_DIR}/.swarm/closing"
+
+# close_when_idle <name> <pane> — close <pane>, where merged_review or handed_review just retired <name>
+# (herdr's name for review-<slug>) because the command running now (a swarm.sh merge in that pane, or
+# its reconcile; or the swarm.sh review that hands the PR to the user) runs there, once that command
+# has exited and the agent's turn has ended. Closing the pane now would
+# kill the command. So it starts the waiter, swarm.sh _close-when-idle (close_idle_wait), detached as
+# review_restart starts its run: nohup, in a session of its own (setsid), so closing the pane does not
+# end it, pinned to this project, and given $$, the swarm.sh process running now. Its output goes to
+# CLOSING_DIR/<name>.log, never to this command's, so the agent's Bash call does not wait on it; its
+# pid goes to CLOSING_DIR/<name>.pid. What it will do is said; a CLOSING_DIR it cannot make is said,
+# and the pane stays open.
+close_when_idle() {
+  mkdir -p "${CLOSING_DIR}" 2>/dev/null \
+    || { echo "$1 stays open in pane $2: ${CLOSING_DIR} could not be made, so nothing waits to close it; close it with swarm.sh tidy --yes once it is done"; return 0; }
+  SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _close-when-idle "$1" "$2" "$$" </dev/null > "${CLOSING_DIR}/$1.log" 2>&1 &
+  echo "$!" > "${CLOSING_DIR}/$1.pid"
+  echo "$1 closes once this command has exited and its turn has ended; if its turn has not ended ${CLOSE_IDLE_SECONDS}s after this command exits, it is left open, with a close-when-idle line in .swarm/events.tsv"
+}
+
+# close_idle_wait <name> <pane> <pid> — swarm.sh _close-when-idle, close_when_idle's waiter. Every
+# CLOSE_IDLE_POLL seconds, once <pid> has exited, it reads the tab record's name for <pane>: the -done
+# name retire_agent gave <name>, or it stops with nothing closed (a tidy, a close or a deleted project
+# took the pane first). Then it reads the agent's state: session_state's word for <name>'s session, or, where
+# herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for this
+# project's agent under the -done name (list_field over one herdr agent list; a list herdr fails
+# to give reads as unknown, never as no agent). Idle, done, or no agent under that name any more: it closes the pane
+# (close_pane, which closes its tab too when the pane was the record's last) and logs
+# `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
+# `close-when-idle <name> left open: ...`. So is one whose agent is still not idle CLOSE_IDLE_SECONDS
+# after <pid> exited, naming its state, or whose <pid> still runs CLOSE_CMD_SECONDS after the waiter
+# started: that pane stays open for tidy --yes. On its way out it removes CLOSING_DIR/<name>.pid while
+# that holds its own pid.
+close_idle_wait() {
+  local name="$1" pane="$2" pid="$3" who state agents end="" cap
+  [[ -n "${name}" && -n "${pane}" && "${pid}" =~ ^[0-9]+$ ]] || die "usage: swarm.sh _close-when-idle <name> <pane> <pid>"
+  cap=$((SECONDS + CLOSE_CMD_SECONDS))
+  while :; do
+    # Nothing is read while <pid> runs: close_when_idle writes the pid file before <pid> can exit.
+    if kill -0 "${pid}" 2>/dev/null; then
+      if (( SECONDS >= cap )); then
+        record_event close-when-idle "${name}" "left open: the command that retired it (pid ${pid}) was still running ${CLOSE_CMD_SECONDS}s later; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        break
+      fi
+    else
+      [[ -n "${end}" ]] || end=$((SECONDS + CLOSE_IDLE_SECONDS))
+      who="$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" || who=""
+      if [[ "${who}" != "${name:0:27}-done" && "${who}" != "${name:0:26}-done"[2-9] ]]; then
+        echo "pane ${pane} is no longer recorded as retired ${name} (its record says '${who}'), so nothing was closed"; break
+      fi
+      state="$(session_state "${name}")"
+      if [[ "${state}" == herdr || "${state}" == gone ]]; then
+        if agents="$(herdr agent list 2>/dev/null)"; then
+          state="herdr:$(list_field "${who}" agent_status <<< "${agents}")"
+        else state="herdr:unknown"; fi
+      fi
+      case "${state}" in
+        idle|herdr:idle|herdr:done|herdr:)
+          CLOSE_PANE_KEPT=""
+          close_pane "${pane}" "${who}" || { echo "pane ${pane} left its tab record while it was closed, so nothing was closed"; break; }
+          if [[ -z "${CLOSE_PANE_KEPT}" ]]; then record_event close-when-idle "${name}" "closed (pane ${pane})"
+          else record_event close-when-idle "${name}" "left open: herdr could not close its pane ${pane}; close it with swarm.sh tidy --yes"; fi
+          break ;;
+      esac
+      if (( SECONDS >= end )); then
+        record_event close-when-idle "${name}" "left open: it was still ${state#herdr:} ${CLOSE_IDLE_SECONDS}s after the command that retired it exited; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        break
+      fi
+    fi
+    sleep "${CLOSE_IDLE_POLL}"
+  done
+  [[ "$(cat "${CLOSING_DIR}/${name}.pid" 2>/dev/null)" != "$$" ]] || rm -f "${CLOSING_DIR}/${name}.pid"
+}
+
 # init_check — refuse init anywhere but the project's git root. main runs it before logging, since a
 # project found from a subdirectory is that subdirectory, and a refused run must write nothing there.
 init_check() {
@@ -3748,18 +3831,21 @@ sign_seen() {
 # pass's read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read),
 # and takes a pane resend_pass read this poll from LEAD_READS, never reading it twice; a pane
 # resend_pass failed to read is not read again. LEAD_STUCK keeps each agent's key (herdr's status and
-# the mtime of its Claude session log, found by report.py's session_log, - with none), what its pane showed and when it was last read.
+# the time of the newest own-work entry in its Claude session log, found by report.py's session_log and
+# read by session_mtime.py's last_work, - with no log or no such entry; a write to the log that is no
+# work of the agent's, or work in its Task subagents' logs, leaves it as it was), what its pane showed and when it was last read.
 # A pane last found clear is read again only when its key changed or STUCK_RECHECK seconds have passed;
 # one last found stuck is read every poll, as a user can clear it with no turn. Agents are read in the
 # order of their last read, oldest first, so slow reads that use up the budget leave the rest first in
 # line for the next poll; its first read goes even past the deadline, so each poll reads at least one. An api-error line comes only while no `swarm.sh wait` naming the agent runs
 # (resend_busy's wait mode, the same ps): a running wait resumes it, and ends once it stops resuming;
-# meanwhile a line already in LEAD_SEEN stays. An agent skipped, unread or whose read failed keeps its
+# meanwhile a line already in LEAD_SEEN stays, and the record keeps the key it had before the wait, so
+# once the wait ends the stop is new only when the agent did own work since. An agent skipped, unread or whose read failed keeps its
 # line from LEAD_SEEN; a herdr list, ps, list parse or read directory that failed keeps every prompt:
 # line there (prompt_seen); so a missed read neither drops a line nor wakes the lead with it again. A
 # new stop wakes the lead even when its line reads the same, since LEAD_SEEN forgets the old line: a
 # prompt, login or api-error found in a pane with no record (the agent came back in a new pane), or in
-# one last found stuck after a turn (its session log changed). Manual mode is a state, not a stop: a
+# one last found stuck after a turn (new own work in its session log). Manual mode is a state, not a stop: a
 # builder in it answering prompts wakes no one again, and while it works (no candidate) its manual
 # record and line are kept (key carry), so a poll that sees it working does not end the state. A pane
 # resend_pass sent Enter to this poll (<pane>.sent in LEAD_READS) is not classified: its read is gone. The exit: for a prompt, the user answers it in
@@ -3802,14 +3888,14 @@ manual_slug() {
 # stop already seen stays seen.
 prompt_seen() { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; }
 prompt_lines() {
-  local rows name pane key last lkey lkind lat at kind out slug footer dir n=0 tried=0 text state="" files=() kinds=() i backlog now
+  local rows name pane key last lkey lkind lat at kind out slug footer hid dir n=0 tried=0 text state="" files=() kinds=() i backlog now
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || { prompt_seen; return 0; }
   if [[ -f "${UPGRADE_PID}" ]] && [[ -n "$(upgrade_holder)" ]]; then prompt_seen; return 0; fi
   # The candidates, oldest read first (LEAD_STUCK's time; never read, 0), then in herdr's order.
   rows="$(SWARM_PANES="$(own_panes)" SWARM_ROLES="${CO_WRITER_ROLES}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, re, sys
-sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log
+sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log; from session_mtime import last_work
 own, skip = set(os.environ["SWARM_PANES"].split()), set(os.environ["SWARM_ROLES"].split())
 agents = {}
 try:
@@ -3842,10 +3928,13 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
     role, sid = agents.get(n, ("", ""))
     if role in skip:
         continue
+    # The newest own-work entry in the log, not its mtime: a write to it that is no work of the agent (a
+    # resume prompt, a compaction, an API error) is the same stop. Its Task subagents logs are left out,
+    # since a subagent still at work would move the key on every poll while the agent sits at one stop.
     at, path = "-", session_log(sys.argv[2], sid)
     if path:
         try:
-            at = str(os.stat(path).st_mtime_ns)
+            at = str(last_work(path) or "-")
         except OSError:
             pass
     rows.append((read.get((n, p), (0, ""))[0], n, p, st + ":" + at))
@@ -3903,11 +3992,16 @@ for f in sys.argv[1:]:
     # for any other agent a prompt the user answers, turning manual mode off too, so each new one reminds.
     slug=""; footer=""; [[ "${kind}" != manual* ]] || slug="$(manual_slug "${name}")"
     if [[ "${kind}" == manual-prompt ]]; then if [[ -n "${slug}" ]]; then kind=manual; else kind=prompt; footer=1; fi; fi
+    # An api-error a running wait naming the agent hides: that wait is still resuming it. Its record keeps
+    # the old key, so the stop it hides is judged against the one before the wait once the wait ends.
+    hid=""; if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then hid=1; fi
     if [[ "${kind}" == unread ]]; then
       [[ "${at}" == 0 && "${lkey}" == - ]] || printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${lkey}" "${lkind/#-/unread}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
-    else printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true; fi
-    # A wait naming it is still resuming it.
-    if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then kind=unread; fi
+    else
+      [[ -z "${hid}" || "${lkey}" == - ]] || key="${lkey}"
+      printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
+    fi
+    [[ -z "${hid}" ]] || kind=unread
     case "${kind}" in
       prompt) out="the user answers it in pane ${pane}${footer:+, and turns manual mode off there}" ;;
       login) out="the user runs /login, then swarm.sh tell ${name} resume <file>" ;;

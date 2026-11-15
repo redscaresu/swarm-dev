@@ -9,7 +9,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `grants`,
-`cost`, `outcomes`, `flow`, `dataset`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
+`cost`, `outcomes`, `flow`, `dataset`, `retro`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, `swarms`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`,
@@ -152,7 +152,12 @@ queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
 unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
 queued, or a merge with no merge commit. A merge at a head other than the checked one is `merge
-merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+merged at head <sha>, not <sha>, ...` and then reconcile's lines. When that reconcile retires the
+story's review agent in its own pane, the waiter that later closes the pane writes one
+`close-when-idle review-<slug>` line. Its outcome is `closed (pane <pane>)`, or `left open: <why>`
+when the agent was still not idle, or the merge still running, after the waiter's limit. A
+`swarm.sh review` that hands a PR to the user from the review agent's own pane, under `merge = human`
+with no HLD `merge` grant, retires the agent too, and its waiter writes the same line. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from
@@ -181,9 +186,19 @@ The outcome field can end in a tail of `key=value` fields, for example
 `EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
 `version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
-Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `pane-closed` passes `pane=`, `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
-`url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
-`verdict=`. For a command `main` logs, the fields come from two places, in
+Callers can pass fields of their own, which come before `version=`:
+
+- `decline-only` passes `round=` and `verdict=`.
+- `first-green` passes `sha=`.
+- The incident lines above pass `slug=` and `role=`.
+- `intervene` passes `cause=`.
+- `merge` passes `hold=` on its held lines.
+- `pane-closed` passes `pane=`, `slug=` and `role=`.
+- `pr-opened` passes `url=`.
+- The reap lines above pass `slug=` and `role=`.
+- `review-finished` passes `round=` and `verdict=`.
+
+For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
