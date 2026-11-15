@@ -3,7 +3,8 @@
 # Each kind is named on its own screen: a permission prompt (under an older esc to interrupt line) and
 # a dialog, plain, framed (╭─ … ╰─) or between two rules over a manual mode footer, and a menu of 9
 # options with a description under each, are prompt; then login, api-error (under an older esc to
-# interrupt line, and over a lone rule, which pane_stop takes as the box's top) and manual. These are
+# interrupt line, over a lone rule, which pane_stop takes as the box's top, and an `API Error (<model>):`
+# line) and manual. These are
 # none:
 #   a pane mid-command (one printing a menu, one in manual mode, one with a todo list under its
 #   spinner);
@@ -43,6 +44,7 @@ check "a menu of 9 options with a description under each is prompt" test "$(kind
 check "a turn ended on Login expired · Please run /login is login" test "$(kind login.txt)" = login
 check "a turn ended on an API Error: line, under an older esc to interrupt, is api-error" test "$(kind api-error.txt)" = api-error
 check "an API Error: line over a lone rule, as pane_stop reads it, is api-error" test "$(kind lone-rule.txt)" = api-error
+check "an API Error (<model>): line, the model error #899 stopped on, is api-error" test "$(kind model-error.txt)" = api-error
 check "an empty input box over a manual mode footer is manual" test "$(kind manual.txt)" = manual
 check "a pane mid-command whose command prints a menu is none" test "$(kind mid-command.txt)" = none
 check "a pane mid-command, in manual mode, is none" test "$(kind mid-command-manual.txt)" = none

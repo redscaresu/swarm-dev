@@ -497,6 +497,11 @@ bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error: Connection dropp
 merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
 check "a board merge while a conductor is stopped on an API error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
 check "a board merge while a conductor is stopped on an API error: says why" said "no conductor started: conduct-e stopped on an API error"
+# The same stop on a model error: no conductor either, and the line names the model error.
+bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error (eu.anthropic.claude-x-9): 400 The provided model identifier is invalid.' > "${ROOT}/agents.screen.w:c"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
+check "a board merge while a conductor is stopped on a model error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge while a conductor is stopped on a model error: says why" said "no conductor started: conduct-e stopped on a model error"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land

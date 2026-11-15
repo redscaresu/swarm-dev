@@ -14,6 +14,11 @@ and with which model (swarm-dev `docs/reference-models.md` § Model and effort);
 never given to a swarm agent. A `lead` story says what it needs from you, and marks each step
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
+`fix: true` marks a story that fixes behaviour a release already shipped, such as a bug or a regression.
+A patch release is meant to carry only such stories and fix-main builds.
+New behaviour never carries it.
+Leave the field off every other story.
+
 `attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
 closes the builder of a code, docs or chore story that is still `ready` with no open PR, or when
 `swarm.sh close <slug> --drop` clears a build whose PR is open (a bare close keeps that PR and puts

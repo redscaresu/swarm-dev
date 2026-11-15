@@ -181,6 +181,49 @@ echo n-pr | put "${R}" n; M="$(git -C "${R}" rev-parse HEAD)"
 check "a base line of a file the merge base lacks, which the resolution dropped, prints" \
   "${M:0:7} n: n-main"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
+# at_seven [<line>...] — BASE0 with these lines after seven
+at_seven() { printf '%s\n' "${BASE0[@]:0:7}" "$@" "${BASE0[@]:7}"; }
+
+# A line both sides added, new to f: pr commits added-line after two, and main gets the same change as
+# its squash merge, a commit of its own (the same tree, parent and message in the same second would be
+# pr's commit). pr then replaces three and moves added-line after seven, so main's copy sits in main's
+# conflict section; the resolution follows the PR and keeps one copy.
+R="$(new_repo bothadded)"; on "${R}" pr; lines added-line three | put "${R}" f
+on "${R}" main; lines added-line three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; printf '%s\n' one two three-pr "${BASE0[@]:3:4}" added-line "${BASE0[@]:7}" | put "${R}" f
+printf '%s\n' one two three-pr "${BASE0[@]:3:4}" added-line "${BASE0[@]:7}" | merge "${R}" main - >/dev/null
+check "a line both sides added, new to the file (main's squash, the PR's own commit), kept once: nothing" \
+  "exit 0" "$(scan "${R}" main pr)"
+
+# The same with no conflict: main has added-line after two and pr after seven, so git's own merge keeps
+# both, outside any conflict section, and the resolution drops main's by hand.
+R="$(new_repo bothclean)"; lines added-line three | put "${R}" f; on "${R}" pr; at_seven added-line | put "${R}" f
+at_seven added-line | merge "${R}" main - >/dev/null
+check "a line both sides added in two places, which git's merge keeps twice, kept once: nothing" \
+  "exit 0" "$(scan "${R}" main pr)"
+
+# main adds added-line after two and pr does not; the resolution drops it.
+R="$(new_repo mainadded)"; lines added-line three | put "${R}" f
+on "${R}" pr; printf '%s\n' "${BASE0[@]:0:6}" seven-pr "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' "${BASE0[@]:0:6}" seven-pr "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a line main added and the PR did not, dropped by the resolution, prints" \
+  "${M:0:7} f: added-line"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# main adds added-line twice (after two and after five), pr once (after seven), and the resolution keeps
+# pr's copy alone: one short of main's two.
+R="$(new_repo addedtwice)"; printf '%s\n' one two added-line three four five added-line "${BASE0[@]:5}" | put "${R}" f
+on "${R}" pr; at_seven added-line | put "${R}" f
+M="$(at_seven added-line | merge "${R}" main -)"
+check "a line main added twice and the PR once, kept once: it prints once" \
+  "${M:0:7} f: added-line"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# '}', which the merge base's f has once: main adds a copy after two, pr one after seven, and the
+# resolution drops main's. With a copy in the merge base, the two can be separate additions.
+R="$(new_repo bracebothadded)"; lines '}' three | put "${R}" f; on "${R}" pr; at_seven '}' | put "${R}" f
+M="$(at_seven '}' | merge "${R}" main -)"
+check "a line the merge base had, a copy each side added, main's dropped by the resolution: it prints" \
+  "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # An octopus merge on the PR branch.
 R="$(new_repo octopus)"; git -C "${R}" branch b1; git -C "${R}" branch b2
 on "${R}" b1; echo g1 | put "${R}" g; on "${R}" b2; echo h1 | put "${R}" h; on "${R}" pr; echo p1 | put "${R}" p
@@ -203,6 +246,47 @@ check "a merge of a stacked parent branch is unchecked, with its reason, not dro
 
 check "a range git cannot read exits 2 saying so" \
   "cannot list the merges in main..nope: fatal: bad revision 'main..nope'"$'\n'"exit 2" "$(scan "${R}" main nope)"
+
+# squashed_parent <name> — new_repo <name> with pr as a stacked build's parent: pr's merge of main keeps
+# three-pr and three-main, dropping main-added on purpose; child, stacked on pr, adds c; then pr
+# squash-merges into main, so main's f no longer has main-added, and pr's merge, still in child's
+# history, is not on main. Leaves child checked out; prints the repo's path.
+squashed_parent() {
+  local d; d="$(new_repo "$1")"; conflict "${d}"
+  lines three-pr three-main | merge "${d}" main - >/dev/null
+  git -C "${d}" checkout -q -b child pr; echo c1 | put "${d}" c
+  on "${d}" main; git -C "${d}" merge -q --squash pr >/dev/null; git -C "${d}" commit -qm 'the parent (#1)'
+  on "${d}" child; echo "${d}"
+}
+
+# A line the base itself no longer has does not count: at main's tip, then also at child's merge base
+# with main, then only there.
+R="$(squashed_parent inherited)"
+check "a stacked child's parent's merge dropped a line main's squash took off, child not merged with main since: nothing" \
+  "exit 0" "$(scan "${R}" main child)"
+merge "${R}" main >/dev/null
+check "the same once child has merged main: nothing" "exit 0" "$(scan "${R}" main child)"
+on "${R}" main; { cat "${R}/f"; echo main-added; } > "${tmp}/f.again"; put "${R}" f < "${tmp}/f.again"; on "${R}" child
+check "the same once main has the line again, after child's merge of main: nothing" "exit 0" "$(scan "${R}" main child)"
+
+# squashed_f [<line>...] — main's f after squashed_parent's squash, with seven replaced by these lines
+squashed_f() { printf '%s\n' one two three-pr three-main "${BASE0[@]:3:3}" "$@" "${BASE0[@]:7}"; }
+
+# child's own merge of main drops a line main still has: main replaces seven with seven-main and
+# seven-added, child with seven-child, and the resolution keeps seven-child and seven-main.
+R="$(squashed_parent owndrop)"
+on "${R}" main; squashed_f seven-main seven-added | put "${R}" f; on "${R}" child; squashed_f seven-child | put "${R}" f
+M="$(squashed_f seven-child seven-main | merge "${R}" main -)"
+check "a stacked child's own merge drops a line main still has: it prints; its parent's merge prints nothing" \
+  "${M:0:7} f: seven-added"$'\n'"exit 1" "$(scan "${R}" main child)"
+
+# main deletes f after pr's merge dropped main-added from it: a commit with no such file under any name git
+# finds still counts the line, as a rename past git's detection would look the same.
+R="$(new_repo deleted)"; conflict "${R}"
+M="$(lines three-pr three-main | merge "${R}" main -)"
+on "${R}" main; git -C "${R}" rm -q f; git -C "${R}" commit -qm 'delete f'; on "${R}" pr
+check "a dropped line of a file main has since deleted: it still prints" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's

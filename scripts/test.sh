@@ -6,7 +6,8 @@
 # it that failed. A file passes only on its job's ok result. Under a cap in ~/.swarm/test-cap (below)
 # a run may first wait for a slot. Exits 1 when any file failed, or when xargs stopped before every
 # file had run, or before any file runs when the cap file holds no whole number or a slot cannot be
-# used; an interrupt (INT, HUP, TERM, PIPE) stops every job and its test first, as the cleanup below does.
+# used; an interrupt (INT, HUP, TERM, PIPE) stops every job and its test at once, before the run exits,
+# as the cleanup below does: a TERM to the make that runs it (select-tests.sh --run execs make) is one.
 # Under codex it refuses before anything else.
 set -uo pipefail
 
@@ -224,9 +225,10 @@ fi
 filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
 branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
 export TEST_REAP_BRANCH="${branch}"   # for the jobs' reap lines
-trap 'exit 130' INT
-trap 'exit 129' HUP
-trap 'exit 143' TERM
+# exit_traps — INT, HUP and TERM end the run with that signal's status; start_phase holds them
+# while it launches a phase.
+exit_traps() { trap 'exit 130' INT; trap 'exit 129' HUP; trap 'exit 143' TERM; }
+exit_traps
 trap 'exit 141' PIPE   # untrapped, bash runs the EXIT trap with the last command's status, often 0
 
 # The cap: ~/.swarm/test-cap, a whole number N above 0, lets at most N runs go at once on this
@@ -385,13 +387,20 @@ log_run() {
 }
 
 # On any exit, stop the jobs left (only after xargs stopped early, or an interrupt, can there be
-# any): TERM each, which stops its test's group, and give them 5 s; then TERM the group of any still
-# there, and KILL it 2 s later, and the job. Only then do the logs go, and last the slot.
+# any): TERM the process group of the phase going (start_phase), which reaches xargs, so it starts
+# no more jobs, and every job in it, even one not yet in the jobs dir; with no phase going, TERM each
+# job. A job's TERM stops its test's group. Give them 5 s; then TERM the group of any still there,
+# and KILL it 2 s later, and the job, and last the phase's own process. Only then do the logs go, and
+# last the slot.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
   local rc=$? j i g left
   if [[ -n "${run}" ]]; then
-    for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
+    if [[ -n "${phase}" ]]; then
+      kill -TERM -- "-${phase}" 2>/dev/null
+    else
+      for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
+    fi
     for ((i = 50; i > 0; i--)); do
       left=""
       for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -0 "${j##*/}" 2>/dev/null && left=1; done
@@ -403,6 +412,8 @@ cleanup() {
       g="$(cat "${j}" 2>/dev/null)"; [[ -z "${g}" ]] || stop_group "${g}" 2
       kill -KILL "${j##*/}" 2>/dev/null
     done
+    # Reaped after the KILLs, so bash prints no job notice for it and a stopped job cannot hold this.
+    [[ -z "${phase}" ]] || { kill -KILL "${phase}"; wait "${phase}"; } 2>/dev/null
     rm -rf "${run}"
   fi
   log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
@@ -410,7 +421,7 @@ cleanup() {
   free_slot
 }
 # Set before the start line, so every exit after it, a trapped signal's too, writes the end line.
-run=""
+run="" phase=""
 trap cleanup EXIT
 log_run "" "" ""
 
@@ -434,8 +445,32 @@ par=() ser=()
 for f in "$@"; do
   case " ${SERIAL:-} " in *" ${f} "*) ser+=("${f}") ;; *) par+=("${f}") ;; esac
 done
+# start_phase <stdin> <command>... — run the command, its stdin from <stdin>, in the background as a
+# process group of its own, named in phase until it ends, and wait for it; its status is the
+# command's. A trapped TERM, INT or HUP ends the wait at once, where bash would hold the trap until a
+# foreground command ended, so the cleanup stops the run's jobs and tests then, not once the phase
+# ran to its end. Killing make (what select-tests.sh --run execs) TERMs this runner, so that stops
+# the whole run. The command is xargs or a job itself, never a pipeline: the bash a pipeline runs in
+# would print a "Terminated" notice when the cleanup TERMs it. A signal that comes between the
+# launch and phase=$! is held until phase names the group, then ends the run, so the cleanup
+# always sees the phase.
+start_phase() {
+  local rc=0 in="$1" held=""
+  shift
+  trap 'held=130' INT; trap 'held=129' HUP; trap 'held=143' TERM
+  set -m   # the phase leads a process group of its own, which the cleanup TERMs
+  "$@" < "${in}" &
+  phase=$!
+  set +m
+  exit_traps
+  [[ -z "${held}" ]] || exit "${held}"
+  wait "${phase}" || rc=$?
+  phase=""
+  return "${rc}"
+}
 if [[ ${#par[@]} -gt 0 ]]; then
-  printf '%s\0' "${par[@]}" | xargs -0 -P "${JOBS:-4}" -n 1 bash "$0" --one "${run}"
+  printf '%s\0' "${par[@]}" > "${run}/files"
+  start_phase "${run}/files" xargs -0 -P "${JOBS:-4}" -n 1 bash "$0" --one "${run}"
   xrc=$?
   show "${par[@]}"
   # Every file ran on 0, on 123 (GNU xargs: a command failed) and on 1 (BSD xargs: the same); 124
@@ -446,7 +481,7 @@ if [[ ${#par[@]} -gt 0 ]]; then
   esac
 fi
 for f in "${ser[@]+"${ser[@]}"}"; do
-  bash "$0" --one "${run}" "${f}"
+  start_phase /dev/null bash "$0" --one "${run}" "${f}"
   show "${f}"
 done
 exit "${failed}"

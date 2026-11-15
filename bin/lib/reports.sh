@@ -90,9 +90,10 @@ record_finding() {
   echo "recorded ${kind} (${outcome})"
 }
 
-# out_of_scope_findings — the findings declined as out-of-scope or deferred in the last
-# IDLE_FINDING_DAYS days, newest first, as "<reason> TAB <date> <kind> <pr>: <text>": the swarm's own
-# follow-ups, which idle_lines offers.
+# out_of_scope_findings [YYYY-MM-DD] — the findings declined as out-of-scope or deferred on or after
+# that day (with none, in the last IDLE_FINDING_DAYS days), newest first, as
+# "<reason> TAB <date> <kind> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers and
+# retro_report lists from its window's day.
 # A text is listed once, and only while its newest row is that decline: the lead's log-finding
 # --filed once it files one as a story (commands/swarm.md), or a later fixed row, drops it. That
 # record works wherever the board is and whatever the story says. In case the lead did not log it,
@@ -100,8 +101,9 @@ record_finding() {
 # repo, one any branch (an open board PR's too) added or removed since the finding's day.
 IDLE_FINDING_DAYS=30
 out_of_scope_findings() {
-  local since text day line git=""
-  since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
+  local since="${1:-}" text day line git=""
+  [[ -z "${since}" || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "out_of_scope_findings: not a YYYY-MM-DD day: ${since}"
+  [[ -n "${since}" ]] || since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
   git -C "${BOARD}" rev-parse -q --git-dir >/dev/null 2>&1 && git=1
   while IFS=$'\t' read -r text day reason line; do
     grep -qsF -- "${text}" "${BOARD}"/stories/*.md && continue
@@ -362,7 +364,7 @@ dataset_report() {
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
-#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     each after a blank line: TSV epic kind stops (api-error, model-error and auto-denied per epic; --epic keeps
 #     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
 #     event (each stalled incident and stalled step-up's escalate line, - for an input it does not carry)
 #     and the false stalls line (those rows with an input at 1, and lead-hand and user-caught lines with
@@ -415,9 +417,10 @@ dataset_report() {
 #     deferred, `<n> of <deferred>` of them whose text an escaped row on the same PR repeats exactly (-
 #     with none deferred), and `<pct>% (<n> of <prs>)` of the PRs with four or more rounds (- with none).
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
-#     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
+#     declined decline_rate rework deferred): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
-#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks; deferred is
+#     the declined findings whose reason is deferred (a row with no reason counts 0). Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. Once a row in the window has a round (log-finding --round), two
 #     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong deferred share_fixed, per round
@@ -451,7 +454,9 @@ dataset_report() {
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
 #     1, 2, 3-4, 5+); then the 5 slowest, TSV start seconds branch at_once status. Then TSV
 #     builder_runs median_s p90_s over the builders' runs (branch story/*) of every filter, shards
-#     left out. Nothing with no log, a line in place of the full runs' blocks with none in the window.
+#     left out. None of these with no log, a line in place of the full runs' blocks with none in the
+#     window. Last, with or without the log, TSV timeouts: the reap lines test.sh writes to events.tsv
+#     (outcome `TIMEOUT after <n>s`, not codex-review's) whose local day is in the window, 0 with none.
 #     --epic does not narrow it.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
 #     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.
@@ -536,7 +541,8 @@ flow_sections() {
 # --memory defaults to Claude Code's memory folder for this project (CLAUDE_PROJECTS, then the main
 # checkout's path with each character outside A-Za-z0-9 turned into -, then /memory).
 # Then retro_report.py runs each bin/lib/retro_<name>.py under `## <name>`, with the context below.
-# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run. A new
+# findings_open is a temp file holding `out_of_scope_findings <day>`, removed after the run, and
+# SWARM_FINDING_REVIEWERS is set for report.py's finding readers. A new
 # section is a new retro_<name>.py; neither this nor retro_report.py changes. Exits 1 when a section fails.
 retro_report() {
   local usage="usage: swarm.sh retro [--since <tag>] [--memory <dir>]" tag="" memory="" main base day home top writer v open rc=0
@@ -574,7 +580,7 @@ retro_report() {
   echo
   open="$(mktemp "${TMPDIR:-/tmp}/retro-findings.XXXXXX")" || die "retro: cannot make a temp file"
   out_of_scope_findings "${day}" > "${open}"
-  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
+  SWARM_LIB="${SWARM_HOME}/bin/lib" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 -I "${SWARM_HOME}/bin/lib/retro_report.py" "${tag}" "${day}" "${PROJECT_DIR}" "${BOARD}" \
     "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${memory}" "${open}" || rc=$?
   rm -f "${open}"
   return "${rc}"
