@@ -10,8 +10,10 @@
 # selects the tests that run that arm (directly, through a wrapper function or a hook), a test that
 # sources the lib and calls a caller, and the bin floor, not a test that runs only the stop arm; a
 # call by a built name, a test that runs swarm.sh with no command word and a function no test reaches
-# each select every test, and say why. --run hands the list to a stub make with JOBS=4, or runs
-# nothing and says so. --functions names the bin/ functions and dispatch arms a change reaches,
+# each select every test, and say why. --known keeps only the row's floor of each path that would select every
+# test and names it (a bin/ path alone, when the bin/ paths together would), or every path when git fails.
+# --run hands --known's list to a stub make with JOBS=4, naming the paths it leaves to CI, or runs
+# nothing and says so; it never runs every test. --functions names the bin/ functions and dispatch arms a change reaches,
 # from both sides of the diff, and the functions that run a changed .py; a line in no function, or a
 # .py no function runs, gives full. Last, --check-map: it names each unmapped path under bin/, scripts/,
 # commands/, hooks/ and docs/, refuses a map that lists a missing test, and passes the real repo's
@@ -231,6 +233,7 @@ check "a rename selects for both paths" "$(sel "git mv commands/swarm.md command
   "$(lines "${CMD_FLOOR[@]}" tests/names_renamed_test.sh tests/names_swarm_test.sh)"
 check "an untracked file no row matches selects every test" "$(sel 'echo 1 > notes.txt')" "${ALL}"
 check "a named file only the selector's own test names selects every test" "$(sel "echo 1 >> hooks/agent-state.sh; ${commit}")" "${ALL}"
+check "a mapped and an unmapped file together select every test" "$(sel 'echo 1 >> commands/swarm.md; echo 1 > notes.txt')" "${ALL}"
 check "no origin/main selects every test" \
   "$(sel "echo 1 >> board/stories/a.md; ${commit}; git update-ref -d refs/remotes/origin/main")" "${ALL}"
 git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
@@ -275,6 +278,20 @@ check "a test that runs swarm.sh with no command word selects every test, and sa
 check "a function no test reaches selects every test, and says so" \
   "$(sel "perl -pi -e 's/echo two/echo 2/' bin/lib/x.sh; ${commit}")|$(why)" \
   "${ALL}|select-tests: every test: bin/lib/x.sh:sub_two: no test reaches it"
+
+# --known, on the bin/ fixture above: a top-level call in top.sh would select every test for the
+# bin/ paths together, so top.sh keeps only its floor and the test that names it, and x.sh's
+# step_one still selects its tests.
+check "--known keeps a hook's floor when no test names it, and names the hook" \
+  "$(sel "echo 1 >> hooks/agent-state.sh; ${commit}" --known)|$( (cd "${G}" && { bash "${SEL}" --known > /dev/null; } 2>&1) )" \
+  "$(lines "${SHELL_FLOOR[@]}")|select-tests: hooks/agent-state.sh: not run here, as CI's full run covers it: no test names agent-state.sh"
+check "--known keeps a bin/ path's floor when it cannot follow it, selects for the bin/ path it can, and names the first" \
+  "$(sel "perl -pi -e 's/echo d;/echo e;/' bin/lib/top.sh; perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}" --known)|$( (cd "${G}" && { bash "${SEL}" --known > /dev/null; } 2>&1) )" \
+  "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh tests/top_test.sh "${BIN_FLOOR[@]}")|select-tests: bin/lib/top.sh: not run here, as CI's full run covers it: bin/lib/top.sh:top_dir: top_dir runs outside any function, at bin/lib/top.sh:4"
+check "--known with no origin/main selects nothing and says every path is left to CI" \
+  "$(sel "echo 1 >> board/stories/a.md; ${commit}; git update-ref -d refs/remotes/origin/main" --known)|$( (cd "${G}" && { bash "${SEL}" --known > /dev/null; } 2>&1) | sed 's/failed: .*/failed: …/')" \
+  "|select-tests: every path: not run here, as CI's full run covers it: git merge-base failed: …"
+git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
 
 # --functions, on the bin/ fixture above.
 fn() { sel "$1" --functions; }
@@ -342,6 +359,19 @@ check "--run with --functions is refused and runs nothing" "${out}|${rc}|$([[ -e
 out="$(PATH="${tmp}/bin:${PATH}" sel "echo 1 >> board/stories/a.md; ${commit}" --run)"
 check "--run on an empty selection runs nothing and says so" "${out}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
   "select-tests: nothing to run|"
+# run_all — select-tests.sh --run's stdout and stderr in the fixture as the last case left it, then its exit status.
+run_all() { (cd "${G}" && PATH="${tmp}/bin:${PATH}" bash "${SEL}" --run 2>&1) && echo "rc 0" || echo "rc $?"; }
+LEFT="select-tests: notes.txt: not run here, as CI's full run covers it: no row in scripts/test-map.tsv matches it"
+sel 'echo 1 >> commands/swarm.md; echo 1 > notes.txt' > /dev/null
+out="$(run_all)"
+want="$(lines "${CMD_FLOOR[@]}" tests/names_swarm_test.sh | tr '\n' ' ')"
+check "--run with a mapped and an unmapped file runs only the mapped file's tests and names the unmapped one" \
+  "${out}|$(cat "${tmp}/make.args")" "$(printf '%s\n' "${LEFT}" "rc 0")|$(printf '%s\n' test "TESTS=${want% }" JOBS=4 "SHARD unset")"
+rm -f "${tmp}/make.args"
+sel 'echo 1 > notes.txt' > /dev/null
+out="$(run_all)"
+check "--run with only an unmapped file runs nothing, exits 0 and says CI covers it" "${out}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
+  "$(printf '%s\n' "${LEFT}" "select-tests: nothing to run" "rc 0")|"
 
 # --check-map, on a map with no row for any of these, then on one that lists a missing test.
 M="${tmp}/map"; mkdir -p "${M}/scripts"; git init -q "${M}"

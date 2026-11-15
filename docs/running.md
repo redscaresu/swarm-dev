@@ -118,8 +118,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the head. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand. So does a
-  PR whose own merge of the base dropped a line of the base, or whose merges `swarm.sh merge` cannot
-  check.
+  PR whose own merge of the base dropped a line of the base that its head has not put back, or whose
+  merges `swarm.sh merge` cannot check.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
   `active` with no ticket in the same way ([reference-merging.md § Merging](reference-merging.md#merging)).
@@ -195,7 +195,10 @@ starts on one of those epics, `next` stops offering it.
   function, one of its callers up to `bin/swarm.sh`'s dispatch arms, or the command of an arm on that
   path, plus the tests that name the changed file or read all of `bin/`'s code as text. When it cannot follow the calls (a change
   outside any function, a call by a name built at run time, or a test that runs `swarm.sh` with no
-  command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time.
+  command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time,
+  and never runs every test file. When a changed file would put every test file on the list, `--run` prints a line
+  naming that file and saying CI's full run covers it. It still runs the tests that file's own row lists, and the
+  tests for the other changed files. When none of them has a test, it runs nothing and exits 0. `--known` prints the list `--run` runs. To run every test file locally, run `make test`.
   `--functions` prints, instead, the functions the branch changed in `bin/swarm.sh` and `bin/lib/*.sh`:
   `<file>:<function>`, or `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py`
   it prints the functions that run it. It prints `full` when a changed line in those files is outside

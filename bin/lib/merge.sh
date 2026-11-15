@@ -1064,7 +1064,8 @@ short_shas() {
 # finds an HLD granting merge, and then pr_held finds nothing; and, under either merge mode, it sets
 # no epic active with no ticket, or above the stage the base allows (epic_guard, read at the pinned
 # head, unless the board is not in the project's repo or the PR is in another repo than the board's,
-# story_elsewhere), and, at the pinned head, no merge of the PR's own dropped a line of the base, nor
+# story_elsewhere), and, at the pinned head, no merge of the PR's own dropped a line of the base that
+# the head has not put back, nor
 # could that go unchecked (dropped_hold: a hold for the user, recorded on the item in review; a head
 # that moved refuses for a new review)) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
@@ -1187,8 +1188,9 @@ merge_pr() {
     epic_guard
     rm -f "${flist}"; flist=""
   fi
-  # A merge of the base that dropped the base's lines is the user's under either merge mode, the PR at
-  # the pinned head: after the epic guard, before the grant. A release changes only plugin.json.
+  # A merge of the base that dropped the base's lines, not put back since, is the user's under either
+  # merge mode, the PR at the pinned head: after the epic guard, before the grant. A release changes
+  # only plugin.json.
   [[ "${only}" == --release ]] || dropped_hold
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
