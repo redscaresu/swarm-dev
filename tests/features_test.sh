@@ -10,7 +10,8 @@
 # has a metric, a uses entry and a baseline (a value, or unavailable:), and every role: is one policy accepts.
 # Then the section check over a fixture and docs/features.tsv: a metric naming `flow <section>` names a
 # flow_<section>.py that exists, a row landed by an epic of the 0.30 and 0.31 HLD names a column that section
-# prints, the two rows read by hand are exempt by name and fail without it, and Goal 6's events have rows.
+# prints, the two rows read by hand are exempt by name and fail without it, Goal 6's events have rows,
+# and Goal 11's two rows fail when their column is renamed.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -124,8 +125,11 @@ check "docs/features.tsv has its rows" "$(( $(wc -l < "$(dirname "${SWARM}")/../
 
 # The section check. A metric naming `flow <section>` (not `flow:`, and not a metric without flow) names a
 # bin/lib/flow_<section>.py that exists. A row landed by an epic of the 0.30 and 0.31 HLD also names,
-# after the colon, a column that section prints as a header (a tab-separated line of lowercase names)
-# over the fixture logs below, which give each section the rows its headers need.
+# after the colon, a column that section prints as a header (a tab-separated line of lowercase names, or one
+# name alone after a blank line, as panes' over_30 and test_runs' timeouts) over the fixture logs below, which
+# give each section the rows its headers need. panes and test_runs print over_30 and timeouts with no rows too;
+# their rows (a review pane's handover and pane-closed line, a test file's reap line, a test-runs.tsv run)
+# give each a counted row, and the run puts timeouts after a blank line, not straight after `## test_runs`.
 ROOT="$(cd "$(dirname "${SWARM}")/.." && pwd)"
 # The HLD's § Epics, listed here: `swarm.sh finish` deletes the HLD once its epics are built, in a board-only
 # PR that runs no tests, and its rows must still have their columns checked after that.
@@ -144,14 +148,22 @@ printf '%s\n' $'2026-10-01\tcode\ts-a\tclaude\topus\thigh\tk1' > "${Q}/.swarm/ag
 printf '%s\n' $'2026-10-01T07:00:00Z\tstory\ts-a\t-\tok' $'2026-10-01T07:10:00Z\treview-agent\ts-a\t-\tok' \
   $'2026-10-01T07:20:00Z\treview\ts-a\t-\tok (https://github.com/o/r/pull/1)' $'2026-10-01T07:21:00Z\tmerge\ts-a\t-\tok' \
   $'2026-10-01T09:00:00Z\ttell:nudge\tghost\t-\tcould not reach ghost: no agent this project started holds the name ~~ state=none' \
-  $'2026-10-01T10:00:00Z\treview-agent\ts-b\t-\treview-agent: review-s-b did not start (its pane w1-3 is closed)' > "${Q}/.swarm/events.tsv"
+  $'2026-10-01T10:00:00Z\treview-agent\ts-b\t-\treview-agent: review-s-b did not start (its pane w1-3 is closed)' \
+  $'2026-10-01T08:00:00Z\treview-finished\ts-c\tw1:p2\tok' $'2026-10-01T08:01:00Z\treview\ts-c\tw1:p2\tok (https://github.com/o/r/pull/2)' \
+  $'2026-10-01T08:10:00Z\tpane-closed\treview-s-c\tw1:p0\tok ~~ pane=w1:p2 slug=s-c role=review' \
+  $'2026-10-01T11:00:00Z\treap\ttests/a_test.sh\tw1:p0\tTIMEOUT after 600s ~~ slug=s-a role=builder version=0.30.1' > "${Q}/.swarm/events.tsv"
+# One full run, its end line (the start and end fields flow_test_runs.py reads), so `flow test_runs` prints its blocks.
+printf '%s\n' $'2026-10-01T09:00:00Z\t2026-10-01T09:10:00Z\t600\t4\tall\tmain\t1.00\t10\t0\t0\t123' > "${Q}/.swarm/test-runs.tsv"
 headers() { # <section>... — `<section><TAB><word>` for each header word those sections print over the fixture,
   # run as flow runs them (flow_report.py), without the outcomes rows flow builds first, which no header needs.
+  # A header is a line of lowercase names, or a one-name line (panes' over_30, test_runs' timeouts) straight
+  # after a blank line or the section's `## ` line.
   local q="${Q}/.swarm"
   { (cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FINDING_REVIEWERS=codex PATH="${dir}/bin:${PATH}" python3 "${ROOT}/bin/lib/flow_report.py" \
     0000-00-00 9999-12-30 "" "${q}/agents.tsv" "${q}/events.tsv" "${q}/findings.tsv" x code x x "" x "$@" 2>/dev/null) || true; } |
-    awk -F'\t' '/^## /{s = substr($0, 4); next}
-    NF > 1 {for (i = 1; i <= NF; i++) if ($i !~ /^[a-z][a-z0-9_]*$/) next; for (i = 1; i <= NF; i++) print s "\t" $i}'
+    awk -F'\t' '/^## /{s = substr($0, 4); b = 1; next}
+    /^$/{b = 1; next}
+    NF > 1 || b {b = 0; for (i = 1; i <= NF; i++) if ($i !~ /^[a-z][a-z0-9_]*$/) next; for (i = 1; i <= NF; i++) print s "\t" $i}'
 }
 # The whole word after `flow ` and after its colon, so a name that only starts like a real one fails.
 SECTION_RE='^flow ([^: ]+)' COLUMN_RE='^flow [^: ]+: ([^ ,;]+)'
@@ -193,6 +205,13 @@ check "flow: and a metric without flow pass; a column the section prints passes;
 check "docs/features.tsv passes the section check" "$(section_check "${ROOT}/docs/features.tsv")" ""
 check "without its exemption, lead-woken incidents fails" "$(section_check "${ROOT}/docs/features.tsv" '')" \
   "lead-woken incidents: flow incidents prints no column lead-hand"
+check "Goal 11's rows: one on flow panes' over_30 and one on flow test_runs' timeouts" \
+  "$(awk -F'\t' '$1 == "review pane close" || $1 == "test-file timeouts" {print $1 ": " $3}' "${ROOT}/docs/features.tsv" | cut -d, -f1)" \
+  "$(printf '%s\n' 'review pane close: flow panes: over_30' 'test-file timeouts: flow test_runs: timeouts')"
+# sed with `;` between commands and no -i, which BSD and GNU sed both read the same way.
+sed 's/flow panes: over_30/flow panes: over_31/; s/flow test_runs: timeouts/flow test_runs: timeout/' "${ROOT}/docs/features.tsv" > "${dir}/renamed.tsv"
+check "Goal 11's rows fail the section check when either column is renamed" "$(section_check "${dir}/renamed.tsv")" \
+  "$(printf '%s\n' 'review pane close: flow panes prints no column over_31' 'test-file timeouts: flow test_runs prints no column timeout')"
 check "Goal 6's rows: a use of each new event" \
   "$(cut -f5 "${ROOT}/docs/features.tsv" | tr ' ' '\n' | grep -E '^event:(pr-opened|first-green|review-finished)$' | sort)" \
   "$(printf '%s\n' event:first-green event:pr-opened event:review-finished)"
