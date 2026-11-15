@@ -798,6 +798,24 @@ ren; hat e1.md main e1 "status: active"; hat e2.md "${H1}" e2 "status: active"; 
 guarded "--board, a deleted active epic GitHub pairs with an unrelated new active one, by its heading" e2
 ren; hat e1.md main e1 "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e2 "status: active" "agreed: $(day 0)"; merge --board "${URL}"
 guarded "--board, a draft renamed with another heading and set active, the agreed: its base copy had kept" e2
+# An agreed: date that an epic the PR deletes had at the base is no ticket, for an epic GitHub does not
+# pair with it as a rename (rewritten past the half-alike bar: added and removed, not renamed). The
+# refusal names the deleted epic.
+# dl <old status> <e2's agreed:> — a board PR removing docs/epics/old.md, at <old status> with agreed:
+# today on main, and adding e2, active with <e2's agreed:>.
+dl() {
+  epr e2; echo 2 > "${FX}/nfiles"
+  echo '[{"filename":"docs/epics/e2.md","status":"added"},{"filename":"docs/epics/old.md","status":"removed"}]' > "${FX}/files"
+  hat old.md main old "status: $1" "agreed: $(day 0)"; hat e2.md "${H1}" e2 "status: active" "agreed: $2"
+}
+REUSED="active with no ticket (agreed: within the last 7 days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on): the agreed: date it carries is old's, an epic this PR deletes; commit it as status: draft first, then run /swarm-dev:epic"
+dl draft "$(day 0)"; merge --board "${URL}"
+refused "--board, a draft deleted and an unpaired active epic added with its agreed:" "--board: ${URL} sets e2 ${REUSED} e2"
+dl draft "$(day 2)"; merge --board "${URL}"; board_merged "--board, a draft deleted and an unpaired active epic added with a fresh agreed:"
+dl active "$(day 0)"; merge --board "${URL}"
+refused "--board, an active epic deleted and an unpaired active one added with its agreed:" "--board: ${URL} sets e2 ${REUSED} e2"
+dl draft "$(day 0)"; : > "${FX}/wf.old.md.main.fail"; merge --board "${URL}"
+refused "--board, a 502 on the deleted epic's read at the base" "--board: gh cannot read docs/epics/old.md at main, so whether ${URL} sets e2 ${UK} e2"
 # Read 1 is merge --board's file list; reads 2 to 4 the one asking what e2 was renamed from, which is
 # read again after a 502, up to GONE_READS (3) times, then kept for the merge.
 ren; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"; : > "${FX}/files.2.fail"
@@ -896,6 +914,10 @@ merge "${URL}"; story_merged "a story PR whose pinned head renames an active epi
 spr; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"
 echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
 merge "${URL}"; guarded "a story PR whose pinned head renames a draft and sets it active, the agreed: its base copy had kept" e2
+# The deleted epic is read from the pinned compare too: removed there, not renamed.
+spr; hat old.md main old "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e2 "status: active" "agreed: $(day 0)"; echo 3 > "${FX}/nfiles"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","status":"added"},{"filename":"docs/epics/old.md","status":"removed"}]}' > "${FX}/compare.main"
+merge "${URL}"; refused "a story PR whose pinned head deletes a draft and adds an unpaired active epic with its agreed:" "merge: ${URL} sets e2 ${REUSED} e2"
 # The base branch is URL-quoted whole in that compare, as pinned_files quotes it: a / in its name.
 spr; echo release/x > "${FX}/base"; hat e1.md 'release%2Fx' e "status: active"; hat e2.md "${H1}" e "status: active"
 echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.release%2Fx"
