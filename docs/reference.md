@@ -14,11 +14,11 @@ listed below, or a part of one (a ### heading or a bold paragraph) in one of the
 
 ## Commands
 
-Each group file ends with a `## Commands` table for the commands its sections document:
+Each group file ends with a `## Commands` section for the commands its sections document:
 
 - [`reference-lead.md`](reference-lead.md#commands): the lead's commands: waiting, restarts, board PRs, finish and drop, hold
 - [`reference-planning.md`](reference-planning.md#commands): `/epic` and the HLD grants
 - [`reference-models.md`](reference-models.md#commands): the escalation ladder's step-up
 - [`reference-building.md`](reference-building.md#commands): conductors, builders, review agents, status and the dashboard
-- [`reference-logs.md`](reference-logs.md#commands): the logs, findings and flow numbers, and where an agent is
+- [`reference-logs.md`](reference-logs.md#commands): the logs, findings and flow numbers, the retro report, the handover, and where an agent is
 - [`reference-merging.md`](reference-merging.md#commands): init, upgrade, CI waits, review and merge
