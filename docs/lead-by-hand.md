@@ -17,8 +17,9 @@ should get shorter.
 
 **Symptom.** `herdr agent list` shows conductors of finished epics with status `done`. Review agents
 and planning agents now close their own panes (#828, #850).
-**Step.** `herdr pane close <pane>` for each. With `merge = agent`, close a conductor only after its
-Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that merge.
+**Step.** Close each conductor with `swarm.sh close conduct-<epic>`, never `herdr pane close`: it
+refuses while the conductor works, and with `merge = agent` while its Finish PR is open, where
+closing it would kill that PR's `swarm.sh merge --board`.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
 
 ## A builder that keeps changing its PR

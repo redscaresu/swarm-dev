@@ -2048,7 +2048,8 @@ on three times: read the pane (\`herdr agent read <pane>\`), then tell it to res
 wait on it again, or list it for the lead. \`stuck: model error (<line>)\` is a turn the provider
 refused for its model (a 400 or 404 naming the model ID): a resume in the same session would send the
 same model, so tell it nothing and list it for the lead, who restarts it in a fresh session. \`stuck: no output for <N>m (<pane>)\` is a busy session
-whose pane has not changed that long with no background task running; a \`tell\` to a busy session
+whose pane has not changed that long with no background task running that it launched less than 3 times
+stall_minutes ago (a background \`swarm.sh\` wait, watch, wait-pr or merge counts at any age); a \`tell\` to a busy session
 is queued and delivered only when its turn ends, so do not tell it: read the pane and list it for the lead. With goal on, wait never tells a
 builder to carry on: its \`stuck: api error\` or \`stuck: model error\` is the goal rule's to read, and the goal rule's close
 for it stands.
