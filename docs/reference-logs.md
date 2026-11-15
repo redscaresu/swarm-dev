@@ -597,7 +597,9 @@ is its story's handover. The review agent hands over with `review --head`, which
 from the agent's own pane. So the line's pane column names the pane, and a story whose review agent
 restarted in a new pane while the old one stayed open gets a row for each. A `review` line with no
 `review-finished` line of the same slug and pane before it, such as the lead's own `review` with no
-`--head`, had no review pane, so it is skipped. When the story merges before the pane closes (a `merge` line with outcome `ok` or `merged
+`--head`, had no review pane, so it is skipped. So is a pair from pane `-`, written outside herdr,
+where no review agent runs. The lead's own `review --head` from a herdr pane writes the same pair as a
+review agent's, and the section cannot tell it apart: it reads as an open review pane. When the story merges before the pane closes (a `merge` line with outcome `ok` or `merged
 elsewhere`, whose target is the slug or a PR URL a `review` line named), the merge is the start of
 each of the story's open review panes instead. `from` names which it was, `merge` or `handover`. A
 later handover in the same pane before the close moves the start to it, since the pane worked again;
@@ -606,7 +608,7 @@ line with `slug=<slug>`, `role=review` and that pane's `pane=`. An ok `close rev
 written before 0.30.1 closes every open review pane of the story; a later one has its `pane-closed`
 lines, so it closes none. It pairs by those fields and never by the
 line's target, so a retired pane whose close names `review-<cut>-done` still pairs. `pane` is
-`closed`, or `open` with the minutes so far when no close followed. An open pane whose start line has
+`closed`, or `open` with the minutes so far when no close followed. An open pane whose handover line (its newest, even when a merge is the start) has
 no `version=`, or one before 0.30.1, reads `unlogged`, with `-` for its minutes: those releases
 logged no `pane-closed` line for the closes swarm.sh made itself (reconcile's, after a merge), so the
 pane may have closed unseen, and it is not measured. A row counts when its start's local day is in

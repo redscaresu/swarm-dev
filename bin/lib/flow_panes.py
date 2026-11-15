@@ -3,7 +3,8 @@
 # writes an ok review-finished line (target <slug>) and then an ok `review` line (outcome `ok (<PR
 # URLs>)`), both from the agent's own pane. A review line counts when such a review-finished line of the
 # same slug and pane came before it; one without (the lead's own `review`, with no --head) had no review
-# pane, so it is skipped. Each (slug, pane) is one review pane, so a review agent restarted in a new pane
+# pane, so it is skipped, and so is a pair from pane - (run outside herdr, where no review agent runs).
+# The lead's own `review --head` from a herdr pane writes the same pair and is not told apart. Each (slug, pane) is one review pane, so a review agent restarted in a new pane
 # while the old one stays open is a second row. Its start is that handover, or the story's merge when
 # one follows before the pane closes (an ok or `merged elsewhere` merge line whose target is the slug, or
 # a PR URL a review line named; it starts every open review pane of the slug). A later handover in the
@@ -13,9 +14,10 @@
 # by its target, so a retired review-<cut>-done pane pairs too; or an ok `close review-<slug>` line from
 # before LOGGED_FROM, which closes every open review pane of the slug (a later one has its pane-closed
 # lines). TSV story from minutes pane: from is merge or handover, pane is closed, or open with the
-# minutes so far. An open row whose start line has no version= or one before LOGGED_FROM reads
-# unlogged with minutes -: that swarm.sh logged no pane-closed line for the closes it made itself
-# (reconcile's, after a merge), so the pane may have closed unseen; it is not measured and not counted.
+# minutes so far. An open row whose handover line (its newest, even when a merge is the start) has no
+# version= or one before LOGGED_FROM reads unlogged with minutes -: that swarm.sh logged no pane-closed
+# line for the closes it made itself (reconcile's, after a merge), so the pane may have closed unseen; it
+# is not measured and not counted.
 # A row counts in the window when its start's local day is in it. Then, after a blank line, over_30:
 # the rows whose minutes, as shown, are past 30, open ones too. --epic does not narrow it.
 import datetime, os, re
@@ -44,14 +46,14 @@ def close(key, t):
     done.append([key[0], *pending.pop(key), t])
 
 
-# pending: (slug, pane) -> [from, start time, start line's version]
+# pending: (slug, pane) -> [from, start time, handover line's version]
 finished, slug_of, pending, done = set(), {}, {}, []
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) != 5 or (t := when(f[0])) is None:
         continue
     cmd, target, o, kv = f[1].partition(":")[0], f[2], outcome(f), fields(f)
-    if f[1] == "review-finished" and o == "ok":
+    if f[1] == "review-finished" and o == "ok" and f[3] != "-":
         finished.add((target, f[3]))
     elif f[1] == "review" and o.startswith("ok (") and (target, f[3]) in finished:
         finished.discard((target, f[3]))
@@ -60,7 +62,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
             pending[(target, f[3])] = ["handover", t, kv.get("version", "")]
     elif f[1] == "merge" and o in ("ok", "merged elsewhere"):
         for key in [k for k in pending if k[0] == slug_of.get(target, target) and pending[k][0] == "handover"]:
-            pending[key] = ["merge", t, kv.get("version", "")]
+            pending[key] = ["merge", t, pending[key][2]]   # the handover's version: the pane worked under it
     elif f[1] == "pane-closed" and kv.get("role") == "review" and (kv.get("slug"), kv.get("pane")) in pending:
         close((kv["slug"], kv["pane"]), t)
     elif cmd == "close" and o == "ok" and target.startswith("review-") and not logged(kv.get("version", "")):

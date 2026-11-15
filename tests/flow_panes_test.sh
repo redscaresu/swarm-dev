@@ -14,9 +14,11 @@
 # 10 minutes. s-r's first review pane (p7) hands over at -100 and stays open while a second one (p8)
 # hands over at -88; p7 closes at -80: p7 is handover 20, closed, and p8 open, 88. s-f's review agent
 # starts and closes with no handover, and the lead's own review line for it has no review-finished line
-# before it: no review pane. s-g's handover is from 0.30.0, which logged no pane-closed lines, and never
-# closes: unlogged. Then a log with s-c's lines alone, no close line in it at all: s-c still reads open
-# and counts. TZ is UTC.
+# before it: no review pane. s-l's handover is the lead's own `review --head` outside herdr, from pane -:
+# no review pane. s-g's handover is from 0.30.0, which logged no pane-closed lines, and never
+# closes: unlogged. s-u hands over under 0.30.0 and merges under 0.30.1, its pane never closed: merge,
+# unlogged, as the handover's release may have closed it unseen. Then a log with s-c's lines alone, no
+# close line in it at all: s-c still reads open and counts. TZ is UTC.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -40,6 +42,9 @@ path, keep, u = sys.argv[1], set(sys.argv[2:-1]), sys.argv[-1]
 lines = [  # minutes, command, target, pane, outcome, slug it belongs to
     (-400, "review-finished", "s-g", "w1:p1", "ok ~~ verdict=pass", "s-g"),
     (-400, "review", "s-g", "w1:p1", f"ok ({u}/7) ~~ version=0.30.0", "s-g"),
+    (-200, "review-finished", "s-u", "w1:p14", "ok ~~ verdict=pass version=0.30.0", "s-u"),
+    (-200, "review", "s-u", "w1:p14", f"ok ({u}/14) ~~ version=0.30.0", "s-u"),
+    (-190, "merge", "s-u", "w1:p0", "ok", "s-u"),
     (-300, "pane-closed", "b1", "w1:p0", "ok ~~ pane=w1:p9 slug=b1 role=builder", "b1"),
     (-160, "review-finished", "s-m", "w1:p12", "ok ~~ verdict=pass", "s-m"),
     (-160, "review", "s-m", "w1:p12", f"ok ({u}/12)", "s-m"),
@@ -73,6 +78,8 @@ lines = [  # minutes, command, target, pane, outcome, slug it belongs to
     (-200, "review-agent", "s-f", "w1:p0", "ok", "s-f"),
     (-190, "pane-closed", "review-s-f", "w1:p0", "ok ~~ pane=w1:p13 slug=s-f role=review", "s-f"),
     (-70, "review", "s-f", "w1:p0", f"ok ({u}/6)", "s-f"),
+    (-55, "review-finished", "s-l", "-", "ok ~~ verdict=pass", "s-l"),
+    (-55, "review", "s-l", "-", f"ok ({u}/13)", "s-l"),
     (-60, "review-finished", "s-c", "w1:p1", "ok ~~ verdict=pass", "s-c"),
     (-60, "review", "s-c", "w1:p1", f"ok ({u}/3)", "s-c"),
     (-60, "close", "review-s-e", "w1:p0", "ok ~~ version=0.30.0", "s-e"),
@@ -105,6 +112,7 @@ rows="$(sed -n '1,/^$/p' <<< "${out}" | sed '/^$/d')"
 check "one row per review pane, in start order: from its merge or handover to its pane's first close, open with its minutes so far" \
   "${rows}" "$(printf '%s\n' $'story\tfrom\tminutes\tpane' \
     $'s-g\thandover\t-\tunlogged' \
+    $'s-u\tmerge\t-\tunlogged' \
     $'s-b\thandover\t45\tclosed' \
     $'s-m\tmerge\t140\topen' \
     $'s-a\tmerge\t10\tclosed' \
