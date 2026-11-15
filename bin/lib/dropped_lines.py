@@ -37,6 +37,14 @@ from collections import Counter
 # leaves one. A count cannot tell copies apart: a copy the PR adds after the merge for its own sake
 # counts as one put back, and so does one the base adds after it where the PR side holds a copy the
 # base does not. Where that merge base has no such file under any name git finds, every L prints.
+# A line the PR's head extends is no drop either (extended): after that, a printed L of EXTENDED_WORDS
+# or more words does not print when the head's F holds a line with every word of L in the same order
+# (words split on whitespace), as when the PR inserted a section into a table row the base also changed,
+# and no line printed before it claimed that copy. Only the head's copies of a line beyond the most
+# <base>'s F or the F of `git merge-base <base> <head>` holds can stand for L, and none of a text any
+# merge printed, so a base line the resolution kept, or a dropped line's own copies, never clears
+# another. Two base lines extended into one head line still print one, and a line whose words were
+# changed or taken out still prints.
 # Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
@@ -51,6 +59,8 @@ from collections import Counter
 
 TEXT_CHARS = 300   # the most of a dropped line's text it prints (merge.sh's FIX_MAIN_LINE_CHARS)
 GIT_SECONDS = 120  # the longest one git call may run
+EXTENDED_WORDS = 2  # the fewest words a printed line needs for a longer head line to clear it: a lone
+                    # `}` or `fi` is a word of many lines a PR writes for itself
 OUTSIDE, FIRST, SECOND, ANCESTOR = 0, 1, 2, 3   # where a line of the remerged file sits
 HUNK = re.compile(rb"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 MARKER = re.compile(rb"^(?:<{7,}|\|{7,}|>{7,})(?: |$)|^={7,}$")
@@ -167,8 +177,8 @@ def owed(base, side, root):
     return base + side - root   # with L in the merge base, a new copy on each side can be two additions
 
 def scan(m, pr, base_side, ours):
-    """(head key, copies the head owes, copies it holds, `<sha7> <file>: <text>`) per base line merge m's
-    resolution dropped (owing)"""
+    """(head key, copies the head owes, copies it holds, the head file's spare lines, `<sha7> <file>: <text>`)
+    per base line merge m's resolution dropped (owing)"""
     rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
                        "--src-prefix=a/", "--dst-prefix=b/", "--end-of-options", m)
     if rc != 0:
@@ -177,7 +187,7 @@ def scan(m, pr, base_side, ours):
     if rc not in (0, 1):
         stop("cannot find the merge base of merge %s's parents: %s" % (m[:7], err))
     mb = mb.decode().strip() if rc == 0 else None   # 1: no common ancestor, so every line is new
-    files, renames, found = {}, {}, []
+    files, renames, spares, found = {}, {}, {}, []
 
     def read(rev, path):
         """each line of path at rev and its count; None where rev has no such path, a stop when git cannot read it"""
@@ -230,15 +240,27 @@ def scan(m, pr, base_side, ours):
                 return True
         return False
 
+    def spare(path, after):
+        """the head's copies of each line of the file beyond the most that <base> or the merge base of <base>
+        and <head> (LATER) holds, each file read under that commit's own name for it (named)"""
+        if (path, after) not in spares:
+            base = Counter()
+            for rev in LATER:
+                base |= copies(rev, path, after) or Counter()
+            spares[path, after] = (named(HEAD, path, after)[1] or Counter()) - base
+        return spares[path, after]
+
     def owing(path, text, printed):
-        """(the head's file and text, the copies of text the head owes merge m, the copies it holds): the
-        larger of the merge's copies plus the ones it printed, and those the merge base of <base> and <head>
-        holds less the ones the PR side had removed; no bound where that merge base has no such file"""
+        """(the head's file and text, the copies of text the head owes merge m, the copies it holds, the head
+        file's spare lines): the larger of the merge's copies plus the ones it printed, and those the merge
+        base of <base> and <head> holds less the ones the PR side had removed; no bound where that merge base
+        has no such file"""
         after, kept, cut = counts[path, text]
         name, now = named(HEAD, path, after)
         since = copies(MERGE_BASE, path, after) if MERGE_BASE else None
         need = max(kept + printed, since[text] - cut) if since is not None else float("inf")
-        return (name, text) if name is not None else (None, path, text), need, (now or Counter())[text]
+        key = (name, text) if name is not None else (None, path, text)
+        return key, need, (now or Counter())[text], spare(path, after)
 
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
     counts = {}  # (file, text): its name in the merge, the merge's copies of text, those the PR side had removed
@@ -264,19 +286,44 @@ def scan(m, pr, base_side, ours):
     return [owing(path, text, printed[path, text]) + (line,) for path, text, line in found]
 
 def missing(found):
-    """the lines of found, (head key, copies owed, copies held, line) per printed copy, that the head has not
-    put back: per key, as many as the head holds fewer copies than the most any merge owes, the newest
-    merges' lines kept, in merge order (oldest first)"""
+    """the entries of found, (head key, copies owed, copies held, spare lines, line) per printed copy, that the
+    head has not put back: per key, as many as the head holds fewer copies than the most any merge owes, the
+    newest merges' entries kept, in merge order (oldest first)"""
     owe = {}
-    for key, need, _, _ in found:
+    for key, need, _, _, _ in found:
         owe[key] = max(owe.get(key, need), need)
-    short = {key: owe[key] - held for key, _, held, _ in found}
+    short = {key: owe[key] - held for key, _, held, _, _ in found}
     left = []
-    for key, _, _, line in reversed(found):
-        if short[key] > 0:
-            short[key] -= 1
-            left.append(line)
+    for entry in reversed(found):
+        if short[entry[0]] > 0:
+            short[entry[0]] -= 1
+            left.append(entry)
     return left[::-1]
+
+def extends(text, head):
+    """whether head's words (split on whitespace) hold every word of text, in the same order"""
+    words = iter(head.split())
+    return all(word in words for word in text.split())
+
+def extended(left, found):
+    """the lines of left (missing's entries) that no line the head added extends: in print order, an entry of
+    EXTENDED_WORDS or more words takes the first spare head line of its file, not yet taken, that extends it,
+    and does not print; a text any entry of found has never stands for another"""
+    pools = {}   # head file: its spare lines' copies not yet taken
+    for key, _, _, spare, _ in found:
+        pools.setdefault(key[:-1], Counter(spare))
+    for key, _, _, _, _ in found:
+        pools[key[:-1]].pop(key[-1], None)
+    lines = []
+    for key, _, _, _, line in left:
+        pool, text = pools[key[:-1]], key[-1]
+        enough = len(text.split()) >= EXTENDED_WORDS
+        head = next((h for h in pool if pool[h] > 0 and extends(text, h)), None) if enough else None
+        if head is None:
+            lines.append(line)
+        else:
+            pool[head] -= 1
+    return lines
 
 if len(sys.argv) < 4:
     stop("usage: dropped_lines.py <repo-dir> <base> <head> [<merge sha>...]")
@@ -294,7 +341,8 @@ if checks:
         stop("cannot find the merge base of %s and %s: %s" % (BASE, HEAD, err))
     MERGE_BASE = out.decode().strip() or None
 LATER = [BASE] + ([MERGE_BASE] if MERGE_BASE else [])   # where the base must still have a line (gone)
-dropped = missing([f for c in checks for f in scan(*c)])   # every remerge read before any line prints
+found = [f for c in checks for f in scan(*c)]   # every remerge read before any line prints
+dropped = extended(missing(found), found)
 for line in dropped:
     say(line)
 sys.exit(1 if dropped else 0)
