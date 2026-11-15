@@ -15,7 +15,7 @@ def epoch(x):
             return None
 def sign_time(f):
     t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "resume", "resend", "incident", "usage-limit", "pr-opened", "first-green", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and outcome(f) != "ok"):
+    if t is None or f[1] in ("nudge", "resume", "resend", "incident", "pane-closed", "usage-limit", "pr-opened", "first-green", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and outcome(f) != "ok"):
         return None
     return t
 def last_seen(events):
