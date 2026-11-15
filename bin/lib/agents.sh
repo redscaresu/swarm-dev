@@ -654,10 +654,13 @@ PY
 
 # agent_cmd <tab> <name> <cwd> <role> <prompt-file> [pane-name] — `swarm.sh agent`: start_agent, with
 # the story's env: names (story_env) when it starts a builder of a story on the board (<name> is the
-# story's slug and <role> a building one), as a conductor's restart of a stacked child does.
+# story's slug and <role> a building one), as a conductor's restart of a stacked child does. Refused,
+# starting nothing, when another agent of this project runs under <name>'s agent name, cut to 32
+# characters (name_clash).
 agent_cmd() {
   local names="" story="${BOARD}/stories/${2:-}.md"
   if [[ -f "${story}" && " ${BUILDER_ROLES} " == *" ${4:-} "* ]]; then names="$(story_env "${story}")" || die "${names}"; fi
+  [[ -z "${2:-}" ]] || name_clash agent "$2" "${6:-$2}"
   start_agent "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-${2:-}}" "${names}"
 }
 

@@ -432,6 +432,22 @@ echo brief > "${ROOT}/builder-brief.md"
 run agent e review-s9 "${ROOT}/svc" code "${ROOT}/builder-brief.md" >/dev/null || { echo "FAIL agent review-s9 failed"; exit 1; }
 done_agent review-s9
 check "a code agent named review-s9, idle, is not held for a findings file" "idle|fast" "$(fast_wait review-s9)"
+# --- Two slugs whose review agents' names share their first 32 characters (#819 and #828): herdr
+# would hold both as review-review-pane-closes-after-, so the second start is refused, naming both
+# and the limit, rather than reading the first agent as its own review still running.
+cm=review-pane-closes-after-merge; ch=review-pane-closes-after-handover
+for s in "${cm}" "${ch}"; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+done
+check "review-agent ${cm} returns at once, its agent still working" "back:0" "$(start "${cm}")"
+CLASH="review-${ch} would run as review-review-pane-closes-after-, its first 32 characters (herdr's limit on an agent name), and review-${cm} already runs under that name; nothing was started"
+echo mark >> "${ROOT}/herdr.log"
+check "review-agent ${ch}, whose agent name cuts to the same 32 characters, refuses naming both and the limit, not as still reviewing, and starts nothing" "1|yes|no|0" \
+  "$(set +e; o="$(run review-agent "${ch}" "${PR}")"; echo "$?|$(has "review-agent: ${CLASH}" "${o}")|$(grep -qF "still reviewing" <<< "${o}" && echo yes || echo no)")|$(started)"
+check "swarm.sh agent refuses review-${ch} the same way, starting nothing" "1|yes|0" \
+  "$(set +e; o="$(run agent e "review-${ch}" "${ROOT}/svc-wt/${ch}" review "${ROOT}/builder-brief.md")"; echo "$?|$(has "agent: ${CLASH}" "${o}")")|$(started)"
+echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/${cm}.md"; done_agent review-review-pane-closes-after-
 
 # --- A start herdr refuses leaves the last review's findings file as it was.
 sed "s/s4/s6/g" "${b}/stories/s4.md" > "${b}/stories/s6.md"

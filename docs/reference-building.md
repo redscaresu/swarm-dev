@@ -1049,9 +1049,15 @@ review file is written only on a pass or a stop (above).
 `review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
 head or has uncommitted changes, when its findings file is a pass of the PR's head and the story is
-no longer `ready`, or when
+no longer `ready`, when another agent of the project runs under `review-<slug>`'s agent name, or when
 `review-<slug>` is still working or still open with no findings file (idle while its codex runs, not
-finished). It moves the last review's file aside
+finished). Agent names are compared at herdr's 32-character cut. herdr refuses a longer name, so
+swarm.sh cuts every name to its first 32 characters. Two slugs that share those characters then share
+one herdr agent: `review-review-pane-closes-after-merge` and `review-review-pane-closes-after-handover`
+were both `review-review-pane-closes-after-`, and the second story's review read the first one's agent
+as its own review still running. So when the cut name is held by an agent with a different full name,
+`review-agent` (and `swarm.sh agent`) refuses with a line naming both agents and the limit. Two names
+within 32 characters are never cut and start as before. It moves the last review's file aside
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
 the agent has started. When the start fails, `review-agent` first reads the error. If herdr may
 have sent the brief (its reply could not be read, or the brief was sent and not taken up) and
