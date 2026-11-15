@@ -101,6 +101,7 @@ It stops only for decisions that are yours. The common ones:
 - `swarm.sh status`: what needs a look and what waits on you.
 - `swarm.sh flow`: what the run cost, where the time went, and how the reviews did.
 - `swarm.sh retro`: the lists a retro goes through with you before a minor release.
+- `swarm.sh handover <dir>`: what another machine needs to carry on that git does not hold, with a RESTORE.md that says how to put it back.
 
 ## Cost and safety
 
