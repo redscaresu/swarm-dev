@@ -607,7 +607,7 @@ next_step() {
 }
 
 # release_bare <since> <tag v<x.y.z>> <base> — next_step's release arm when no epic carries a stage
-# (release_stage printed nothing). non_fix_change from the local tag's commit to origin/<base>, in the
+# (release_stage printed nothing). A tag that is not v<x.y.z> gives bare `release`, as before, and no gh. non_fix_change from the local tag's commit to origin/<base>, in the
 # repo origin_repo names, tells a patch from a minor: with every change a fix it prints bare `release`,
 # a patch. A change that is no fix, or a failure of either read (a board outside the repo among them),
 # makes it a minor. Then the lowest v<V> whose <board_rel>retros/v<V>.md on origin/<base> (git ls-tree)
@@ -618,6 +618,11 @@ next_step() {
 # NON_FIX_RETRY seconds (release_memo), so dash, which runs next every frame, asks gh at most that often.
 release_bare() {
   local since="$1" tag="$2" base="$3" ver="${2#v}" repo="" out rc=0 why f v got="" cov="" line
+  # A version that is not x.y.z (1.2.0-beta) has no patch or minor to name: a release as before, as
+  # release_stage takes such a tag.
+  if [[ ! "${ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "release"; echo "${since}: cut a release (${tag} is not v<x.y.z>, so next cannot tell a patch from a minor)"; return
+  fi
   if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then
     rc=1; out="failed: ${repo}"
   else
@@ -653,17 +658,23 @@ release_bare() {
 }
 
 # origin_nwo — the project's origin as gh names it, owner/name in lower case, as origin_repo (merge.sh)
-# reads it, but through the gh next_reads wraps, so a report's deadline bounds it. The answer is kept in
-# .swarm/origin-repo as "<origin URL> <owner/name>" and read from there while the URL is unchanged.
-# Fails with why on stdout.
+# reads it. The answer is kept in .swarm/origin-repo as "<origin URL> <owner/name>" and read from there
+# while the URL is unchanged, so only the first read asks gh. That gh repo view is bounded as
+# non_fix_change bounds its own: it ends at the report's deadline (REPORT_END) under a report (next,
+# dash, status), else after SWARM_NON_FIX_WAIT seconds (60 by default), as under `swarm.sh _step`,
+# which the lead's Stop hook and dash --check run with no report. A call cut there fails, as gh failing
+# does. Fails with why on stdout.
 origin_nwo() {
-  local origin cache="${PROJECT_DIR}/.swarm/origin-repo" url own
+  local origin cache="${PROJECT_DIR}/.swarm/origin-repo" url own bound="${SWARM_NON_FIX_WAIT:-60}"
   origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || { echo "the project has no origin remote"; return 1; }
-  if read -r url own < "${cache}" 2>/dev/null && [[ "${url}" == "${origin}" && "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
+  # The braces carry the 2>: a redirect after the < would come too late to quiet a missing file.
+  if { read -r url own < "${cache}"; } 2>/dev/null && [[ "${url}" == "${origin}" && "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
     echo "${own}"; return 0
   fi
-  own="$(gh repo view "${origin}" --json nameWithOwner < /dev/null 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" \
-    && [[ "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]] || { echo "gh repo view named no GitHub repo for ${origin}"; return 1; }
+  [[ "${bound}" =~ ^[1-9][0-9]*$ ]] || bound=60
+  [[ -z "${REPORT_END:-}" ]] || bound="@${REPORT_END}"
+  own="$(within "${bound}" gh repo view "${origin}" --json nameWithOwner < /dev/null 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" \
+    && [[ "${own}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]] || { echo "gh repo view named no GitHub repo for ${origin} (or gave no answer in time)"; return 1; }
   if [[ -d "${cache%/*}" && "${origin}" != *[[:space:]]* ]]; then printf '%s %s\n' "${origin}" "${own}" > "${cache}" 2>/dev/null || true; fi
   echo "${own}"
 }

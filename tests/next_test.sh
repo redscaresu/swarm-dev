@@ -987,6 +987,30 @@ release_next
 out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
 if [[ "${out%%$'\n'*}" == release ]]; then echo "ok   a second next with gh failing reads the repo's name and the fixes from their caches: release"
 else echo "FAIL a second next with gh failing: want 'release' from the caches, got: ${out}"; fails=$((fails + 1)); fi
+# A version that is not x.y.z names no patch or minor: next prints release as before, and does not
+# stop on the arithmetic under set -u.
+beta_tag() { # a setup step: plugin.json's version is 1.2.0-beta, tagged v1.2.0-beta
+  echo '{"name":"x","version":"1.2.0-beta"}' > .claude-plugin/plugin.json && eval "${COMMIT}" && git -c tag.gpgsign=false tag v1.2.0-beta
+}
+expect_release "a version that is not x.y.z (1.2.0-beta): release, as before" release 0 "beta_tag" "echo x > bin/x" "${COMMIT}"
+has_line "its why says the tag is not v<x.y.z>" \
+  "origin/main has 1 commit(s) since v1.2.0-beta that change files outside the board: cut a release (v1.2.0-beta is not v<x.y.z>, so next cannot tell a patch from a minor)"
+# The first next with a release due, before .swarm/origin-repo exists, writes nothing on stderr.
+release_repo "echo x > bin/x" "${FIX}"
+err="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" next 2>&1 > /dev/null)"; rm -rf "${rdir}"
+if [[ -z "${err}" ]]; then echo "ok   the first next with a release due, no origin-repo cache yet, writes nothing on stderr"
+else echo "FAIL the first next with a release due wrote on stderr: ${err}"; fails=$((fails + 1)); fi
+# swarm.sh _step (the Stop hook's and dash --check's read) runs no report, so origin_nwo's gh repo view
+# has a wait of its own: a gh that hangs is cut after SWARM_NON_FIX_WAIT seconds, and the release is a minor.
+REL_HANG="${STUB_BIN}/rel-hang"; mkdir -p "${REL_HANG}"
+printf '#!/bin/sh
+sleep 120
+' > "${REL_HANG}/gh"; chmod +x "${REL_HANG}/gh"
+release_repo "echo x > bin/x" "${FIX}"
+t0="$(date +%s)"
+out="$(cd "${rdir}" && env -u HERDR_ENV SWARM_NON_FIX_WAIT=2 PATH="${REL_HANG}:${PATH}" bash "${SWARM}" _step)"; t1="$(date +%s)"; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "retro v1.3.0" && $((t1 - t0)) -lt 60 ]]; then echo "ok   _step with a gh that hangs: cut after SWARM_NON_FIX_WAIT, retro v1.3.0 ($((t1 - t0))s)"
+else echo "FAIL _step with a gh that hangs: want 'retro v1.3.0' in under 60s, got '${out%%$'\n'*}' after $((t1 - t0))s"; fails=$((fails + 1)); fi
 # On a board outside the repo neither read can answer, so next prints retro, and says to merge by hand.
 EXT_REL="${STUB_BIN}/ext-rel"
 expect_release "a board outside the repo: retro v1.3.0" "retro v1.3.0" 0 \
