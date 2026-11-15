@@ -219,7 +219,7 @@ Repeat until a step below says stop:
      stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
      read. When the wait returns with no review file and printed `busy`, it ran its 60 minutes while
      the agent works: wait again. When it returns with no review file any other way (the agent waits
-     on a prompt, is gone, or a merge's reconcile retired it), check the board first: a story in
+     on a prompt, is gone, or a merge's reconcile, or the `swarm.sh review` that handed its PR to the user, retired it), check the board first: a story in
      review with no `kept:` line, or one that has left the board, was passed and handed over or
      merged. Otherwise start the review again with `swarm.sh review-agent <slug> <PR URL>`. Once the
      file is there, read it before the board. If it has a `head moved:` line, the PR has a head
@@ -446,7 +446,7 @@ Repeat until a step below says stop:
      item. `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` (exit 1) means its timeout
      passed with nothing new. `wait-failed: exit <rc>, exit: swarm.sh wait --lead` means it stopped on
      an error before anything new came in: a bad argument, a lock it could not take, a failed read
-     of the queue, or a TERM from outside it (exit 143). Read its stderr for the cause and fix it if it is yours before you start it again.
+     of the queue, or a TERM (exit 143), INT (exit 130) or HUP (exit 129) from outside it. Read its stderr for the cause and fix it if it is yours before you start it again.
      Only one runs at a time: a new one stops the earlier one, which then prints
      `replaced: a newer wait --lead watches now` (exit 143), or, when it was still in a slow read 5 s
      later, exits 137 with nothing printed. After a newer run took over, either needs nothing from you,
