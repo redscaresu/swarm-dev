@@ -1105,7 +1105,7 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -1123,10 +1123,10 @@ merge_pr() {
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
   why="$(merge_caller "${url}" "${only}")" || why="cannot tell whose pane this is"
   [[ -z "${why}" ]] || merge_fail "${why}"
-  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
-    | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles,headRefName \
+    | json "'%s %s %s %d %s' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'], d.get('headRefName') or '-')")" \
     || merge_fail "gh cannot read ${url}"
-  read -r state head base changed <<< "${info}"
+  read -r state head base changed headref <<< "${info}"
   [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
@@ -1333,6 +1333,15 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
+  # An epic's Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) has merged: its conductor, which
+  # may run this merge in its own pane, closes once this command has exited, it is idle and the lead has
+  # collected it (close_when_idle). A conductor this project's herdr does not list has nothing to close;
+  # outside herdr the waiter cannot run (require_herdr), so that is said and the conductor stays open.
+  if [[ "${only}" == --board && -n "${oid}" && "${headref}" == board/finish-* && "${headref}" != board/finish-backlog ]]; then
+    p="$(conductor_name "${headref#board/finish-}")"; k="$(agent_field "${p}" pane_id)"
+    if [[ -n "${k}" && "${HERDR_ENV:-}" == 1 ]]; then close_when_idle "${p}" "${k}"
+    elif [[ -n "${k}" ]]; then echo "${p} stays open: this merge ran outside herdr, so nothing waits to close it; close it with swarm.sh close ${p} once it is idle"; fi
+  fi
   # A release of this plugin moves the installed plugin onto it, and the running agents with --upgrade
   # or a yes on a terminal, unless it shipped commits no release check read, which any release reports;
   # neither ever fails the merge.
@@ -1472,13 +1481,15 @@ conduct_ready() {
   return "${rc}"
 }
 
-# report_collected <conductor> <report> — the lead collected <report>: events.tsv has an ok close of
-# <conductor> (swarm.sh close, collect's last step; ok without its key=value tail) at or after the
-# report's time.
+# report_collected <conductor> <report> [tried] — the lead collected <report>: events.tsv has, at or
+# after the report's time, an ok close of <conductor> (swarm.sh close, collect's last step; ok without
+# its key=value tail), or a close-when-idle line saying close_idle_wait closed it, which it does only
+# once that close was tried. With tried, any close of <conductor> counts, a refused one too: collect ran
+# its close, whatever the close said.
 report_collected() {
   local t
   t="$(date -u -r "$2" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
-  awk -F'\t' -v n="$1" -v t="${t}" "${EVENT_OUTCOME_AWK}"'$2 ~ /^close/ && $3 == n && outcome($5) == "ok" && $1 >= t { f = 1 } END { exit !f }' \
+  awk -F'\t' -v n="$1" -v t="${t}" -v any="${3:-}" "${EVENT_OUTCOME_AWK}"'$3 == n && $1 >= t && (($2 ~ /^close(:|$)/ && (any != "" || outcome($5) == "ok")) || ($2 == "close-when-idle" && outcome($5) ~ /^closed /)) { f = 1 } END { exit !f }' \
     "${EVENTS_LOG}" 2>/dev/null
 }
 
@@ -2249,6 +2260,17 @@ report_read() {
   return "${rc}"
 }
 
+# report_due <section> — succeed while the report's deadline (REPORT_END) is ahead. At or past it,
+# add <section> to the skip file, after the reads already cut there, and fail: the caller runs none of
+# the section and prints `<section>: skipped (over <REPORT_SECONDS> s)` in its place. A section that
+# started before the deadline runs to its end, so a report runs at most the deadline plus its slowest
+# section. Only status calls it.
+report_due() {
+  perl -MTime::HiRes=time -e 'exit(time < shift ? 0 : 1)' -- "${REPORT_END:?report_due: no report_start}" && return 0
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "$1" >> "${REPORT_SKIP_FILE}"
+  return 1
+}
+
 # report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads), next
 # (next_reads) and dash (dash_deadline) share, so every report names a cut read the same way. Each runs
 # its program through report_read with stdin from /dev/null, since within runs it in a process group of
@@ -2979,8 +3001,8 @@ watch_repos() {
 # (review_on_head, which counts a head merge made from a reviewed head), and
 # green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
 # checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
-# Under watch (WATCH_SHARE set, watch_prs), ci_gate age's check-runs and status reads go through the poll
-# cache, so concurrent watches share them; next's reads go to GitHub.
+# With WATCH_SHARE set (watch_prs, and next_queued for next's queued: lines), ci_gate age's check-runs and
+# status reads go through the poll cache, so concurrent watches and next share them.
 queued_line() {
   local slug="${4#story/}" m share_dir=""
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
@@ -3036,15 +3058,16 @@ queued_sent() {
 # its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
 # Concurrent watches share each poll's reads: the open-PR list (watch_rows), each head's check runs and
 # queued_line's ci_gate age reads go through the poll cache (bin/lib/poll_cache.py, .swarm/poll-cache),
-# which takes a read another watch made under WATCH_SHARE seconds ago, and keeps a read only when it
-# succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL, scaled as nap: 59 s), so a lone watch
-# never reads its own; 0 (a scaled poll under 2 s) is off. A shared read can be up to that old, so a
-# change can take a poll longer to be seen. The mergeable read (watch_mergeable) is never shared: it is
-# keyed by PR number, not head, and a kept MERGEABLE would hide a new conflict.
+# which takes a read another watch, or next's queued: lines (next_queued), made under WATCH_SHARE seconds
+# ago, and keeps a read only when it succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL,
+# scaled as nap: 59 s), so a lone watch never reads its own; 0 (a scaled poll under 2 s) is off. A
+# shared read can be up to that old, so a change can take a poll longer to be seen. The mergeable read
+# (watch_mergeable) is never shared: it is keyed by PR number, not head, and a kept MERGEABLE would hide
+# a new conflict.
 watch_prs() {
   local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
   watch_scope "$@"; watch_repos die
-  WATCH_SHARE="$(awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }')"
+  WATCH_SHARE="$(watch_share)"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
   # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
@@ -3163,6 +3186,10 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     nap "${WATCH_POLL}"
   done
 }
+
+# watch_share — the poll cache's max age, in whole seconds, for watch's reads (WATCH_SHARE) and next's
+# queued: lines: one under a poll (WATCH_POLL, scaled as nap: 59 s), 0 (off) for a scaled poll under 2 s.
+watch_share() { awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }'; }
 
 # watch_gh <gh args...> — gh <args>, for watch: through the poll cache's command form while WATCH_SHARE
 # is on (watch_prs), which prints a kept read's output or runs gh, keeping it only when gh exits 0; a
@@ -3436,7 +3463,9 @@ stacked_lines() {
 # report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
 # to them the same way. A read cut there, or due after it, fails as it would on an error, and
-# report_skipped's line, printed last, names it.
+# report_skipped's line, printed last, names it. The Stacked, Waiting on you and Next (with its idle:
+# lines) sections each start only before the deadline (report_due): one due at or past it is not run,
+# its heading reads `<section>: skipped (over N s)`, and the last line names it after the reads cut.
 # status_time [<section>|total] — with SWARM_REPORT_TIMES=1 (for diagnosis, like SWARM_REPORT_SECONDS;
 # no config key), write `time: <section> <s.mmm>` to stderr: the seconds since the last mark, or with
 # total since the first, by now_ms, run_time_start's clock. No argument only sets the first mark. Any
@@ -3504,26 +3533,40 @@ status_report() {
     upgrade_status
   fi
   status_time agents
-  local stacked; stacked="$(stacked_lines)" || true
-  [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
-  status_time stacked
-  echo; echo "Waiting on you"
-  waiting="$(waiting_on_user)"
-  if [[ "${all}" != --all ]]; then
-    local blocked
-    blocked=$(grep -c '^  blocked:' <<< "${waiting}" || true)
-    waiting="$(grep -v '^  blocked:' <<< "${waiting}" || true)"
-    [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
+  # Each section below runs only while the deadline is ahead (report_due); one due at or past it is
+  # skipped, its heading says so, and the last line names it after the reads cut.
+  local stacked cut="skipped (over ${REPORT_SECONDS} s)"
+  if ! report_due Stacked; then printf '\nStacked: %s\n' "${cut}"
+  else
+    stacked="$(stacked_lines)" || true
+    [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
   fi
-  if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  status_time stacked
+  echo
+  if ! report_due "Waiting on you"; then echo "Waiting on you: ${cut}"
+  else
+    echo "Waiting on you"
+    waiting="$(waiting_on_user)"
+    if [[ "${all}" != --all ]]; then
+      local blocked
+      blocked=$(grep -c '^  blocked:' <<< "${waiting}" || true)
+      waiting="$(grep -v '^  blocked:' <<< "${waiting}" || true)"
+      [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
+    fi
+    if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  fi
   status_time waiting
-  local nx; nx="$(next_lines)"
-  echo; echo "Next"
-  [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
-  status_time next
-  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
-  # next would take goes with it, so the epic that step names gets no idle: line.
-  idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  echo
+  if ! report_due Next; then echo "Next: ${cut}"; status_time next
+  else
+    local nx; nx="$(next_lines)"
+    echo "Next"
+    [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
+    status_time next
+    # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
+    # next would take goes with it, so the epic that step names gets no idle: line.
+    idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
+  fi
   status_time idle
   local skipped; skipped="$(report_skipped)"
   [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"

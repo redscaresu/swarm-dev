@@ -370,7 +370,7 @@ Repeat until a step below says stop:
      line names a builder with an open PR and a pending item: findings it was told, or a conflict with
      the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
      otherwise), with no background task launched less than 3 times `stall_minutes` ago (a swarm.sh
-     wait counts at any age) and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
+     wait counts at any age; a task whose process has ended counts at no age) and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
      `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
      quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
      asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
@@ -490,28 +490,20 @@ Repeat until a step below says stop:
      that says "Your login is renewed: resume where you stopped. Send the same to any builder whose
      wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
      `auth`, then go back to 1.
-   - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
-     `swarm.sh outcomes --since <the day 30 days ago, YYYY-MM-DD>` (the window keeps its gh calls to
-     recent builds; the `recurring` block counts its own last 30 days either way) and read its
-     `recurring` block. For each kind there with an empty `check` column, file one story with
-     `checks: <kind>` in its front matter that adds a test, lint rule, hook or review-prompt line
-     which catches that kind, like any board edit: through `swarm.sh board-pr` named `check-<kind>`
-     when the board is in the project's repo, or written where the board is when it is outside.
-     Skip the kind when a story on the board already has `checks: <kind>`, or, with the board in the
-     repo, when `gh pr list -R <owner/repo> --state all --head board/check-<kind> --json state,closedAt`
-     (the project's origin, as `git remote get-url origin` names it) shows one `OPEN` (pending),
-     one `MERGED` (its story is on the board, or about to be, since collect only fetches), or one
-     `CLOSED` (unmerged) in the last 90 days, which means the user declined it. A board outside the
-     repo has no PR to look up, and its merged story leaves no git deletion to fill `check`, so
-     after filing a story there append a line (the kind, a tab, today as YYYY-MM-DD) to
-     `.swarm/checks-filed.tsv` (the project's, a path relative to it), and skip
-     any kind already listed in that file.
-     A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
-     reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
-     `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
-     so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
-     (`.swarm/conduct-<epic>.report.md`), relay what merged, what
-     is left and what waits on the user, then `swarm.sh close <agent>`.
+   - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then
+     read its report (`.swarm/conduct-<epic>.report.md`), relay what merged, what is left and what
+     waits on the user, then `swarm.sh close <agent>`. Leave a finding kind that recurs with no
+     check to `swarm.sh retro`'s recurring list, which names it before a minor release for you and
+     the user to decide. The close refuses, closing
+     nothing, while the conductor is in any state but idle or done (working, waiting on a prompt,
+     or a state it cannot read), naming that state. With `merge = agent` it also refuses while the
+     epic's Finish PR (`swarm.sh finish <epic>`) is open, or when gh cannot read that PR: closing the
+     conductor then could kill the `swarm.sh merge --board` running in its pane. With `merge =
+     human` that PR waits on the user, and the close goes ahead. On a refusal, wait for the
+     conductor to go idle (and, with `merge = agent`, the Finish PR to merge), then run the same
+     close again. You need not come back for a conductor whose Finish PR a
+     `swarm.sh merge --board` lands: once that merge has exited and the conductor is idle, the merge
+     closes it, because your close was tried.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When the
      why says the epic is built (all its stories have left the board, and its report is missing or
      older than its last story's merge), its conductor has no agent work left and reports at once:

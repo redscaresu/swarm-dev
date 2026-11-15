@@ -374,6 +374,65 @@ on "${R}" child; merge "${R}" main >/dev/null
 check "a stacked child whose parent put its dropped line back, after the parent's squash and child's merge of main: nothing" \
   "exit 0" "$(scan "${R}" main child)"
 
+# extend <name> <main's line>... -- <resolution's line>... — main replaces three with three-main and its
+# lines, pr with three-pr, and pr's merge of main resolves f to three-pr, three-main and the resolution's
+# lines; prints the merge's SHA, the repo being ${tmp}/<name>
+extend() {
+  local d main=(); d="$(new_repo "$1")"; shift
+  while [[ "$1" != -- ]]; do main+=("$1"); shift; done; shift
+  lines three-main "${main[@]}" | put "${d}" f; on "${d}" pr; lines three-pr | put "${d}" f
+  lines three-pr three-main "$@" | merge "${d}" main -
+}
+
+# A line the head extends is no drop (#937's table row, which the PR gave a section of its own), nor one it
+# re-indents; one whose words the head changed, took out or reordered still is.
+ROW='flow prints cost then features'
+M="$(extend extended "${ROW}" -- 'flow prints cost then panes then features')"
+check "a base line the resolution kept with words inserted: nothing, exit 0" "exit 0" "$(scan "${tmp}/extended" main pr)"
+M="$(extend extendspaced "${ROW}" -- "    ${ROW}")"
+check "a base line the resolution kept re-indented: nothing" "exit 0" "$(scan "${tmp}/extendspaced" main pr)"
+M="$(extend extendcut "${ROW}" -- 'flow prints cost then panes')"
+check "a base line the resolution kept with a word inserted and one taken out: it prints, exit 1" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${tmp}/extendcut" main pr)"
+M="$(extend extendchanged "${ROW}" -- 'flow prints cost then panes then feature')"
+check "a base line the resolution kept with a word inserted and one changed: it prints" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${tmp}/extendchanged" main pr)"
+M="$(extend extendreordered "${ROW}" -- 'flow prints features then panes then cost')"
+check "a base line the resolution kept with a word inserted and its words reordered: it prints" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${tmp}/extendreordered" main pr)"
+M="$(extend extendtwo 'flow prints cost and features' 'flow prints cost and panes' -- 'flow prints cost and features and panes')"
+check "two base lines extended into one head line: the second prints" \
+  "${M:0:7} f: flow prints cost and panes"$'\n'"exit 1" "$(scan "${tmp}/extendtwo" main pr)"
+# Short lines: a dropped `exit 1` beside an added `|| exit 1`, and a three-word line inside an added line of
+# eleven words. Neither added line is the dropped one with words added.
+M="$(extend extendexit 'exit 1' -- '|| exit 1')"
+check "a dropped two-word line that an added three-word line holds: it prints" \
+  "${M:0:7} f: exit 1"$'\n'"exit 1" "$(scan "${tmp}/extendexit" main pr)"
+M="$(extend extendlong 'echo failed >&2' -- '[ -n "x" ] && echo failed >&2 || exit 1')"
+check "a dropped three-word line that an added line of eleven words holds: it prints" \
+  "${M:0:7} f: echo failed >&2"$'\n'"exit 1" "$(scan "${tmp}/extendlong" main pr)"
+# The head line that extends the dropped one is a base line of its own, which the resolution kept.
+M="$(extend extendbase "${ROW}" "${ROW} and panes" -- "${ROW} and panes")"
+check "a dropped line that a base line the resolution kept extends: it prints" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${tmp}/extendbase" main pr)"
+# The same, after main deletes f and pr merges that in keeping f: main and its merge base with pr both
+# lack f, so the base's copies are unknown, and no head line stands for a dropped one.
+M="$(extend extendgone "${ROW}" "${ROW} and panes" -- "${ROW} and panes")"
+R="${tmp}/extendgone"; on "${R}" main; git -C "${R}" rm -q f; git -C "${R}" commit -qm 'delete f'; on "${R}" pr
+git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; git -C "${R}" add f; git -C "${R}" commit -q --no-edit
+check "a dropped line of a file main and its merge base with pr both lack, which a kept base line extends: it prints" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# OWN, three words, is in the merge base's f once: main adds a second copy after it and pr two after seven,
+# and the resolution drops main's. The head holds three, one more than main and one short of the four
+# owed, and its spare copy is the dropped line's own text, which never stands for it.
+OWN='local rc i'
+R="$(new_repo extendown)"; lines "${OWN}" three | put "${R}" f; git -C "${R}" branch -f pr main
+lines "${OWN}" "${OWN}" three | put "${R}" f; on "${R}" pr
+printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a dropped line the head holds more copies of than the base, short of what it owes: it prints" \
+  "${M:0:7} f: ${OWN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
 # commits (${tmp}/commits.json, honouring --jq) and logs each call.

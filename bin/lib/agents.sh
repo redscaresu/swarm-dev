@@ -37,6 +37,11 @@
 #     A background Bash call that is only swarm.sh waits (panes.py's swarm_wait: wait, watch, wait-pr or
 #     merge, each with an end of its own, and shell glue) counts at any age, so a conductor on a long
 #     watch is not stuck. A test suite still running in the pane has no such limit (test_running).
+#     A background Bash task whose launch result names its output file (.../tasks/<id>.output) counts
+#     only while a process holds that file open (task_ended, over /proc or lsof): once the task's shell
+#     and all it started have exited it is no life, notified or not, as on 2026-11-15, when three
+#     builders sat idle for 3 hours on test runs that had ended. A file that is gone, or a process list
+#     that cannot be read, leaves the task counting.
 #   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
 #     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
 #     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
@@ -654,10 +659,13 @@ PY
 
 # agent_cmd <tab> <name> <cwd> <role> <prompt-file> [pane-name] — `swarm.sh agent`: start_agent, with
 # the story's env: names (story_env) when it starts a builder of a story on the board (<name> is the
-# story's slug and <role> a building one), as a conductor's restart of a stacked child does.
+# story's slug and <role> a building one), as a conductor's restart of a stacked child does. Refused,
+# starting nothing, when another agent of this project runs under <name>'s agent name, cut to 32
+# characters (name_clash).
 agent_cmd() {
   local names="" story="${BOARD}/stories/${2:-}.md"
   if [[ -f "${story}" && " ${BUILDER_ROLES} " == *" ${4:-} "* ]]; then names="$(story_env "${story}")" || die "${names}"; fi
+  [[ -z "${2:-}" ]] || name_clash agent "$2" "${6:-$2}"
   start_agent "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-${2:-}}" "${names}"
 }
 
@@ -1418,7 +1426,9 @@ resume_agent() {
 # TEST_RUN_STALLS times <stall_minutes> (default the config's stall_minutes) before <now> (epoch;
 # default the clock) counts, so a task hung for good stops hiding a stall: a review agent's background
 # shell sat on a read for 17.5 hours, and nothing reported it (#891). A background swarm.sh wait
-# (panes.py's swarm_wait) counts at any age.
+# (panes.py's swarm_wait) counts at any age. A background shell whose processes have all exited counts
+# at no age (panes.py's task_ended, over the output file its launch result names), so a builder whose
+# task ended without its notice reaching it reads as stalled.
 bg_running() {
   # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
@@ -1472,8 +1482,8 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old, the agent runs no background task (bg_running, one launched less than TEST_RUN_STALLS times
-# stall_minutes ago, or a swarm.sh wait at any age) and its pane runs no test suite (test_running, at any age), setting the caller's
+# old, the agent runs no background task (bg_running, one whose process still runs, launched less than
+# TEST_RUN_STALLS times stall_minutes ago or a swarm.sh wait at any age) and its pane runs no test suite (test_running, at any age), setting the caller's
 # state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
   local min
@@ -1563,8 +1573,8 @@ longest_child() {
 # commit or edit (story_work_time) and its newest own work across its session log and its subagents'
 # logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
 # looks stalled is pane <target> asked whether it runs a test suite (test_running, at any age), and its
-# transcript whether it waits on a background task of its own (bg_running, one launched less than
-# TEST_RUN_STALLS times stall_minutes ago): either is work, so no stall. Only then are its PRs asked
+# transcript whether it waits on a background task of its own (bg_running, one whose process still runs,
+# launched less than TEST_RUN_STALLS times stall_minutes ago): either is work, so no stall. Only then are its PRs asked
 # for their updatedAt, so gh is rarely called. Last, with no PR update either, its worktree is asked
 # whether its signer can sign its uncommitted work (sign_held): a builder that cannot, whose own last
 # sign of life (the wait's start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits
@@ -1595,7 +1605,7 @@ agent_stalled() {
 
 # stall_reads <name> <target> — print `bg=0|1 test=0|1 sign=0|1`, read fresh with the checks
 # agent_stalled makes once the rest looks stalled: <name>'s session waits on a background task
-# (bg_running, within TEST_RUN_STALLS times stall_minutes), pane <target> runs a test suite
+# (bg_running, its process still running, within TEST_RUN_STALLS times stall_minutes), pane <target> runs a test suite
 # (test_running, at any age), and its story's worktree holds work its signer cannot sign (sign_held,
 # which logs a change of state as agent_stalled's read does). sign is read only for an agent with a story
 # (stall_py story), at the builder's own age from its worktree and session log; its PRs are not asked,

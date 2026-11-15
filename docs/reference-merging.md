@@ -258,7 +258,18 @@ copies, which reach the base through the parent's squash merge. The line prints 
 the head is short, so a head that put back one of two dropped copies still prints the other. The
 check counts copies and cannot tell one from another. A copy the PR adds after the merge for a reason
 of its own counts as put back. So does a copy the base adds after the merge, when the PR holds a copy
-the base does not. When
+the base does not. A line the head extends does not count either. When a line in the head's file is
+the dropped line with words of its own added, or with only its spacing changed, the dropped line is not
+printed. That covers a PR that adds a section to a table row the base also changed. The head line must
+hold every word of the dropped line in the same order, and the dropped line's words must be more than
+half of its own. So a longer line that only happens to hold those words, such as `[ -n "$x" ] || exit 1`
+for a dropped `exit 1`, does not clear it. Only a line the head added can stand in: a copy beyond the
+most the base's file holds at its tip or at the PR's merge base with it, whose text is not itself one of
+the dropped lines. A base line the resolution kept never clears another, and when either of those
+commits has no such file under any name git finds, no line stands in. Each head line stands in for one
+dropped line, so two base lines joined into one still print one. A dropped line of fewer than three
+words, such as `}` or `exit 1`, never clears this way, since many lines a PR writes contain one. A line
+with a word changed, taken out or moved still prints. When
 `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
@@ -624,6 +635,12 @@ default). The conductor's pane is read from the note's one list of agents, so a 
 fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
 agents in that time, or gives a list that does not parse, or a note that fails, is a warning and
 never fails the merge.
+When a `--board` PR on `board/finish-<epic>` (an epic's Finish PR, from `swarm.sh finish <epic>`)
+merges and this project's herdr lists `conduct-<epic>`, merge starts a detached waiter, as reconcile
+does for a review agent (§ Merging). It closes the conductor once the merge has exited, the conductor
+is idle and the lead has tried collect's `swarm.sh close conduct-<epic>` since the conductor's report,
+and logs `close-when-idle conduct-<epic> closed`. If that has not happened 20 minutes after the merge
+exits, it leaves the conductor open and logs `close-when-idle conduct-<epic> left open: ...`.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
@@ -951,7 +968,10 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It also keeps the tab that holds the pane the command runs in, unless that pane is the one
 being closed, so a step-up or reconcile run from an idle review agent's pane leaves that pane open.
-It prints each of those agents as `kept`, and still closes the conductor's own pane.
+It prints each of those agents as `kept`, and still closes the conductor's own pane. It refuses,
+closing nothing, while the conductor is in any state but idle or done, and, with `merge = agent`,
+while its epic's Finish PR (`board/finish-<epic>`) is open or gh cannot list that PR, since the PR's
+`swarm.sh merge --board` may run in the conductor's pane ([reference-building.md](reference-building.md)).
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or
@@ -1109,6 +1129,7 @@ It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
 A line counts only while the base still has it, both at the fetched `<base>` and at the PR's merge base with it.
 It also counts only while `<head>` has not put it back: `<head>`'s file must hold at least the copies the merge kept plus the ones it dropped, and at least as many as the base's file has at the PR's merge base with it, less any the PR's own commits had removed before the merge. The line prints once for each copy `<head>` is short.
+A line the head extends does not count either: a line that `<head>` added, beyond the base's own copies, holds all of its words in the same order, and they are more than half of that line's words, so a line only re-indented counts as extended too. Each such line stands in for one dropped line, and a dropped line of fewer than three words always counts.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
 Each dropped line prints as `<sha7> <file>: <text>`.
