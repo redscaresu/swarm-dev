@@ -113,8 +113,9 @@ many() {
   mark survey-e critic skeptic-a skeptic-b skeptic-c skeptic-d skeptic-g skeptic-h skeptic-j skeptic-k skeptic-l
   printf '2026-11-12\tcritic\tskeptic-k\tclaude\tsonnet\thigh\ts-pl-k\n' > "${S}/agents.tsv"
   mkdir -p "${CLAUDE_CONFIG_DIR}/projects/p"
-  printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
-    > "${CLAUDE_CONFIG_DIR}/projects/p/s-pl-k.jsonl"
+  # Launched now: one launched 3 times stall_minutes ago or more no longer counts (bg_running's bound, #891).
+  printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${CLAUDE_CONFIG_DIR}/projects/p/s-pl-k.jsonl"
   touch "${S}/e/started/skeptic-f" "${S}/e/started/skeptic-i" "${S}/e/started/skeptic-m"; older "${S}/e/started/skeptic-i"
   perl -e 'my $t = time - 400; utime $t, $t, @ARGV' "${S}/e/started/skeptic-m"
   echo '{"findings":[]}' > "${S}/e/skeptic-a.json.partial"; echo '{"findings":[]}' > "${S}/e/skeptic-b.json.partial"

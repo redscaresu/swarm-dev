@@ -119,8 +119,8 @@ Repeat until a step below says stop:
      step has it), nothing in its `depends_on` holds up its planning, no plan of it runs (no
      `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
      `plan-epic` for it. Plan it with the exit, beside the step.
-   - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
-     `release`), no story is one an agent can build, and there are findings to offer: up to five
+   - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated`,
+     `release` or `retro`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` or `deferred finding: ...` lines (findings
      declined as out of scope or deferred in the last 30 days and not yet filed, newest first).
      File one as a one-off story (through `swarm.sh board-pr`, or where the board is when it is
@@ -369,7 +369,8 @@ Repeat until a step below says stop:
      `stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`
      line names a builder with an open PR and a pending item: findings it was told, or a conflict with
      the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
-     otherwise), with no background task and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
+     otherwise), with no background task launched less than 3 times `stall_minutes` ago (a swarm.sh
+     wait counts at any age) and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
      `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
      quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
      asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
@@ -510,7 +511,16 @@ Repeat until a step below says stop:
      `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
-     is left and what waits on the user, then `swarm.sh close <agent>`.
+     is left and what waits on the user, then `swarm.sh close <agent>`. The close refuses, closing
+     nothing, while the conductor is in any state but idle or done (working, waiting on a prompt,
+     or a state it cannot read), naming that state. With `merge = agent` it also refuses while the
+     epic's Finish PR (`swarm.sh finish <epic>`) is open, or when gh cannot read that PR: closing the
+     conductor then could kill the `swarm.sh merge --board` running in its pane. With `merge =
+     human` that PR waits on the user, and the close goes ahead. On a refusal, wait for the
+     conductor to go idle (and, with `merge = agent`, the Finish PR to merge), then run the same
+     close again. You need not come back for a conductor whose Finish PR a
+     `swarm.sh merge --board` lands: once that merge has exited and the conductor is idle, the merge
+     closes it, because your close was tried.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When the
      why says the epic is built (all its stories have left the board, and its report is missing or
      older than its last story's merge), its conductor has no agent work left and reports at once:
@@ -646,6 +656,20 @@ Repeat until a step below says stop:
        user's merge, so name the board PR, show what `swarm.sh status` lists under Waiting on
        you, and stop.
 
+     Then go back to 1.
+   - `retro v<x.y.z>`: a minor release is due and no done retro file covers it. Either a stage's
+     release is due, or a change since the tag is no fix. `next`'s why says which, and names the
+     story and the `swarm.sh retro --since <w>` line. If `retro-v<x-y-z>` (the dots as dashes) is
+     on the board, work it with the user. Otherwise write it, `kind: lead`, through
+     `swarm.sh board-pr` (or where the board is when it is outside the repo). Its **You:** steps:
+     pick the version (a stage's release takes the stage's v<S>; otherwise a minor or a major,
+     as a patch needs no retro), go through each item
+     `swarm.sh retro --since <w>` lists with the lead, and land `<board>/retros/v<version>.md` with `covers:` and `done:` by board PR.
+     The format is in the board's `retros/README.md`. Put any question for the user on that story as a
+     **You:** step. Once that file is on the base, `next` prints
+     `release v<version>`: cut it as the release arm below cuts `release v<S>`. When the why says
+     the board is outside the repo, `merge --release` cannot read a retro file there: once the
+     retro is done, cut the release as below and tell the user to merge the release PR by hand.
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
      a release. A stage release is a minor: cut it only when `next` prints `release v<S>`, and make

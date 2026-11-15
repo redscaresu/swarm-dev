@@ -401,6 +401,13 @@ dataset_report() {
 #     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
 #     their hold= field, unmarked for one with no field (written before merge passed it). --epic does
 #     not narrow it.
+#   panes: TSV story from minutes pane, per review pane (an ok review line after an ok review-finished
+#     line of its slug from the same pane, not pane -, one row per slug and pane), from events.tsv alone: from its
+#     story's merge (when one came before the pane closed) or its newest handover, to its first
+#     pane-closed line with slug=<slug> role=review pane=<its pane> (or an ok `close
+#     review-<slug>` line from before 0.30.1); open with the minutes so far when none followed, unlogged when that open
+#     pane's handover line is from before 0.30.1. Then, after a blank line, over_30, the rows past 30
+#     minutes. --epic does not narrow it.
 #   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
@@ -431,8 +438,9 @@ dataset_report() {
 #     block 1 or 2 counted.
 #   run_times: .swarm/run-times.tsv, one row per status, next and dash run (timed), its rows whose
 #     start's local day is in the window: TSV command runs median_s p90_s over_60s, per command, with
-#     the median and p90 (nearest rank) seconds and the share over 60 s. A line with no log, another
-#     with no row in the window. --epic does not narrow it.
+#     the median and p90 (nearest rank) seconds and the share over 60 s; after a blank line, a by-load
+#     block, TSV command load runs median_s, per command and 1-minute load band (<10, 10-20, 20+, -).
+#     A line with no log, another with no row in the window. --epic does not narrow it.
 #   start_failures: TSV day failed restarted_10m not_restarted, per local day in the window, the review-agent
 #     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
