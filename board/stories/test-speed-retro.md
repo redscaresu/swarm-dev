@@ -33,5 +33,8 @@ Go: the audit recommends against it. It would remove the parse cost, but means r
 lines of bash and porting the black-box tests, and the race tests stay timing-bound. The middle path is
 option 2, plus moving pure logic into the existing Python with in-process pytest.
 
+Decided by the user on 2026-11-15: option 2 (lazy-loading the libs) is not for v0.31. The long-term
+approach to the codebase and its tests is for v0.32, discussed at the retro.
+
 **You:** at the retro, pick which options become stories, and whether option 1 changes AGENTS.md's
 "Before you open a PR" list.
