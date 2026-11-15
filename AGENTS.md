@@ -173,7 +173,7 @@ claude plugin validate .
 
 Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
-12 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
+14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
 Development rules for anyone, agent or person, working in this repository:
 
@@ -231,7 +231,7 @@ never `[[wikilinks]]`.
 
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
-the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 12 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag), the lead cuts a
