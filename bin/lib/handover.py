@@ -19,13 +19,15 @@ It writes into <out>:
   RESTORE.md   how to restore each part into a fresh clone, as commands run from the clone's root that
                name the handover by HANDOVER_DIR, not by <out>, so it can move; and every path it skipped.
 A file or folder whose name looks like a credential (token, key, secret, password ...) is never opened,
-not even to read a pane record: it is listed in RESTORE.md as skipped. So is anything that is not a
+not even to read a pane record: it is listed in RESTORE.md as skipped. In .swarm/, a name that is a slug
+swarm.sh knows (known_slugs) is its own record, whatever words the slug holds. So is anything that is not a
 regular file or folder (a symlink could lead out of the folder to anything).
 """
 import datetime
 import json
 import os
 import re
+import subprocess
 import sys
 
 CREDENTIAL = re.compile(r"token|secret|key|credential|passw|netrc|\.pem$|\.p12$|\.pfx$|^\.env|^id_(rsa|dsa|ecdsa|ed25519)", re.I)
@@ -80,19 +82,50 @@ def scrub(data, is_agents_log):
     return data
 
 
-def readable(path, name):
+def known_slugs(swarm, board, checkout):
+    """The slugs swarm.sh names its records by (board-state/stories/<slug>, a pane record named for its
+    agent): every story and epic file the board has held, from its history in <checkout> and its folder
+    now (untracked ones too), and every agent name in agents.tsv. A slug can hold any word, key among them."""
+    names, rel = set(), os.path.relpath(board, checkout)
+    folders = [os.path.normpath(os.path.join(rel, k)) for k in ("stories", "epics")]
+    try:
+        log = subprocess.run(["git", "-C", checkout, "log", "--format=", "--name-only", "--"] + folders,
+                             capture_output=True, text=True, check=True).stdout
+        names.update(os.path.basename(p)[:-3] for p in log.split("\n") if p.endswith(".md"))
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    for k in ("stories", "epics"):
+        try:
+            names.update(n[:-3] for n in os.listdir(os.path.join(board, k)) if n.endswith(".md"))
+        except OSError:
+            pass
+    try:
+        with open(os.path.join(swarm, AGENTS_TSV), encoding="utf-8", errors="replace") as f:
+            names.update(c[2] for c in (l.rstrip("\n").split("\t") for l in f) if len(c) > 2 and c[2])
+    except OSError:
+        pass
+    names.discard("README")
+    return names
+
+
+def credential_named(name, known):
+    """<name> looks like a credential's, and is no slug in <known> (alone, or before its first dot)."""
+    return bool(CREDENTIAL.search(name)) and name not in known and name.split(".", 1)[0] not in known
+
+
+def readable(path, name, known):
     """Why <path> (named <name>) must not be opened, or None when it may be."""
-    if CREDENTIAL.search(name):
+    if credential_named(name, known):
         return "its name looks like a credential, so it was not read"
     if os.path.islink(path) or not os.path.isfile(path):
         return "not a regular file"
     return None
 
 
-def copy_tree(src, dest, label, skipped, machine=False):
+def copy_tree(src, dest, label, skipped, machine=False, known=frozenset()):
     """Copy <src> into <dest> under the rules above; return how many session logs it left out. Each
     skipped path goes in <skipped> as (label/path, why). With <machine> (.swarm/), what local_why
-    names is left out too."""
+    names is left out too. A name in <known> is a slug, never taken for a credential's."""
     logs = 0
     os.makedirs(dest, exist_ok=True)
     def unread(err):   # a folder os.walk cannot list: said in RESTORE.md, never dropped quietly
@@ -109,7 +142,7 @@ def copy_tree(src, dest, label, skipped, machine=False):
                 logs += sum(len(fs) for _, _, fs in os.walk(path))
             elif machine and local_why(rel, d):
                 skipped.append((shown, local_why(rel, d)))
-            elif CREDENTIAL.search(d):
+            elif credential_named(d, known):
                 skipped.append((shown, "its name looks like a credential, so nothing in it was read"))
             elif os.path.islink(path):
                 skipped.append((shown, "a symlink, not a folder of its own"))
@@ -122,7 +155,7 @@ def copy_tree(src, dest, label, skipped, machine=False):
             if why:
                 logs += 1
                 continue
-            why = readable(path, name) or (machine and local_why(rel, name))
+            why = readable(path, name, known) or (machine and local_why(rel, name))
             if why:
                 skipped.append((os.path.normpath(os.path.join(label, rel, name)), why))
                 continue
@@ -132,11 +165,15 @@ def copy_tree(src, dest, label, skipped, machine=False):
                 data = scrub(f.read(), label == "swarm" and rel == "." and name == AGENTS_TSV)
             with open(target, "wb") as f:
                 f.write(data)
-            os.chmod(target, os.stat(path).st_mode & 0o777)
+            st = os.stat(path)
+            os.chmod(target, st.st_mode & 0o777)
+            # Its own times, which readers compare (epic_report_stale: a conductor report against the epic's
+            # last merge); RESTORE.md's cp -Rp keeps them.
+            os.utime(target, ns=(st.st_atime_ns, st.st_mtime_ns))
     return logs
 
 
-def own_panes(swarm):
+def own_panes(swarm, known):
     """The pane ids this project's pane records in <swarm>/state name, opening only files readable()
     allows (own_panes in bin/lib/agents.sh reads every regular file there)."""
     panes, state = set(), os.path.join(swarm, STATE_DIR)
@@ -144,7 +181,7 @@ def own_panes(swarm):
         return panes
     for name in os.listdir(state):
         path = os.path.join(state, name)
-        if readable(path, name):
+        if readable(path, name, known):
             continue
         with open(path, encoding="utf-8", errors="replace") as f:
             panes.update(m.group(1) for m in map(PANE_RECORD.match, f) if m)
@@ -232,8 +269,9 @@ def main():
     when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     skipped, logs, own = [], 0, set()
     if os.path.isdir(swarm):
-        logs = copy_tree(swarm, os.path.join(out, "swarm"), "swarm", skipped, machine=True)
-        own = own_panes(swarm)
+        known = known_slugs(swarm, os.environ.get("HANDOVER_BOARD", checkout), checkout)
+        logs = copy_tree(swarm, os.path.join(out, "swarm"), "swarm", skipped, machine=True, known=known)
+        own = own_panes(swarm, known)
     else:
         os.makedirs(os.path.join(out, "swarm"))   # a project with no .swarm/ yet: RESTORE.md's copy still runs
     if memory:

@@ -36,7 +36,8 @@ handover_report() {
   commit="$(git -C "${top}" rev-parse -q --verify HEAD)" || die "handover: ${top} has no commit for the board patch to be against"
   branch="$(git -C "${top}" rev-parse --abbrev-ref HEAD)"
   common="$(git -C "${top}" rev-parse --path-format=absolute --git-common-dir)"
-  pcommon="$(git -C "${PROJECT_DIR}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || pcommon="${common}"
+  # A project that is no git repo has none, and is then never the board's repo.
+  pcommon="$(git -C "${PROJECT_DIR}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || pcommon=""
   if [[ -e "${out}" ]]; then
     # A folder ls cannot list may hold anything, so it is not taken as empty.
     [[ -d "${out}" ]] && entries="$(ls -A "${out}" 2>/dev/null)" && [[ -z "${entries}" ]] \
@@ -65,16 +66,27 @@ handover_report() {
   chmod 700 "${out}"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/handover.XXXXXX")" || die "handover: cannot make a temp folder"
   # A board in the project's repo is board_paths' paths (a board_dir of . is the project's root, whose
-  # other files are no board edit); one in a repo of its own is its whole folder.
-  while IFS= read -r p; do paths+=("${p}"); done < <(board_paths)
+  # other files are no board edit); one in a repo of its own is its whole folder, nested in the project's
+  # folder or not: board_paths names paths in the project's repo, which match nothing in the board's.
+  if [[ "${pcommon}" == "${common}" ]]; then
+    while IFS= read -r p; do paths+=("${p}"); done < <(board_paths)
+  fi
   (( ${#paths[@]} > 0 )) || paths=("${spec}")
   # A throwaway index, so the patch takes untracked board files too without touching the checkout's own.
-  # git add stops on a path that matches nothing (a board with no hld/ yet), so it takes the board's
-  # folder and the diff picks the board's paths. The prefixes and --no-color are set, as diff.noprefix
-  # would drop the a/ and b/ that RESTORE.md's git apply expects and color.diff = always would add escapes.
+  # It stages the board's own files only, tracked, deleted or new, as ls-files lists them: staging the
+  # project's other files would run their clean filters and hash them, and one it cannot read would stop
+  # the handover. ls-files takes a path that matches nothing (a board with no hld/ yet), which git add
+  # refuses, and an empty list stages nothing (git add -A with none would take every file). The prefixes,
+  # --no-color, --no-ext-diff and --no-textconv are set, as diff.noprefix would drop the a/ and b/ that
+  # RESTORE.md's git apply expects, color.diff = always would add escapes, and a diff.external or textconv
+  # driver would write something else than a patch.
   { GIT_INDEX_FILE="${tmp}/index" git -C "${top}" read-tree HEAD \
-      && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" add -A -- "${spec}" \
-      && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" diff --cached --binary --no-renames --no-color --src-prefix=a/ --dst-prefix=b/ \
+      && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" ls-files -z --cached --others --exclude-standard -- "${paths[@]}" \
+        > "${tmp}/files" \
+      && { [[ ! -s "${tmp}/files" ]] || GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="${tmp}/index" git -C "${top}" add -A \
+        --pathspec-from-file="${tmp}/files" --pathspec-file-nul; } \
+      && GIT_INDEX_FILE="${tmp}/index" git -C "${top}" diff --cached --binary --no-renames --no-color --no-ext-diff --no-textconv \
+        --src-prefix=a/ --dst-prefix=b/ \
         HEAD -- "${paths[@]}" > "${out}/board.patch"
   } || { rm -rf "${tmp}"; die "handover: cannot write the board patch from ${top}"; }
   rm -rf "${tmp}"

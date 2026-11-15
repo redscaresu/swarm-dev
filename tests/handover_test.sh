@@ -38,11 +38,14 @@ EOF
 cat > "${STUB_BIN}/herdr" <<'EOF'
 #!/bin/sh
 [ "$1 $2" = "agent list" ] || exit 1
-echo '{"result":{"agents":[{"name":"a","agent_status":"working","pane_id":"w1:p1","session_id":"x"},{"name":"other","agent_status":"idle","pane_id":"w9:p9"},{"name":"hidden","agent_status":"idle","pane_id":"w7:p7"}]}}'
+echo '{"result":{"agents":[{"name":"a","agent_status":"working","pane_id":"w1:p1","session_id":"x"},{"name":"other","agent_status":"idle","pane_id":"w9:p9"},{"name":"hidden","agent_status":"idle","pane_id":"w7:p7"},{"name":"rotate-api-key","agent_status":"idle","pane_id":"w2:p2"}]}}'
 EOF
 chmod +x "${STUB_BIN}/gh" "${STUB_BIN}/herdr"
 # board.patch keeps a/ and b/, and no colour, all the same.
-printf '[diff]\n\tnoprefix = true\n[color]\n\tdiff = always\n' > "${ROOT}/gitconfig"
+# board.patch is a patch whatever the user's git config: no prefixes, colour, external diff or textconv.
+printf '[diff]\n\tnoprefix = true\n\texternal = echo\n[diff "upper"]\n\ttextconv = tr a-z A-Z <\n[color]\n\tdiff = always\n[core]\n\tattributesFile = %s\n' \
+  "${ROOT}/attributes" > "${ROOT}/gitconfig"
+echo '*.md diff=upper' > "${ROOT}/attributes"
 export GH_PWD="${ROOT}/gh-pwd" PATH="${STUB_BIN}:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp" TZ=UTC \
   GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
@@ -56,7 +59,7 @@ mkdir -p "${P}/docs/stories" "${P}/docs/epics"
 echo '.swarm/' > "${P}/.gitignore"
 echo '# Stories' > "${P}/docs/stories/README.md"; echo '# Epics' > "${P}/docs/epics/README.md"
 story() { printf -- '---\nkind: code\nstatus: %s\n---\n\n# %s\n' "$2" "$1" > "${P}/docs/stories/$1.md"; }
-story a draft; story b ready; story c ready
+story a draft; story b ready; story c ready; story prompt-stop-key ready
 git -C "${P}" add -A && git -C "${P}" commit -q -m one
 git -C "${P}" remote add origin "${O}"
 git -C "${P}" push -q origin main
@@ -69,9 +72,15 @@ mkdir -p "${P}/.swarm/sessions" "${P}/.swarm/state" "${P}/.swarm/briefs"
 printf '2026-11-01\tcode\ta\tclaude\topus\thigh\t%s\n' "${SID}" > "${P}/.swarm/agents.tsv"
 printf '2026-11-01T10:00:00Z\tstarted\ta\t-\tok ~~ session=%s\n' "${SID}" > "${P}/.swarm/events.tsv"
 printf '2026-11-02T10:00:00Z\trestart\ta\tw1:p1\tok (resumed session %s)\n' "${SID2}" >> "${P}/.swarm/events.tsv"
-echo 'report' > "${P}/.swarm/conduct-e1.report.md"
+echo 'report' > "${P}/.swarm/conduct-e1.report.md"; touch -t 202601010000 "${P}/.swarm/conduct-e1.report.md"
 echo 'w1:p1 a' > "${P}/.swarm/state/build"
 echo 'w7:p7 hidden' > "${P}/.swarm/state/token-pane"   # named like a token: never read, so w7:p7 is not this project's
+# Records swarm.sh names by slug, a slug that holds "key": a story's board state, and the pane record of
+# an agent agents.tsv names (rotate-api-key, a builder of a story no longer on the board).
+mkdir -p "${P}/.swarm/board-state/stories"
+echo 'status: review' > "${P}/.swarm/board-state/stories/prompt-stop-key"
+echo 'w2:p2 rotate-api-key' > "${P}/.swarm/state/rotate-api-key"
+printf '2026-11-01\tcode\trotate-api-key\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"
 echo 'brief for a' > "${P}/.swarm/briefs/a.md"
 echo '{"session":"log"}' | gzip > "${P}/.swarm/sessions/2026-11-01-a-${SID}.jsonl.gz"
 echo 'archive index' > "${P}/.swarm/sessions/index.txt"   # under sessions/, though not named like a log
@@ -101,10 +110,10 @@ sw "${P}" handover "${H}" > "${ROOT}/out" 2>&1 || { echo "FAIL handover exited n
 check "the handover holds swarm/, board.patch, snapshot.md and RESTORE.md, and nothing else" \
   $'RESTORE.md\nboard.patch\nsnapshot.md\nswarm' "$(cd "${H}" && LC_ALL=C ls -A)"
 check "swarm/ holds .swarm/ without the session logs and the token-named file" \
-  $'agents.tsv\nbriefs/a.md\nconduct-e1.report.md\nevents.tsv\ngh-calls.tsv' "$(cd "${H}/swarm" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)"
+  $'agents.tsv\nboard-state/stories/prompt-stop-key\nbriefs/a.md\nconduct-e1.report.md\nevents.tsv\ngh-calls.tsv' "$(cd "${H}/swarm" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)"
 check "no session log anywhere in the handover" "" "$(find "${H}" -name '*.jsonl*' -o -name sessions)"
 check "no session id in any copied file, the restarted one too" "" "$(grep -rlE "${SID}|${SID2}" "${H}" || true)"
-check "agents.tsv's session column is -" $'2026-11-01\tcode\ta\tclaude\topus\thigh\t-' "$(cat "${H}/swarm/agents.tsv")"
+check "agents.tsv's session column is -" $'2026-11-01\tcode\ta\tclaude\topus\thigh\t-\n2026-11-01\tcode\trotate-api-key\tclaude\topus\thigh\t-' "$(cat "${H}/swarm/agents.tsv")"
 check "events.tsv keeps its line, with the session id as -" \
   $'2026-11-01T10:00:00Z\tstarted\ta\t-\tok ~~ session=-\n2026-11-02T10:00:00Z\trestart\ta\tw1:p1\tok (resumed session -)' \
   "$(cat "${H}/swarm/events.tsv")"
@@ -129,7 +138,7 @@ check "RESTORE.md counts the three session logs left out" "1" "$(grep -c '^- 3 s
 check "board.patch holds the three board edits" $'docs/stories/a.md\ndocs/stories/c.md\ndocs/stories/d.md' \
   "$(git -C "${P}" apply --numstat "${H}/board.patch" | cut -f3 | LC_ALL=C sort)"
 check "snapshot.md lists the open PR" "- #7 Add the thing (story/a, open) https://github.com/o/p/pull/7" "$(grep -F '#7' "${H}/snapshot.md")"
-check "snapshot.md lists this project's agent, not another's nor one only a token-named file names, with no other field" "- a, pane w1:p1" \
+check "snapshot.md lists this project's agents (one a slug with key in it), not another's nor one only a token-named file names, with no other field" $'- a, pane w1:p1\n- rotate-api-key, pane w2:p2' \
   "$(sed -n '/^## Agents/,$p' "${H}/snapshot.md" | grep '^- ')"
 check "without --memory, no memory/ folder" "no" "$([[ -e "${H}/memory" ]] && echo yes || echo no)"
 check "without --memory, no file from the memory folder is in the handover" "" \
@@ -150,6 +159,10 @@ next_of() { (cd "$1" && env -u SWARM_PROJECT -u HERDR_ENV bash "${REPO}/bin/swar
 want_next="$(next_of "${P}")"
 check "the restored clone gives the same swarm.sh next" "${want_next}" "$(next_of "${C}")"
 check "the restored clone has the same board files" "" "$(diff -r "${P}/docs" "${C}/docs" || true)"
+mtime() { python3 -c 'import os, sys; print(int(os.stat(sys.argv[1]).st_mtime))' "$1"; }
+check "a copied file keeps its time, through the handover and the restore (a stale conductor report stays stale)" \
+  "$(mtime "${P}/.swarm/conduct-e1.report.md")|$(mtime "${P}/.swarm/conduct-e1.report.md")" \
+  "$(mtime "${M}/swarm/conduct-e1.report.md")|$(mtime "${C}/.swarm/conduct-e1.report.md")"
 check "the restored clone's .swarm/ has the copied files" "$(cat "${M}/swarm/events.tsv")|report" \
   "$(cat "${C}/.swarm/events.tsv")|$(cat "${C}/.swarm/conduct-e1.report.md")"
 
@@ -203,6 +216,20 @@ check "a symlinked state/ is not read for pane records" "- none running in this 
 check "with the board in its own repo, RESTORE.md says to apply the patch in the board repo's clone and to repoint board_dir" "3" \
   "$(grep -cE "board is in a repo of its own \(${B}\)|run from the board repo's clone's root, not the project's|board_dir in .claude/swarm/config names ${B}/docs on the old machine" "${ROOT}/hq/RESTORE.md")"
 
+# --- A board repo nested in the project's folder (board_dir = notes/docs, notes/ a repo of its own):
+# board.patch holds the board repo's edit.
+S="${ROOT}/s"
+git init -q -b main "${S}"; git init -q -b main "${S}/notes"
+mkdir -p "${S}/.claude/swarm" "${S}/notes/docs/stories"
+printf '.swarm/\nnotes/\n' > "${S}/.gitignore"; echo 'board_dir = notes/docs' > "${S}/.claude/swarm/config"
+echo '# Stories' > "${S}/notes/docs/stories/README.md"
+git -C "${S}" add -A && git -C "${S}" commit -q -m one
+git -C "${S}/notes" add -A && git -C "${S}/notes" commit -q -m one
+echo 'new' > "${S}/notes/docs/stories/g.md"
+sw "${S}" handover "${ROOT}/hs" > "${ROOT}/out" 2>&1 || { echo "FAIL handover of s exited non-zero:"; cat "${ROOT}/out"; fails=$((fails + 1)); }
+check "with the board repo nested in the project's folder, board.patch holds its edit" "docs/stories/g.md" \
+  "$(git -C "${S}/notes" apply --numstat "${ROOT}/hs/board.patch" 2>/dev/null | cut -f3)"
+
 # --- A board at the project's root (board_dir = .): board.patch holds the board's edits, not the
 # project's other uncommitted files.
 R="${ROOT}/r"
@@ -212,9 +239,29 @@ echo '.swarm/' > "${R}/.gitignore"; echo 'board_dir = .' > "${R}/.claude/swarm/c
 echo '# Stories' > "${R}/stories/README.md"; echo 'v1' > "${R}/main.go"
 git -C "${R}" add -A && git -C "${R}" commit -q -m one
 echo 'new' > "${R}/stories/f.md"; echo 'v2' > "${R}/main.go"; echo 'scratch' > "${R}/notes.txt"
+echo 'blob' > "${R}/blob.bin"; chmod 000 "${R}/blob.bin"   # no board file: unreadable, it must not stop the handover
 sw "${R}" handover "${ROOT}/hr" > "${ROOT}/out" 2>&1 || { echo "FAIL handover of r exited non-zero:"; cat "${ROOT}/out"; fails=$((fails + 1)); }
 check "with board_dir = ., board.patch holds the board's edit and no other file" "stories/f.md" \
   "$(git -C "${R}" apply --numstat "${ROOT}/hr/board.patch" 2>/dev/null | cut -f3)"
+chmod 644 "${R}/blob.bin"
+# A root board with no board file yet: nothing is staged (git add -A with an empty list takes every file,
+# the unreadable one too), board.patch is empty, and RESTORE.md says so.
+R2="${ROOT}/r2"
+git init -q -b main "${R2}"; mkdir -p "${R2}/.claude/swarm"
+echo '.swarm/' > "${R2}/.gitignore"; echo 'board_dir = .' > "${R2}/.claude/swarm/config"; echo 'v1' > "${R2}/main.go"
+git -C "${R2}" add -A && git -C "${R2}" commit -q -m one
+echo 'blob' > "${R2}/blob.bin"; chmod 000 "${R2}/blob.bin"
+rc=0; sw "${R2}" handover "${ROOT}/hr2" > "${ROOT}/out" 2>&1 || rc=$?
+chmod 644 "${R2}/blob.bin"
+check "with no board file yet, the handover goes through with an empty board.patch, and RESTORE.md says so" "0|0|1" \
+  "${rc}|$(wc -c < "${ROOT}/hr2/board.patch" 2>/dev/null | tr -d ' ')|$(grep -c 'had no uncommitted board edits' "${ROOT}/hr2/RESTORE.md" 2>/dev/null)"
+
+# --- A project that is no git repo, its board in a git repo of its own: RESTORE.md says so.
+T="${ROOT}/t"
+mkdir -p "${T}/.claude/swarm"; printf 'board_dir = %s\n' "${B}/docs" > "${T}/.claude/swarm/config"
+sw "${T}" handover "${ROOT}/ht" > "${ROOT}/out" 2>&1 || { echo "FAIL handover of t exited non-zero:"; cat "${ROOT}/out"; fails=$((fails + 1)); }
+check "with a project that is no git repo, RESTORE.md puts the board in a repo of its own" "1" \
+  "$(grep -cF "Its board is in a repo of its own (${B})" "${ROOT}/ht/RESTORE.md" 2>/dev/null)"
 
 if (( fails > 0 )); then echo "${fails} failed"; exit 1; fi
 echo "all passed"
