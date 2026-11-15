@@ -3214,7 +3214,8 @@ for p in sys.argv[1:]:
       no_agent_name hname "${name}"
       case "$(awk -v n="${hname}" '$1 == n { print $2; exit }' <<< "${live}")" in
         "") ;;   # in no pane of this swarm's records: its pane closed, it never started, or another holds the name
-        # A turn that ended with a background task in flight still waits on it.
+        # A turn that ended with a background task in flight still waits on it (bg_running: one launched less
+        # than TEST_RUN_STALLS times stall_minutes ago, or a swarm.sh wait at any age).
         idle|done) ! bg_running "${hname}" || continue ;;
         *) continue ;;
       esac
