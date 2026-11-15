@@ -72,7 +72,7 @@ first. The cause says why they stepped in. It is one of `INTERVENE_CAUSES` in `b
 in the field `cause=<cause>`. Any other kind or cause, an empty line, or an events.tsv it cannot write
 fails and writes nothing, and an unknown cause's error lists the causes. So does the old form with no
 cause, `swarm.sh intervene <kind> "<one line>"`.
-An incident on an agent (`api-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
+An incident on an agent (`api-error`, `model-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
 `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail. `role=` is
 the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there. `slug=` is the story
 the command was working on. Where the command knows only the agent's name, the slug comes from the name. A
@@ -82,7 +82,9 @@ An agent name gets an `s` in front when its slug starts with a digit, so a build
 `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
 `-done<N>` name reads as the name before it when it is under 32 characters. A longer one may hold a cut
 name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
-the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
+the agent running `codex-review`. When `codex-review` retries codex after a rate limit, it writes a
+`codex-retry` line, not a second incident: target `codex-<story>` (`codex-<base>` with no `SWARM_STORY`),
+outcome `rate limit: retrying in <N> s`, and the same tail as its `codex-limit` incident ([§ Building](reference-building.md#building)). `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
@@ -95,7 +97,9 @@ a nested run, whose runs log is set empty, writes none. Both take the incidents'
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
-Error:` line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
+Error` line whose status is 400 or 404 and whose text names the model (`model ID`, `model identifier`,
+`inference profile`, `model_not_found`) is `model-error` instead. An `API
+Error:` (or `API Error (<model>):`) line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
 own indented text does not count, and neither does a tool's output (`⎿`) that prints `API Error:` or
 quotes the denial. `next` and `tell`
 only read. `status` and `wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it
@@ -353,15 +357,17 @@ parsed is read from `gh` again and rewritten, and one that would not change is n
 answers over it, so it also shows a rerun the cache missed. Setting `SWARM_GH_CACHE` empty turns the
 cache off (the tests whose `gh` stub changes between runs do).
 
-`swarm.sh wait-pr` keeps its CI reads in `.swarm/poll-cache/` (`bin/lib/poll_cache.py`) for under one
-poll, so waits on one head share them. Each file is one read's output, named by a hash of the gh
-command and holding that command and when the read started, so a different command never reads it
-and a slow read is kept as old as it is. A read is kept only once
-it parsed whole, written to a temp file and renamed. While one wait makes a read, a `.lock` file
-holding its pid makes another wait for the result instead of reading too. A lock whose pid has
-exited, or one older than the waiting reader's max age (its reader stopped, hung, or killed before it
-wrote its pid), no longer holds the others, and neither does any lock once a reader has waited its max age. Any file in the directory older
-than 10 minutes is deleted whenever a read is kept.
+`swarm.sh wait-pr` and `swarm.sh watch` keep their CI reads in `.swarm/poll-cache/`
+(`bin/lib/poll_cache.py`) for under one poll. Waits on one head share them, and so do watches on one
+repo (the open-PR list and the check-run and status reads). Each file is one read's output, named by a
+hash of the gh command and its output filter, and holding both and when the read started. A different
+command never reads it, neither does the same path read with another filter, and a slow read is kept
+as old as it is. A read is kept only once it parsed whole (for watch's own reads, once gh exited 0),
+written to a temp file and renamed. While one wait or watch makes a read, a `.lock` file holding its
+pid makes the others wait for the result instead of reading too. A lock whose pid has exited, or one
+older than the waiting reader's max age (its reader stopped, hung, or killed before it wrote its pid),
+no longer holds the others, and neither does any lock once a reader has waited its max age. Any file
+in the directory older than 10 minutes is deleted whenever a read is kept.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
@@ -491,8 +497,8 @@ one hour here can straddle two of GitHub's. `--epic` does not narrow it.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
-so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`
-and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
+so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`,
+`model-error` and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
 `conduct-<epic>`'s its epic, as `outcomes` gives them, and `-` when none does. `--epic` keeps that
 epic's rows. Three more parts follow, each after a blank line, over every epic. TSV `kind cause
 incidents` counts the window's incidents per kind and `cause=` field, which `swarm.sh intervene`
@@ -545,7 +551,11 @@ says when a list comes back that long, leaving rework unknown for the PRs merged
 When `gh` fails or a list is that long, unknown rework counts as none, and a line under the table says
 so, as under `reviewers`. A `mergedAt` that does not parse leaves its PR
 out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
-as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
+as too few to judge. After a blank line, a `by_risk` block gives one row per model, effort, `kind`
+and `risk`, adding up that class's stories over every size and area, with the same columns. It
+counts them the same way and uses the same 5-story floor. A few stories of one risk, spread over
+sizes and areas, show no figures in the table above but can reach 5 here. After another blank
+line, a `subagents` block gives a row per model and effort of
 the builds whose subagents cost more than zero (`outcomes` writes `0.00` for a build that ran
 none): what their subagents cost, the build cost (theirs plus the
 builder's own), and the subagents' share of it.
@@ -708,12 +718,15 @@ Goal 5's first bar, which the lead reads by hand:
 | 5. Nothing waits for the lead unseen | lead queue p90 under 30 minutes | `flow lead_queue: p90_min` |
 
 The `reviewers` section shows what review yields, so the
-reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework`,
+reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework deferred`,
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
 declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on in the window and that
-`outcomes` shows as reworked. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
+`outcomes` shows as reworked. `deferred` counts the declined findings whose reason is `deferred`: findings
+held back, not sent to the builder. It is part of `declined`, so it shows how much of a kind's declines were held back.
+A row with no reason field, such as one logged before the reason existed, counts 0 here. That 0 means the
+reason is unknown, not that nothing was held back. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no
@@ -881,8 +894,15 @@ full runs. After another blank line, TSV `builder_runs median_s p90_s` counts th
 branches whose start falls in the window, of any filter. A `TESTS` run, an `N files` run and a full
 run count; a shard run, an interrupted run and a torn line (one cut short) do not. It gives the count
 and the median and p90 (nearest rank) seconds, `-` with none. With no log, as in a project with no
-`scripts/test.sh`, it prints nothing. With no full run in the window, a line that says so takes the
-place of the first two blocks. `--epic` does not narrow it.
+`scripts/test.sh`, it prints none of these blocks. With no full run in the window, a line that says so takes the
+place of the first two blocks. Last, with or without the log, TSV `timeouts` counts the test files
+that ran past `TEST_FILE_TIMEOUT`: the `reap` lines `make test` writes to `events.tsv` (outcome
+`TIMEOUT after <n>s`) whose local day falls in the window. It skips `codex-review`'s `reap` lines.
+The count covers the whole window and is not divided per build, so to compare it with a per-release
+bar, run it over one release's window. A 0 means `make test` wrote no `reap` line in the window:
+either no file timed out, or the timeouts went unlogged, as in a nested run, which writes none, or a
+run that could not write `events.tsv`.
+`--epic` does not narrow it.
 
 ## The outer loop
 
@@ -925,6 +945,63 @@ trailing whitespace ignored. A removed line counts only where an added one would
 outside a heredoc. Each removed line covers one added line, so a test added beside a moved one
 still needs its FAIL line.
 
+### swarm.sh retro
+
+`swarm.sh retro [--since <tag>] [--memory <dir>]` prints the report the lead works through at a release retro.
+It is read-only: it changes no file in the project, logs no event and makes no `gh` call.
+Its window starts on the day of the tag's commit (`git log -1 --format=%cs <tag>`).
+`--since` defaults to the newest `v<x.y.z>` tag on origin's default branch (the local `origin/HEAD`), without a fetch.
+With `origin/HEAD` unset it stops and asks for `--since <tag>`, and a tag the repo does not have stops it with an error that names the tag.
+The first line names the tag and the window's first day.
+The second names the `swarm.sh` that wrote the report: its short commit when it runs from the top of a git checkout, or else the version in its `.claude-plugin/plugin.json` and that it is not a git checkout, as in the plugin cache.
+Then `bin/lib/retro_report.py` runs each `bin/lib/retro_<name>.py` in name order, under a `## <name>` heading.
+Each section gets the tag, the window's day, the project and board folders, the paths of `events.tsv` and `findings.tsv`, the memory folder, and a file of the declined out-of-scope and deferred findings since that day that no story has picked up.
+A section that fails prints `error: <name>: <message>`, the other sections still run, and retro exits 1.
+A new list is a new `retro_<name>.py`, and the runner does not change.
+The lists, in name order:
+
+**findings.** The declined out-of-scope and deferred findings since the tag that no story has picked up.
+It lists a finding only while its newest row in `findings.tsv` is that decline, so a later `--filed` or fixed row drops it.
+It also drops a finding whose text a story carries, by the same rule `swarm.sh next` uses for the findings it offers.
+Each line is `<reason> <date> <kind> <PR>: <text>`, newest first.
+With none, it prints `no out-of-scope or deferred findings open since <tag>`.
+
+**incidents.** Each `user-caught` and `lead-hand` line (`swarm.sh intervene`) since the tag, with its date and text, and the other incident lines.
+It reads `events.tsv` and takes each line's day in local time, as `flow`'s `incidents` section does, and leaves out a line dated before the window's first day.
+Every `lead-hand` and `user-caught` line comes first, in full and oldest first, as TSV `day kind cause text`.
+The text is what follows `<kind>: ` in the line's outcome, and the cause is its `cause=` field.
+After a blank line come the other kinds that `flow`'s `incidents` section counts, as TSV `kind cause incidents first last`: the other `incident` lines, such as `wait-timeout` and `login`, and each stalled step-up, as kind `stalled step-up`.
+Each kind and cause gets one row, with its count and the first and last day it was seen, and a line with no `cause=` field has cause `-`.
+A part with no lines prints `no lead-hand or user-caught lines since <day>` or `no other incidents since <day>` in its place.
+A missing `events.tsv` prints `no incidents: <path> does not exist`.
+`flow`'s `incidents` section counts these kinds and prints no line's text.
+
+**memories.** The lead's swarm-dev memory notes that are not yet placed in a story, a check or a rule.
+The memory folder can be a store that also holds notes for other projects, so only swarm-dev notes are listed.
+It prints one line for each swarm-dev note in the folder, `*.md` except `MEMORY.md`, the index: `<file>: <name> — <description>`, from the note's `name:` and `description:` lines.
+A note counts as a swarm-dev note when its front matter has `project: swarm-dev`, at the top level or under `metadata:`, or when its `name:` or `description:` contains `swarm` in any case.
+The filter reads only the front matter, so a note with `swarm` only in its body, or with no front matter, is skipped.
+After the list, one line counts the notes it skipped, `<n> other notes skipped (not tagged project: swarm-dev)`, so a swarm-dev note that lacks the tag still gets noticed.
+It reads only the `*.md` files in that one folder, never a subfolder or a session log.
+`--memory <dir>` names the folder.
+By default it is Claude Code's memory folder for the project: the projects folder (`CLAUDE_PROJECTS_DIR`, or `projects` under the Claude config folder), then the main checkout's path with each character outside `A-Za-z0-9` turned into `-`, then `memory`.
+An empty folder prints `no memory notes: <dir> holds none`, and a missing one `no memory notes: <dir> does not exist`.
+
+**reaped.** The test files and codex runs that were killed for running too long since the tag, from the `reap` lines in `events.tsv`.
+It prints one row for each `reap` line on or after the window's day, in local time: the line's local day, its target and its outcome, then its `slug=` and `role=` fields when it has them.
+Then it prints a count for each target, the most first.
+The last line says that a fallback reviewer killed on its timeout writes no `reap` line, so the list is not every kill.
+With no `reap` line since the day it prints `no reap lines since <day> in <events.tsv>`, and with no `events.tsv` it prints `no reap lines: <events.tsv> does not exist`.
+
+**recurring.** The finding kinds that keep coming back and still have no check, with related kinds counted together.
+It lists each kind fixed or escaped on 3 or more distinct PRs from the window's day to today, from `findings.tsv`.
+Kinds are folded first, as `FOLD` in `bin/lib/recurring.py` sets out: `docs-misstate-code`, `stale-docs` and `docs-stale` count as `docs`, and `test-coverage` and `missing-case` count as `test-gap`.
+A folded kind has a check once a `checks:` story for any name folded into it has merged, as `outcomes` finds one, and then it is left out.
+So a kind whose check story waits in an open PR still shows until that story merges.
+Each line reads `<kind>: <n> PRs, as <names>`, most PRs first, where the names are the kinds in `findings.tsv` that were folded into it.
+With none, it prints one line saying no kind fixed on 3 or more PRs since the window's day lacks a merged check.
+The `recurring` block of `outcomes` does not fold.
+
 ## Commands
 
 | Command | What it does |
@@ -935,4 +1012,6 @@ still needs its FAIL line.
 | `swarm.sh intervene <kind> <cause> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first), and why, a cause from `INTERVENE_CAUSES` in `bin/swarm.sh`. It writes one `incident` line with the field `cause=<cause>`, which `flow`'s `incidents` section and dash's interventions light count. An unknown cause fails and lists the causes. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions, then the tokens on each ladder rung per step-up with how its build ended, and the share of builds that reached each rung), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `holds` (one row per hold of a ready story: its epic, the first hold's reason and the minutes until its next build started, or how it ended with no build (`dropped`, or `removed` once its story file left the board), or `open`; then the built holds' minutes per reason class, `clash` when the reason names a PR or a hyphenated story that had started by then, `other` for anything else, give-up, closed this wave and `not held:` included), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic, incidents per kind and cause, the stalled incidents and stalled step-ups with their bg, test and sign inputs, and the count of false stalls), `lead_queue` (per day, the median and longest wait on the lead, and what still waits: held, escalated and kept stories, and PRs waiting for a merge; a kept story waits from its `kept` line until it is reviewed, closed with `--drop`, finished, dropped or reconciled, and dash names `swarm.sh review` and `close --drop` on its row; below it, when the window has any, a table of no-agent items: a started story with no agent (`no-agent`), a failed step-up (`step-up-failed`) and a review agent that never started (`no-review`). Each runs to its `lead-woken` line from the newest close of the story's builder or review agent, or, with no close since its last start, from the first `no-agent` line or failed start. A `step-up:failed` line, a review agent's failed start and a `review` or `kept` line restart the clock, and a failed start while the builder still runs starts it only when nothing waits, and never opens an item. An ok start, an ok tell, a hold, an ok `upgrade` of the story's epic (but not for a failed step-up) and a reconcile that reopens the story end the wait unmeasured. Per day it gives the median and longest minutes (`-` when no item entered that day, though a wake did), the items not yet woken (open only while the story is ready) and `woken_while_working`: no-agent wakes for a story whose builder had started with no close or `step-up:failed` line since. A builder whose pane died without a close line looks the same in `events.tsv`, so a nonzero count is either an alert while the builder was working or a real alert for a pane that went with no close; the story's events and herdr show which. A failed review-agent start wakes the lead as `ok (no-review)` while its builder is listed, and as `ok (no-agent)` when the builder is gone too, since that poll prints the `no-agent:` line. Last, after a blank line, one row over the per-day table's items in the window, never the no-agent ones: `items`, `median_min`, `p90_min` (by nearest rank) and `max_min`, with `-` in each column when there is none), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with how many conflicts hit `docs/reference*.md` and the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows, then merge's holds per day by kind), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `predictions` (per planner model, the precision and recall of `easy` against `was_easy`, and how many lines its size estimates were off by, from `.swarm/dataset.jsonl`), `review_loops` (per story PR, each review round's builder model, minutes, findings fixed and declined and step-up, how its loop ended, and totals for tuning the stop and escalation rules, among them the deferred findings, how many of those later proved real, and the share of PRs with four or more rounds), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them), `run_times` (per command, how many `status`, `next` and `dash` runs, their median and p90 seconds and the share over 60 seconds, from `.swarm/run-times.tsv`), `start_failures` (per day, the review agents that did not start, how many of them an ok start of the same story followed within 10 minutes and how many it did not, then each one not restarted; then per day the starts tried once more in a fresh pane and how many that saved), `tell_refusals` (tells and refused tells per pane kind, agent or other, and the state each refusal read, then the `could not reach` refusals per target), `test_runs` (local `scripts/test.sh` full runs by how many ran at once, the larger of the count at the start and at the end, with the median and p90 seconds and the median load at the start, and the 5 slowest; then builders' runs on `story/*` branches of every filter, with their median and p90 seconds; from `.swarm/test-runs.tsv`), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting, and from a PR going green, or opening if later, to its next review round starting, and the median and p90 minutes of the review wait phase). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions, then the tokens on each ladder rung per step-up with how its build ended, and the share of builds that reached each rung), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `holds` (one row per hold of a ready story: its epic, the first hold's reason and the minutes until its next build started, or how it ended with no build (`dropped`, or `removed` once its story file left the board), or `open`; then the built holds' minutes per reason class, `clash` when the reason names a PR or a hyphenated story that had started by then, `other` for anything else, give-up, closed this wave and `not held:` included), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic, incidents per kind and cause, the stalled incidents and stalled step-ups with their bg, test and sign inputs, and the count of false stalls), `lead_queue` (per day, the median and longest wait on the lead, and what still waits: held, escalated and kept stories, and PRs waiting for a merge; a kept story waits from its `kept` line until it is reviewed, closed with `--drop`, finished, dropped or reconciled, and dash names `swarm.sh review` and `close --drop` on its row; below it, when the window has any, a table of no-agent items: a started story with no agent (`no-agent`), a failed step-up (`step-up-failed`) and a review agent that never started (`no-review`). Each runs to its `lead-woken` line from the newest close of the story's builder or review agent, or, with no close since its last start, from the first `no-agent` line or failed start. A `step-up:failed` line, a review agent's failed start and a `review` or `kept` line restart the clock, and a failed start while the builder still runs starts it only when nothing waits, and never opens an item. An ok start, an ok tell, a hold, an ok `upgrade` of the story's epic (but not for a failed step-up) and a reconcile that reopens the story end the wait unmeasured. Per day it gives the median and longest minutes (`-` when no item entered that day, though a wake did), the items not yet woken (open only while the story is ready) and `woken_while_working`: no-agent wakes for a story whose builder had started with no close or `step-up:failed` line since. A builder whose pane died without a close line looks the same in `events.tsv`, so a nonzero count is either an alert while the builder was working or a real alert for a pane that went with no close; the story's events and herdr show which. A failed review-agent start wakes the lead as `ok (no-review)` while its builder is listed, and as `ok (no-agent)` when the builder is gone too, since that poll prints the `no-agent:` line. Last, after a blank line, one row over the per-day table's items in the window, never the no-agent ones: `items`, `median_min`, `p90_min` (by nearest rank) and `max_min`, with `-` in each column when there is none), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with how many conflicts hit `docs/reference*.md` and the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows, then merge's holds per day by kind), `model_fit` (cost against results per model and story class, then per model, effort, kind and risk over every size and area in a `by_risk` block, and builder subagents' share of build cost), `predictions` (per planner model, the precision and recall of `easy` against `was_easy`, and how many lines its size estimates were off by, from `.swarm/dataset.jsonl`), `review_loops` (per story PR, each review round's builder model, minutes, findings fixed and declined and step-up, how its loop ended, and totals for tuning the stop and escalation rules, among them the deferred findings, how many of those later proved real, and the share of PRs with four or more rounds), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them), `run_times` (per command, how many `status`, `next` and `dash` runs, their median and p90 seconds and the share over 60 seconds, from `.swarm/run-times.tsv`), `start_failures` (per day, the review agents that did not start, how many of them an ok start of the same story followed within 10 minutes and how many it did not, then each one not restarted; then per day the starts tried once more in a fresh pane and how many that saved), `tell_refusals` (tells and refused tells per pane kind, agent or other, and the state each refusal read, then the `could not reach` refusals per target), `test_runs` (local `scripts/test.sh` full runs by how many ran at once, the larger of the count at the start and at the end, with the median and p90 seconds and the median load at the start, and the 5 slowest; then builders' runs on `story/*` branches of every filter, with their median and p90 seconds; from `.swarm/test-runs.tsv`; then `timeouts`, the test files `make test` stopped past `TEST_FILE_TIMEOUT` in the window, from its `reap` lines in `.swarm/events.tsv`), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting, and from a PR going green, or opening if later, to its next review round starting, and the median and p90 minutes of the review wait phase). |
+| `swarm.sh retro [--since <tag>] [--memory <dir>]` | The release retro's report, read-only and with no `gh` call: the tag and the day its window starts, the `swarm.sh` that wrote it, then one list per section. [§ swarm.sh retro](#swarmsh-retro) describes the window, the runner and each list. |
+| `swarm.sh handover <dir> [--memory <dir>]` | Write into `<dir>` what another machine needs that git does not carry. `<dir>` must be new or empty, and outside the project's repo and the board's, so the handover cannot be committed. It must also be outside the `--memory` folder. It holds `swarm/`, the project's `.swarm/` without session logs (no `*.jsonl` or `*.jsonl.gz`, nothing under a `sessions` folder). No agent session id comes with it: `agents.tsv`'s session column is `-`, and so is every UUID in the files it copies, since `events.tsv` names sessions in free text. It also leaves out what belongs to this machine: `state/` (herdr pane records, which would claim panes of the same id on another machine), `launch/` (agent launch wrappers, which hold the environment values an agent started with), `locks/`, the lead's herdr workspace records, every lock and pid file, and `auto-mode-done`, which on a new machine would hide that auto mode's setup has not run there. It also holds `board.patch` (the main checkout's uncommitted board edits, new files too, against its `HEAD`), `snapshot.md` (the open PRs and this project's agents) and `RESTORE.md` (the commands that restore each part into a fresh clone, run from the clone's root with `HANDOVER_DIR` set to the handover's path on the new machine; with the board in a repo of its own, the patch goes in that repo's clone, and `board_dir` may need to name its new path). A file or folder whose name looks like a token, key, secret or password is never read; `RESTORE.md` lists it as skipped, beside any symlink. A name that is a story, epic or agent slug swarm.sh knows, alone or with `.md`, is its own record, such as `board-state/stories/<slug>`, and is copied whatever words the slug holds. A credential file's type (`.pem`, `.key`, `.env` and the like) is skipped whatever its name. The lead's memory folder goes in `memory/` only when `--memory <dir>` names it. Nothing is pushed or published. |

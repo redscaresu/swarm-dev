@@ -337,7 +337,7 @@ BOX_PROMPT = re.compile(r"(>|❯)(\s|$)")
 STOP_LINE = re.compile(r"\s*(⏺|●)|(>|❯) +\S")
 # LOGIN_STOP: Claude Code's "<reason> · Please run /login", not a reply that only mentions /login.
 LOGIN_STOP = re.compile(r"(⏺|●)\s*([^·]*·\s*)?Please run /login\s*(·|$)")
-API_STOP = re.compile(r"(⏺|●)\s*API Error:")
+API_STOP = re.compile(r"(⏺|●)\s*API Error( \([^)]*\))?:")
 MANUAL_MODE = re.compile(r"\s*⏸ manual mode on")
 MID_COMMAND = "esc to interrupt"
 def turn_lines(lines):
@@ -357,7 +357,8 @@ def stuck_kind(text):
     #     dialog is none (wait answers it);
     #   login: the turn ended (the last STOP_LINE in turn_lines) on Claude Code's "<reason> · Please
     #     run /login" ("Login expired · Please run /login");
-    #   api-error: the turn ended on an `API Error:` reply at the margin, as pane_stop reads it;
+    #   api-error: the turn ended on an `API Error:` (or `API Error (<model>):`) reply at the margin, as
+    #     pane_stop reads it, a model error (pane_stop's model-error) included;
     #   manual: the footer under the input box says manual mode.
     # Else a pane mid-command (esc to interrupt after the last reply), at an empty input box or on a
     # menu above the input box is none.

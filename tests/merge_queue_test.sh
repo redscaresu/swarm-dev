@@ -253,13 +253,14 @@ merge "${URL}"
 check "three failed reads after one with auto-merge only: auto-merge off and out of the queue" \
   logged "^merge s unconfirmed (error .*): #7 did not merge; auto-merge is off and it is out of the merge queue$"
 # A TERM the moment queued() installs its handler: caught as a stop (7), the PR stopped, not an
-# error that escapes it. ci_gate's functions run here with signal.signal wrapped to TERM itself.
+# error that escapes it. ci_gate's functions run here with signal.signal wrapped to TERM itself; its
+# command line runs only as __main__, so loading it as ci_gate defines them and runs nothing.
 qfresh; qread "${FX}/queue" OPEN true null "${G}" -
 early="$(cd "${P}" && PATH="${ROOT}/bin:${PATH}" python3 - "${REPO}/bin/lib/ci_gate.py" "${H1}" <<'PY'
 import os, signal, sys
 src = open(sys.argv[1]).read()
 ns = {"__name__": "ci_gate"}
-exec(compile(src[:src.index("\ntry:\n    mode, repo, args")], sys.argv[1], "exec"), ns)
+exec(compile(src, sys.argv[1], "exec"), ns)
 def install(sig, handler):
     signal.signal(sig, handler)
     if handler is ns["on_signal"] and sig == signal.SIGTERM:
@@ -496,6 +497,11 @@ bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error: Connection dropp
 merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
 check "a board merge while a conductor is stopped on an API error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
 check "a board merge while a conductor is stopped on an API error: says why" said "no conductor started: conduct-e stopped on an API error"
+# The same stop on a model error: no conductor either, and the line names the model error.
+bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error (eu.anthropic.claude-x-9): 400 The provided model identifier is invalid.' > "${ROOT}/agents.screen.w:c"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
+check "a board merge while a conductor is stopped on a model error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge while a conductor is stopped on a model error: says why" said "no conductor started: conduct-e stopped on a model error"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land

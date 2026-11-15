@@ -214,6 +214,17 @@ check "fallback_reviewer is read" "sonnet" "$(run "${p}" config fallback_reviewe
 project "${p}" "fallback_reviewer = son net"
 check "fallback_reviewer that is not a model name is refused, naming the key" "yes" \
   "$(fails_with "config:1: fallback_reviewer must be a model name such as haiku, not 'son net'" run "${p}" config)"
+# usage_warn_percent: a whole number from 1 to 100; ships empty, so wait --lead prints no usage: line.
+check "usage_warn_percent ships empty (off)" "" "$(project "${p}"; run "${p}" config usage_warn_percent)"
+for v in 1 100; do
+  project "${p}" "usage_warn_percent = ${v}"
+  check "usage_warn_percent = ${v} is read" "${v}" "$(run "${p}" config usage_warn_percent)"
+done
+for v in 0 101 1000 07 half 5%; do
+  project "${p}" "# usage" "usage_warn_percent = ${v}"
+  check "usage_warn_percent = ${v} is refused, naming the line" "yes" \
+    "$(fails_with "config:2: usage_warn_percent must be a whole number from 1 to 100, or empty for off, not '${v}'" run "${p}" config)"
+done
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
