@@ -13,24 +13,6 @@ and so on). An unknown one fails and lists them all.
 That line feeds the next release's retro. Each release removes the entries it fixes, so the list
 should get shorter.
 
-## Finished panes left open
-
-**Symptom.** `herdr agent list` shows conductors of finished epics with status `done`. Review agents
-and planning agents now close their own panes (#828, #850).
-**Step.** Close each conductor with `swarm.sh close conduct-<epic>`, never `herdr pane close`: it
-refuses while the conductor works, and with `merge = agent` while its Finish PR is open, where
-closing it would kill that PR's `swarm.sh merge --board`.
-**Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
-
-## A builder that keeps changing its PR
-
-**Symptom.** A builder pushes again and again after opening its PR, so CI restarts and no review
-starts; or `review-agent` refuses with `worktree has uncommitted changes` while the builder runs
-checks in place.
-**Step.** Nudge it: push what is ready, put further points in the PR body, run mutation checks on a
-copy of HEAD.
-**Issue.** [#695](https://github.com/redscaresu/swarm-dev/issues/695).
-
 ## A conductor's merge refused by the permission classifier
 
 **Symptom.** A conductor reports that `swarm.sh merge` was refused by auto mode.
