@@ -3,7 +3,7 @@
 # as CI skips them then. With no check target it only warns: CI is the gate that fails.
 swarm_board="@BOARD@"
 if ! git diff --cached --name-only --no-renames | while IFS= read -r p; do
-  case "${p}" in "${swarm_board}"stories/*|"${swarm_board}"epics/*|"${swarm_board}"hld/*|"${swarm_board}"Board.base|"${swarm_board}".obsidian/*) ;; *) exit 1 ;; esac
+  case "${p}" in "${swarm_board}"stories/*|"${swarm_board}"epics/*|"${swarm_board}"hld/*|"${swarm_board}"Board.base|"${swarm_board}".obsidian/*|"${swarm_board}"retros/*.md) ;; *) exit 1 ;; esac
 done; then
   if make -n check >/dev/null 2>&1; then make check || exit 1
   else echo "pre-commit: make has no check target, so nothing was checked; add one to the Makefile" >&2; fi

@@ -60,8 +60,8 @@ def board_ref():
     return next((r for r in ("origin/HEAD", "HEAD") if git("rev-parse", "-q", "--verify", r, quiet=True)), None)
 
 def board_log(*args):
-    # outcomes_join's board_log: git log on the board's default branch, a commit dated by the merge
-    # that brought it.
+    # recurring.py's board_log, which outcomes reads the board through: git log on the board's default
+    # branch, a commit dated by the merge that brought it.
     ref = board_ref()
     return git("log", ref, "--first-parent", "--diff-merges=first-parent", "--no-renames", *args) if ref else ""
 
