@@ -112,8 +112,39 @@ def swarm_wait(cmd):
             return False
         waits += words[1] in SWARM_WAITS
     return waits > 0
+# TASK_SECONDS: how long task_ended's lsof may take; past it the task is not called ended.
+TASK_SECONDS = 10
+def task_text(content):   # a tool_result's content as text: a string, or its text blocks joined
+    if isinstance(content, str):
+        return content
+    return "\n".join(c.get("text") or "" for c in content if isinstance(c, dict)) if isinstance(content, list) else ""
+def task_ended(path):
+    # True when no process holds <path>, a background Bash task's output file, open: the task's shell and
+    # everything it started have exited. Claude Code's launch result names that file, and the task's shell
+    # and its children write their stdout and stderr to it until they end. A file that is gone, or a
+    # process list that cannot be read (/proc on Linux, lsof elsewhere), is no end: the task counts as before.
+    # lsof exits 1 with no PID both when no process holds the file and when it failed (a file deleted since
+    # the check above, say), so only an lsof that also printed no error is an end.
+    real = os.path.realpath(path)
+    if not os.path.isfile(real):
+        return False
+    if os.path.isdir("/proc/self/fd"):
+        for fd in glob.glob("/proc/[0-9]*/fd/*"):
+            try:
+                if os.readlink(fd) == real:
+                    return False
+            except OSError:
+                continue
+        return True
+    try:
+        p = subprocess.run(["lsof", "-t", "-w", "--", real], stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=TASK_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return p.returncode == 1 and not p.stdout.strip() and not p.stderr.strip()   # 0 lists the holders
 def bg_running(log, name, projects, stall_minutes="", now=""):
     sid, live, monitors = session_id(log, name), {}, set()   # live: task id -> when its launch was logged
+    outs = {}   # outs: a background Bash task's id -> the output file its launch result names
     bash, waits = {}, set()   # bash: a background Bash call's tool_use id -> its command; waits: swarm_wait tasks
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
         try:
@@ -138,6 +169,10 @@ def bg_running(log, name, projects, stall_minutes="", now=""):
                 if isinstance(r, dict):
                     if isinstance(r.get("backgroundTaskId"), str):
                         live[r["backgroundTaskId"]] = logged_at(d)
+                        out = re.search(r"Output is being written to: (/[^\n]*/tasks/%s\.output)" % re.escape(r["backgroundTaskId"]),
+                                        "\n".join(task_text(c.get("content")) for c in items))
+                        if out:
+                            outs[r["backgroundTaskId"]] = out.group(1)
                         if any(swarm_wait(bash.get(c.get("tool_use_id"))) for c in items):
                             waits.add(r["backgroundTaskId"])
                     if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
@@ -154,10 +189,14 @@ def bg_running(log, name, projects, stall_minutes="", now=""):
         except OSError:
             return False
         break
+    # A task whose output file no process holds has ended, notified or not: on 2026-11-15 three builders sat
+    # idle for 3 hours on background test runs that had finished, their end never delivered. Read last, and
+    # only for a task that would count, so most calls read no process list.
+    gone = lambda k: k in outs and task_ended(outs[k])
     if not stall_minutes:
-        return bool(live)
+        return any(not gone(k) for k in live)
     cap, t = TEST_RUN_STALLS * int(stall_minutes) * 60, float(now) if now else time.time()
-    return any(k in waits or t - at < cap for k, at in live.items())
+    return any((k in waits or t - at < cap) and not gone(k) for k, at in live.items())
 # SIGN_SECONDS: how long each call sign_blocked makes (git, gpg, gpg-connect-agent, ssh-add, ssh-keygen) may
 # take; one past it is killed with its process group, and the probe says unknown.
 SIGN_SECONDS = 5

@@ -370,7 +370,7 @@ Repeat until a step below says stop:
      line names a builder with an open PR and a pending item: findings it was told, or a conflict with
      the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
      otherwise), with no background task launched less than 3 times `stall_minutes` ago (a swarm.sh
-     wait counts at any age) and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
+     wait counts at any age; a task whose process has ended counts at no age) and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
      `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
      quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
      asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
