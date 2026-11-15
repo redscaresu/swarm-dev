@@ -152,7 +152,8 @@ printf '%s\n' $'2026-10-01T07:00:00Z\tstory\ts-a\t-\tok' $'2026-10-01T07:10:00Z\
   $'2026-10-01T08:00:00Z\treview-finished\ts-c\tw1:p2\tok' $'2026-10-01T08:01:00Z\treview\ts-c\tw1:p2\tok (https://github.com/o/r/pull/2)' \
   $'2026-10-01T08:10:00Z\tpane-closed\treview-s-c\tw1:p0\tok ~~ pane=w1:p2 slug=s-c role=review' \
   $'2026-10-01T11:00:00Z\treap\ttests/a_test.sh\tw1:p0\tTIMEOUT after 600s ~~ slug=s-a role=builder version=0.30.1' > "${Q}/.swarm/events.tsv"
-# One full run, its end line (the start and end fields flow_test_runs.py reads), so `flow test_runs` prints its blocks.
+# One full run's end line, with the fields flow_test_runs.py reads (start, seconds, filter all, branch, load, other runs,
+# status, PID), so `flow test_runs` prints its blocks.
 printf '%s\n' $'2026-10-01T09:00:00Z\t2026-10-01T09:10:00Z\t600\t4\tall\tmain\t1.00\t10\t0\t0\t123' > "${Q}/.swarm/test-runs.tsv"
 headers() { # <section>... — `<section><TAB><word>` for each header word those sections print over the fixture,
   # run as flow runs them (flow_report.py), without the outcomes rows flow builds first, which no header needs.
