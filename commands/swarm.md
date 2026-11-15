@@ -723,7 +723,7 @@ Repeat until a step below says stop:
        Once `next` prints `release v<new>`, this arm uses the open PR.
        `v<new> is a patch, but ...: cut a minor after its retro` means a change since the tag is not a fix, so no patch goes out until the next minor.
        Remove this worktree and the `release/v<new>` branch, close the PR, and tell the user which change the refusal named.
-       Cut no patch again while that change is on the base, even when `next` names one: a held stage's `release v<x.y.z+1> (patch)` does not check for fixes.
+       Cut no patch again while that change is on the base: `next` offers none then.
        The next release is a minor, after its retro.
        When the refusal ends `merge it yourself if it may ship without a retro` (a board outside the repo), keep the PR and tell the user it waits on their merge.
        Run `swarm.sh dash --check` as above, then go back to 1.
