@@ -2967,8 +2967,8 @@ watch_repos() {
 # (review_on_head, which counts a head merge made from a reviewed head), and
 # green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
 # checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
-# Under watch (WATCH_SHARE set, watch_prs), ci_gate age's check-runs and status reads go through the poll
-# cache, so concurrent watches share them; next's reads go to GitHub.
+# With WATCH_SHARE set (watch_prs, and next_queued for next's queued: lines), ci_gate age's check-runs and
+# status reads go through the poll cache, so concurrent watches and next share them.
 queued_line() {
   local slug="${4#story/}" m share_dir=""
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
@@ -3024,15 +3024,16 @@ queued_sent() {
 # its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
 # Concurrent watches share each poll's reads: the open-PR list (watch_rows), each head's check runs and
 # queued_line's ci_gate age reads go through the poll cache (bin/lib/poll_cache.py, .swarm/poll-cache),
-# which takes a read another watch made under WATCH_SHARE seconds ago, and keeps a read only when it
-# succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL, scaled as nap: 59 s), so a lone watch
-# never reads its own; 0 (a scaled poll under 2 s) is off. A shared read can be up to that old, so a
-# change can take a poll longer to be seen. The mergeable read (watch_mergeable) is never shared: it is
-# keyed by PR number, not head, and a kept MERGEABLE would hide a new conflict.
+# which takes a read another watch, or next's queued: lines (next_queued), made under WATCH_SHARE seconds
+# ago, and keeps a read only when it succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL,
+# scaled as nap: 59 s), so a lone watch never reads its own; 0 (a scaled poll under 2 s) is off. A
+# shared read can be up to that old, so a change can take a poll longer to be seen. The mergeable read
+# (watch_mergeable) is never shared: it is keyed by PR number, not head, and a kept MERGEABLE would hide
+# a new conflict.
 watch_prs() {
   local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
   watch_scope "$@"; watch_repos die
-  WATCH_SHARE="$(awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }')"
+  WATCH_SHARE="$(watch_share)"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
   # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
@@ -3151,6 +3152,10 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     nap "${WATCH_POLL}"
   done
 }
+
+# watch_share — the poll cache's max age, in whole seconds, for watch's reads (WATCH_SHARE) and next's
+# queued: lines: one under a poll (WATCH_POLL, scaled as nap: 59 s), 0 (off) for a scaled poll under 2 s.
+watch_share() { awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }'; }
 
 # watch_gh <gh args...> — gh <args>, for watch: through the poll cache's command form while WATCH_SHARE
 # is on (watch_prs), which prints a kept read's output or runs gh, keeping it only when gh exits 0; a
