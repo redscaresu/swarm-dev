@@ -12,9 +12,7 @@ This text covers v0.30.1. All state lives in the board, the directory `swarm.sh 
 
 Work from the root of a git repo with a GitHub origin. The slash commands, `swarm.sh conduct` and
 every agent run inside herdr (`HERDR_ENV=1`). `init`, `next`, `status`, `config`, `flow`, `dash`,
-`outcomes`, `retro`, `handover`, `wait-pr`, `version` and `update` also work outside it.
-
-Agents use your session's provider. A Claude subscription needs nothing passed. Foundry (`CLAUDE_CODE_USE_FOUNDRY`) passes `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL`. Bedrock (`CLAUDE_CODE_USE_BEDROCK`) passes `AWS_BEARER_TOKEN_BEDROCK` and `ANTHROPIC_DEFAULT_*_MODEL`.
+`outcomes`, `retro`, `handover`, `wait-pr`, `version` and `update` also work outside it. Agents use your session's provider. A Claude subscription needs nothing passed. Foundry (`CLAUDE_CODE_USE_FOUNDRY`) passes `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL`. Bedrock (`CLAUDE_CODE_USE_BEDROCK`) passes `AWS_BEARER_TOKEN_BEDROCK` and `ANTHROPIC_DEFAULT_*_MODEL`.
 
 1. `swarm.sh init` creates the board, `.claude/swarm/`, a CI workflow and a pre-commit hook, and
    names the `Bash(swarm.sh merge *)` allow rule if it is missing. It overwrites no file but an unedited old `Board.base`.
