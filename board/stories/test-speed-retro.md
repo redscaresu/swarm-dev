@@ -35,6 +35,8 @@ option 2, plus moving pure logic into the existing Python with in-process pytest
 
 Decided by the user on 2026-11-15: option 2 (lazy-loading the libs) is not for v0.31. The long-term
 approach to the codebase and its tests is for v0.32, discussed at the retro.
+The user also ruled out any machine cap (`~/.swarm/test-cap` stays 0), so option 1 is only
+the no-full-local-runs part.
 
 **You:** at the retro, pick which options become stories, and whether option 1 changes AGENTS.md's
 "Before you open a PR" list.
