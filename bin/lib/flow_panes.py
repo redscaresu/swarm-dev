@@ -23,7 +23,7 @@ from events_outcome import fields, outcome
 
 OVER_MIN = 30
 URLS = re.compile(r"https://\S+/pull/\d+")
-LOGGED_FROM = (0, 31, 0)   # the first release whose swarm.sh logs a pane-closed line for each pane it closes
+LOGGED_FROM = (0, 30, 1)   # the first release whose swarm.sh logs a pane-closed line for each pane it closes
 
 
 def when(t):

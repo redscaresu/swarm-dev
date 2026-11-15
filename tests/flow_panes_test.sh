@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # flow_panes_test.sh — `swarm.sh flow`'s panes section (bin/lib/flow_panes.py) against a fixture
-# events.tsv, its times in minutes before now, each line with its pane and version=0.31.0 unless it says
+# events.tsv, its times in minutes before now, each line with its pane and version=0.30.1 unless it says
 # otherwise. A handover is a review-finished line, then a review line, from the review agent's pane.
 # s-a hands over at -130, merges at -120 and its pane closes at -110: merge, 10. s-b hands over at -150
 # and closes at -105: handover, 45. s-c hands over at -60 and never closes (a builder's pane-closed line
 # of s-c is no close of its review pane): open, 60. s-dee's pane is retired, so its close names
 # review-s-dee-long-st-done, and its merge names the PR URL its review line gave: merge, 5, paired by
 # slug= and pane=. s-e closes on a 0.30.0 `close review-s-e` line: handover, 20. s-k's retired pane p10
-# hands over at -75 and stays open; its new pane p11 hands over at -72 and closes at -65, with a 0.31.0
+# hands over at -75 and stays open; its new pane p11 hands over at -72 and closes at -65, with a 0.30.1
 # `close review-s-k` line after its pane-closed line, which closes no other pane: p10 open, 75, and p11
 # closed, 7. s-m merges at -140 and reads `merged elsewhere` at -100, its pane never closed: merge,
 # open, 140 from the first merge. s-h hands over twice in one pane and its close follows the second by
@@ -88,7 +88,7 @@ with open(path, "w") as out:
         if keep and slug not in keep:
             continue
         if "version=" not in outcome:
-            outcome += (" " if " ~~ " in outcome else " ~~ ") + "version=0.31.0"
+            outcome += (" " if " ~~ " in outcome else " ~~ ") + "version=0.30.1"
         t = (now + datetime.timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%SZ")
         out.write(f"{t}\t{cmd}\t{target}\t{pane}\t{outcome}\n")
 PY2

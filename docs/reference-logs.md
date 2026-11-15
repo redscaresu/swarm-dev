@@ -603,11 +603,11 @@ each of the story's open review panes instead. `from` names which it was, `merge
 later handover in the same pane before the close moves the start to it, since the pane worked again;
 a merge stays the start, even when a later `merge` line follows. `minutes` runs to the pane's first close after the start: a `pane-closed`
 line with `slug=<slug>`, `role=review` and that pane's `pane=`. An ok `close review-<slug>` line
-written before 0.31.0 closes every open review pane of the story; a later one has its `pane-closed`
+written before 0.30.1 closes every open review pane of the story; a later one has its `pane-closed`
 lines, so it closes none. It pairs by those fields and never by the
 line's target, so a retired pane whose close names `review-<cut>-done` still pairs. `pane` is
 `closed`, or `open` with the minutes so far when no close followed. An open pane whose start line has
-no `version=`, or one before 0.31.0, reads `unlogged`, with `-` for its minutes: those releases
+no `version=`, or one before 0.30.1, reads `unlogged`, with `-` for its minutes: those releases
 logged no `pane-closed` line for the closes swarm.sh made itself (reconcile's, after a merge), so the
 pane may have closed unseen, and it is not measured. A row counts when its start's local day is in
 the window. After a blank line, `over_30` counts the rows whose `minutes`, as shown, is past 30, open ones included and
