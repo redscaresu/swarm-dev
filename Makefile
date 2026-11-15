@@ -21,7 +21,8 @@ SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_te
 # tell_queue, wait_lead, wait_pr, and merge_test with the two files split from it (merge_rules,
 # merge_queue; all three on tests/merge_fixture.sh). They start first, CI's SHARD=i/N split gives each
 # SLOW and SERIAL file a shard of its own, so ci.yml's shard count is at least the two lists' length
-# (tests/test_shard_test.sh), and a SLOW file has three times the TEST_FILE_TIMEOUT. A file joins SLOW when the shard it shares runs longer than the SLOW shards do.
+# (tests/test_shard_test.sh), and a SLOW file has three times the TEST_FILE_TIMEOUT. A file joins SLOW
+# when the shard it shares runs longer than the SLOW shards do.
 SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh tests/dash_check_test.sh \
   tests/queue_test.sh tests/wait_pr_test.sh tests/tell_queue_test.sh tests/wait_lead_test.sh \
   tests/dash_time_limit_test.sh
