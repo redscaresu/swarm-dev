@@ -1010,8 +1010,10 @@ stage and its retro file. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
 only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
 while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
-tag's line is below S, the step is `release v<x.y.z+1> (patch)`. What merged under an unstaged
-epic, or under no epic, goes out in that patch: nothing checks that it is a fix. A merged story is
+tag's line is below S, the step is `release v<x.y.z+1> (patch)`.
+`next` does not check that what merged under an unstaged epic, or under no epic, is a fix.
+`merge --release` does, and refuses the patch when it is not ([The retro gate](#the-retro-gate)).
+A merged story is
 one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
 `status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
 to the steps after it. An epic on the board whose `stage:` is not
@@ -1076,6 +1078,27 @@ running in its project and starts nothing gets the same kind of warning, and mer
 next project. The release still counts as done, and neither these warnings nor the refusal above
 changes merge's exit code.
 
+### The retro gate
+
+`merge --release` checks the bump against the same retro rule as `next`, under `merge = agent` and `merge = human` alike.
+It runs right after the version check, before the release grant and the docs check, so the grant's refusal cannot hide it.
+When the base moves before the merge, it runs again with the rest of the release check.
+It reads git at the base commit the release check fetched, never your checkout.
+A minor is a bump whose major.minor rises (0.30.2 to 0.31.0, or to 1.0.0); any other bump is a patch.
+A minor needs a done `<board>/retros/v<new>.md` on the base, in the [retros README](../templates/docs/retros/README.md)'s format, whose `covers:` ends at the new version and starts at or before the old one.
+Without one, merge refuses with `--release: v<new> is a minor, and <why>: run its retro first (swarm.sh next prints retro v<new>)`.
+For a minor, the gate reads no tag.
+A patch reads origin's tag `v<old>` by its SHA, never your local tag, and the grant and the docs check compare against that same commit.
+A tag that is missing, or not on the base, refuses the patch, even one whose body has a `Docs: none` line.
+There is no pass for a first release: tag the last release on origin.
+Every change from that tag to the base must come from a `fix: true` story or a `story/fix-main-<sha7>` build, as `next` tells a fix (§ Releases above).
+merge reads the merged PRs from gh each time, skipping the cache `next` uses.
+A change that is no fix refuses with `--release: v<new> is a patch, but <change>: cut a minor after its retro`.
+Once a feature lands, no patch can go out until the next minor, which needs its retro.
+A read that fails refuses too, naming it.
+On a pass, merge prints `retro gate: v<new> is a minor; <board>/retros/v<new>.md covers v<a.b.c>..v<new>, done <date>`, or `retro gate: v<new> is a patch; every change since v<old> is from a fix: true story or a fix-main build`.
+On a board outside the project's repo, git holds no retro file or story history to read, so the gate refuses every release, and the refusal ends `merge it yourself if it may ship without a retro`.
+
 ## Commands
 
 **`swarm.sh dropped-lines <owner/repo> <n> <head> <base>`**
@@ -1110,6 +1133,7 @@ Merge a green PR whose story is in review, pinned to the head that passed, then 
 With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest.
 `swarm.sh merge --release [--upgrade] <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`; for swarm-dev's own release it updates the plugin, then asks before it moves the running agents onto it (`--upgrade` moves them unasked, and with no terminal it moves none and prints `upgrade not run:`).
 It refuses the bump while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line.
+It refuses a minor with no done retro file for it, and a patch with a change since origin's tag that is not a fix, under either merge mode ([The retro gate](reference-merging.md#the-retro-gate)).
 With `merge = human` it merges only when at least one story merged since the last tag and every one of them is under an agreed HLD that grants `release`.
 It refuses a story PR, or a board PR under `--board`, that sets an epic `active` with no ticket (the epic guard, [§ Merging](reference-merging.md#merging)) or before the base allows its stage ([§ Writing an epic](reference-planning.md#writing-an-epic)).
 Where the base has a merge queue, `merge` enqueues the PR.

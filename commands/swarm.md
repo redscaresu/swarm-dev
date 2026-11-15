@@ -726,6 +726,15 @@ Repeat until a step below says stop:
        the base first, as above; merge origin/<base> into the PR; or remove this worktree and the
        `release/v<new>` branch, close the PR and cut the release again). Run `swarm.sh dash --check` as
        above, then stop and go back to 1 once that is done.
+     - It refused at the retro gate, under both settings.
+       `v<new> is a minor, and ...: run its retro first` means the minor's retro is not done: keep the PR, the worktree and the branch, and do the retro step (`next` prints `retro v<new>`).
+       Once `next` prints `release v<new>`, this arm uses the open PR.
+       `v<new> is a patch, but ...: cut a minor after its retro` means a change since the tag is not a fix, so no patch goes out until the next minor.
+       Remove this worktree and the `release/v<new>` branch, close the PR, and tell the user which change the refusal named.
+       Cut no patch again while that change is on the base, even when `next` names one: a held stage's `release v<x.y.z+1> (patch)` does not check for fixes.
+       The next release is a minor, after its retro.
+       When the refusal ends `merge it yourself if it may ship without a retro` (a board outside the repo), keep the PR and tell the user it waits on their merge.
+       Run `swarm.sh dash --check` as above, then go back to 1.
      - Any other refusal: under `merge = human` the release-grant refusal ("waits on the user's merge"),
        a merge queue, a failed fetch of the base, a missing `v<version>` tag, a gh error. Keep the
        worktree and the branch. Run `swarm.sh dash --check` as above. Tell the user what the refusal

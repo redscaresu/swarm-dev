@@ -127,6 +127,8 @@ Useful while it runs:
 - A fix to the swarm's own loop (the conductor, review agent, guard or `wait` commands) ships as a
   patch release soon after it merges, so running projects get it. The lead cuts it, through the
   release arm below; a builder's story PR never bumps the version.
+  It ships as a patch only when every change since the tag is from a `fix: true` story or a fix-main build.
+  Otherwise `merge --release` refuses the patch, and the fix ships in the next minor, after its retro.
 - Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
   that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
 
@@ -243,3 +245,4 @@ without one publishes nothing. Before a release, bring AGENTS.md, README.md, doc
 line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
 `commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
 the release PR body has a `Docs: none — <reason>` line.
+It also refuses a minor bump with no done `<board>/retros/v<new>.md` on `main` covering it, and a patch bump while a change since origin's tag is not from a `fix: true` story or a fix-main build, under either merge setting ([§ The retro gate](docs/reference-merging.md#the-retro-gate)).

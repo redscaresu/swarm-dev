@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # merge_rules_test.sh — merge_test.sh's cases on what swarm.sh merge merges (the story or epic that
-# lists the PR) and --release (the version bump, its docs gate, merge = human's release grant, the
+# lists the PR) and --release (the version bump, its retro gate and docs gate, merge = human's release grant, the
 # plugin's own upgrade), who may run it, a story marked costs, merge = human's HLD grant, and
 # merge's epic guard, on a board PR and a story PR. On merge_fixture.sh, as merge_test.sh is.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -53,9 +53,9 @@ fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
 # --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json,
 # in the project's own repo, merges with no story listing it and runs no reconcile; any other file or
-# field, another base, or another repo, is refused. origin's default branch is main, tagged v1.2.0.
-git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; git -C "${P}" tag v1.2.0
-git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+# field, another base, or another repo, is refused. origin's default branch is main, tagged v1.2.0, with
+# the retro file a 1.2.0 to 1.3.0 release needs (release_origin).
+release_origin
 release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --release "${URL}"
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
@@ -233,6 +233,82 @@ human_release fetched "${late}"
 is "--release with origin/main moved locally mid-check: the checks read the commit fetched first, and it merges" "0 yes" "${rc} $(merged && echo yes)"
 check "--release reads the base's plugin.json at the commit it fetched" grep -q "contents/.claude-plugin/plugin.json?ref=${was}" "${ROOT}/gh.log"
 push; retag
+# The retro gate, under either merge setting. A minor (1.2.0 to 1.3.0) needs a done docs/retros/v1.3.0.md
+# on origin's main covering it; a patch (1.2.0 to 1.2.1) needs every change since origin's v1.2.0 to come
+# from a fix: true story or a fix-main build, as non_fix_change reads the stub's merged PRs.
+# retro [front-matter line]... — origin's main gets docs/retros/v1.3.0.md with those lines; with none, loses it.
+retro() { if [[ $# -gt 0 ]]; then mkdir -p "${P}/docs/retros"; landed docs/retros/v1.3.0.md "$@"; else gone docs/retros/v1.3.0.md; fi; }
+# gate_refused <name> <text> — refused, as refused checks, naming <text>, and run its retro first.
+gate_refused() { refused "$1" "$2"; check "$1: names the retro, not the grant" bash -c "! grep -q \"waits on the user's merge\" '${ROOT}/out'"; }
+# squashed <slug> <file>... — story <slug>'s PR squash-merged on main: it changes each <file> and deletes
+# the story's file; prints the commit.
+squashed() {
+  local f; for f in "${@:2}"; do mkdir -p "$(dirname "${P}/${f}")"; echo x >> "${P}/${f}"; gt add -f "${f}"; done
+  gt rm -q "docs/stories/$1.md"; gt commit -q -m "$1 (#9)"; push; gt rev-parse HEAD
+}
+# prs <n>=<head>=<rev>... — PRS, the merged PRs as_patch serves: PR <n> from <head>, merged as <rev>.
+prs() {
+  local p rest PRS_L=""
+  for p in "$@"; do rest="${p#*=}"
+    PRS_L+="${PRS_L:+,}{\"number\":${p%%=*},\"headRefName\":\"${rest%%=*}\",\"mergeCommit\":{\"oid\":\"$(gt rev-parse "${rest#*=}^{commit}")\"}}"
+  done
+  PRS="[${PRS_L}]"
+}
+# as_patch — the head bumps 1.2.0 to 1.2.1, a patch, and the stub lists PRS as the merged PRs.
+as_patch() { echo '{"name":"x","version":"1.2.1","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"; echo "${PRS}" > "${FX}/prlist"; }
+release_pr; merge --release "${URL}"
+is "the retro gate, a minor with its retro: exits 0" 0 "${rc}"
+check "the retro gate, a minor with its retro: merged" merged
+check "the retro gate, a minor with its retro: says so" said "retro gate: v1.3.0 is a minor; docs/retros/v1.3.0.md covers v1.2.0..v1.3.0, done 2026-11-01"
+retro "covers: v1.2.0..v1.2.5" "done: 2026-11-01"
+release_pr; merge --release "${URL}"; refused "the retro gate, a minor whose retro covers up to v1.2.5" \
+  "--release: v1.3.0 is a minor, and docs/retros/v1.3.0.md at $(gt rev-parse HEAD): covers: v1.2.0..v1.2.5 ends at v1.2.5, not v1.3.0: run its retro first (swarm.sh next prints retro v1.3.0)"
+retro; release_pr; merge --release "${URL}"; refused "the retro gate, a minor with no retro file" \
+  "--release: v1.3.0 is a minor, and no docs/retros/v1.3.0.md at $(gt rev-parse HEAD): run its retro first"
+retro "covers: v1.2.0..v1.3.0"; release_pr; merge --release "${URL}"; refused "the retro gate, a minor whose retro has no done:" \
+  "--release: v1.3.0 is a minor, and docs/retros/v1.3.0.md at $(gt rev-parse HEAD) has no done: in its front matter: run its retro first"
+# merge = human: the gate runs before the grant, so a release the grant covers is still refused without
+# its retro, and one with neither is refused naming the retro.
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-i.md "epic: shipped"; gone docs/stories/shipped-i.md docs/epics/shipped.md
+human_release; gate_refused "the retro gate, merge = human, a grant and a retro with no done:" "--release: v1.3.0 is a minor, and docs/retros/v1.3.0.md at"
+retro; human_release; gate_refused "the retro gate, merge = human, a grant and no retro file" "--release: v1.3.0 is a minor, and no docs/retros/v1.3.0.md at"
+retag; human_release; gate_refused "the retro gate, merge = human, no grant and no retro file" "--release: v1.3.0 is a minor, and no docs/retros/v1.3.0.md at"
+retro "covers: v1.2.0..v1.3.0" "done: 2026-11-01"
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-j.md "epic: shipped"; gone docs/stories/shipped-j.md docs/epics/shipped.md
+human_release
+is "the retro gate, merge = human, a grant and the retro: exits 0" 0 "${rc}"
+check "the retro gate, merge = human, a grant and the retro: merged" merged
+# A patch under the grant: a story's PR, squash-merged after the tag, with no fix: line, is refused
+# naming it; with fix: true, it merges. origin's v1.2.0 is the release PR's merge commit (#1).
+landed docs/epics/shipped.md "hld: ship"; landed docs/stories/feat-a.md "epic: shipped"; retag
+c="$(squashed feat-a bin/f.sh README.md)"; gone docs/epics/shipped.md; prs 1=release/v1.2.0=v1.2.0 9=story/feat-a="${c}"
+human_release as_patch; gate_refused "the retro gate, merge = human, a grant and a patch with a story with no fix: line" \
+  "--release: v1.2.1 is a patch, but ${c:0:7} #9 story/feat-a: docs/stories/feat-a.md had no fix: true before the merge: cut a minor after its retro"
+landed docs/epics/shipped.md "hld: ship"; landed docs/stories/fix-a.md "epic: shipped" "fix: true"; retag
+c="$(squashed fix-a bin/f.sh README.md)"; gone docs/epics/shipped.md; prs 1=release/v1.2.0=v1.2.0 9=story/fix-a="${c}"
+human_release as_patch
+is "the retro gate, merge = human, a grant and a fix-only patch: exits 0" 0 "${rc}"
+check "the retro gate, merge = human, a grant and a fix-only patch: merged" merged
+check "the retro gate, merge = human, a grant and a fix-only patch: says so" said "retro gate: v1.2.1 is a patch; every change since v1.2.0 is from a fix: true story or a fix-main build"
+# merge = agent, the same patch; then a commit no PR lists since origin's tag, read from origin's tag
+# whatever the local one says.
+release_pr; as_patch; merge --release "${URL}"
+is "the retro gate, a fix-only patch: exits 0" 0 "${rc}"
+check "the retro gate, a fix-only patch: merged" merged
+commit bin/g.sh README.md; c="$(gt rev-parse HEAD)"
+release_pr; as_patch; merge --release "${URL}"; refused "the retro gate, a patch with a commit no PR lists" \
+  "--release: v1.2.1 is a patch, but ${c:0:7}: no merged PR has this commit: cut a minor after its retro"
+gt tag -f v1.2.0 "${c}" >/dev/null
+release_pr; as_patch; merge --release "${URL}"; refused "the retro gate, a patch with the local v1.2.0 moved past a commit no PR lists" \
+  "--release: v1.2.1 is a patch, but ${c:0:7}: no merged PR has this commit"
+gt tag -d v1.2.0 >/dev/null
+release_pr; as_patch; merge --release "${URL}"; refused "the retro gate, a patch with no local v1.2.0" \
+  "--release: v1.2.1 is a patch, but ${c:0:7}: no merged PR has this commit"
+gt push -q origin :refs/tags/v1.2.0
+release_pr; as_patch; printf '"%s"\n' 'Docs: none \u2014 a fix' > "${FX}/body"; merge --release "${URL}"
+refused "the retro gate, a Docs: none patch with no v1.2.0 on origin" \
+  "--release: v1.2.1 is a patch, but no v1.2.0 tag on origin to compare against: tag main's last release v1.2.0"
+retag
 # A release of the plugin's own repo (plugin.json's repository), once its tag and published release
 # are on the merge commit or after it: the marketplace and the plugin are updated, then the new
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's

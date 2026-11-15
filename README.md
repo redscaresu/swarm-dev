@@ -119,6 +119,7 @@ It is only an estimate, and it counts Fable low until you give it a `/usage` rea
 - A hook guards every session: it refuses raw PR merges and git commands that would throw away work.
 - Nothing merges until you say so, unless you choose to let the agents merge. Even then, PRs that
   change CI, hooks, Claude settings or the build always wait for you.
+- `swarm.sh merge --release` refuses a minor release until its retro is done, and a patch that ships anything but fixes.
 
 [Cost and safety](docs/running.md#cost-and-safety) has every rule.
 

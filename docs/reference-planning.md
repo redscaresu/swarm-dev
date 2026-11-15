@@ -190,12 +190,13 @@ each story's scope. Once the board PR is open, each skeptic, codex and critic fi
 against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is four agents (survey, lead, codex, critic) when no story is `risk: high`, plus up to five skeptics (including any added when review moves a story to `risk: high`) and, for a multi-repo epic, two more surveys, so
 scope deliberately.
 
-**Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
-changes no behaviour; a separate `lead` story turns it on. Bundled, a failure cannot say whether
-the code or the switch broke it, and the rollback has to undo both. Two exceptions:
-`escalate_after` ships on, at `2`, by the user's decision of 2026-10-13. It changes nothing until a
-story has failed twice. `codex_minutes` ships on, at `10`, because without a limit a codex review
-can hang for good.
+**Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge changes no behaviour; a separate `lead` story turns it on.
+Bundled, a failure cannot say whether the code or the switch broke it, and the rollback has to undo both.
+There are three exceptions.
+`escalate_after` ships on, at `2`, by the user's decision of 2026-10-13.
+It changes nothing until a story has failed twice.
+`codex_minutes` ships on, at `10`, because without a limit a codex review can hang for good.
+The retro gate in `merge --release` ([reference-merging.md § The retro gate](reference-merging.md#the-retro-gate)) ships on, by the 0.28 HLD's Goal 1: every project with `.claude-plugin/plugin.json` and a `v<version>` tag gets it once it upgrades.
 
 A story's **Done when** names what the builder's session can show (a test run, a command's output, a file), never something only the conductor or a merge can show, so a goal's judge can see it.
 

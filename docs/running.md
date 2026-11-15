@@ -116,7 +116,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved
   the head. Under `merge = human`, the lead merges a release only when every story merged since
-  the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
+  the last tag is under an agreed HLD that lists `release`.
+  `swarm.sh merge --release` refuses, under either mode, a minor release with no done retro file for it, and a patch with a change since the tag that is not a fix ([reference-merging.md § The retro gate](reference-merging.md#the-retro-gate)).
+  Under either mode, a PR that changes
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand. So does a
   PR whose own merge of the base dropped a line of the base that its head has not put back, or whose
   merges `swarm.sh merge` cannot check.
