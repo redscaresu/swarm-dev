@@ -104,7 +104,10 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 - Agents start with a short list of environment variables. Any other variable you exported reaches
   an agent only when its story names it under `env:` or the board's config lists it in `agent_env`.
   With Foundry on, its `ANTHROPIC_FOUNDRY_*` and model settings pass to every agent too. With Bedrock
-  on, so do its `AWS_BEARER_TOKEN_BEDROCK` key and model settings.
+  on, so do its `AWS_BEARER_TOKEN_BEDROCK` key and model settings. On a Claude subscription there
+  is nothing to pass: agents use your logins through `HOME`. On Bedrock, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` pass only when a story's `env:` or the board's `agent_env` names them; a profile
+  or SSO login reaches agents through `HOME` and `AWS_PROFILE`.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
   go through `swarm.sh merge`), a `git checkout` that would drop changes, a `git reset --hard`,
   `restore` or `clean` that would drop uncommitted work in the main checkout, and an agent's `pkill`.

@@ -9,7 +9,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `grants`,
-`cost`, `outcomes`, `flow`, `dataset`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
+`cost`, `outcomes`, `flow`, `dataset`, `retro`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, `swarms`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`,
@@ -86,6 +86,21 @@ the agent running `codex-review`. When `codex-review` retries codex after a rate
 `codex-retry` line, not a second incident: target `codex-<story>` (`codex-<base>` with no `SWARM_STORY`),
 outcome `rate limit: retrying in <N> s`, and the same tail as its `codex-limit` incident ([§ Building](reference-building.md#building)). `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
+A `pane-closed` line records a pane `swarm.sh` closed. It is not a command of its own. Its target is
+the agent name the pane was closed under, or `-` when its tab record names none, and its outcome is
+`ok`. Its tail is `pane=<pane id>`, then `slug=` and `role=` as on an incident line. They are read
+from the name the pane's tab record held, which is never cut, so a name of 32 characters or more keeps
+its slug. A retired `<name>-done` reads the name it had before. `retire_agent` keeps that name in
+`.swarm/retired.tsv`, one line per retirement: the pane, the new name and the old one.
+`close_pane` writes one line for a pane it closes by itself, and `close_tab` writes one for each pane
+in the tab record of a tab it closes. That covers `close`, by an agent's name or by a tab's label (a
+conductor's epic tab, tabs that share a label), the same closes inside `merge`, `reconcile` and
+`step-up`, and the pane of a review agent's start that went wrong. A tab record's `conductor` line is
+logged under its conductor's name. `tidy --yes` writes one line for each pane it closes. A pane herdr
+could not close gets no line. Nor does a pane in a closed tab that no tab record holds, or a pane
+closed after a failed `restart` or a failed start of any agent but a review agent. The stall rule
+does not count a `pane-closed` line as a sign of life. `unblock --startable`, `hold` and a
+conductor's check for work left skip it when they read a story's last line for a reopen.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
@@ -137,7 +152,12 @@ queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
 unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
 queued, or a merge with no merge commit. A merge at a head other than the checked one is `merge
-merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+merged at head <sha>, not <sha>, ...` and then reconcile's lines. When that reconcile retires the
+story's review agent in its own pane, the waiter that later closes the pane writes one
+`close-when-idle review-<slug>` line. Its outcome is `closed (pane <pane>)`, or `left open: <why>`
+when the agent was still not idle, or the merge still running, after the waiter's limit. A
+`swarm.sh review` that hands a PR to the user from the review agent's own pane, under `merge = human`
+with no HLD `merge` grant, retires the agent too, and its waiter writes the same line. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from
@@ -166,7 +186,7 @@ The outcome field can end in a tail of `key=value` fields, for example
 `EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
 `version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
-Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
+Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `pane-closed` passes `pane=`, `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
 `url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
 `verdict=`. For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
