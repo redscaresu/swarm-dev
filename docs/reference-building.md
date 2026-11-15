@@ -1221,7 +1221,7 @@ It reads herdr's agent list once and answers every later agent list from it.
 A read still running at that point is cut, the step is worked out without it, and a `skipped (over 30 s): <reads>` line after the step names each cut read, such as `herdr agent list`, `gh pr list` or `ci_gate age`.
 A cut read can change the step.
 Without herdr's agent list it can miss a working conductor.
-Without `claude agents` or `herdr agent read` it can show a conductor stopped on an expired login or an API error as still working.
+Without `claude agents` or `herdr agent read` it can show a conductor stopped on an expired login, an API error or a model error as still working. For a conductor stopped on a model error, the step is `wait <conductor>` with a `stuck:` line: a resume in the same session cannot clear it, so the restart rule starts the conductor in a fresh session.
 Once a read that decides a start is cut, next starts no conductor, and names each one it would have started: `no conductor started: <conductor>: a read it needs was cut at the report's deadline; run swarm.sh next again`.
 So run `next` again whenever it prints a skipped line.
 Writes, and a start once begun, are never cut, so a slow start runs to its end.
