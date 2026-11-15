@@ -388,6 +388,10 @@ Repeat until a step below says stop:
      open in that plan's tab has written its output, so the step they ran is over. Run the exit
      (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
      plan's next step. The line comes again at the end of each later step, since its names change. A
+     `plan-missing: <epic> <name> ended without its output, exit: /swarm-dev:plan-epic <epic> (it starts that agent again)`
+     line means that agent of the plan's attempt has ended, or never started, and left no output
+     that counts. Run the exit (`/swarm-dev:plan-hld <hld>` for an HLD's plan): its resume rule
+     starts the agent again and reuses the outputs that count. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
      next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
