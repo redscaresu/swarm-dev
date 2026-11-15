@@ -234,7 +234,15 @@ A file the base deleted, or renamed past what git detects, still counts its line
 look the same. A stacked build keeps its parent's merges in its history after the parent's squash
 merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
 squash has taken it off the base. A line the PR's own merge drops while the base still has it still
-prints. When
+prints. A line the PR's head still holds does not count, so a commit that puts a dropped line back
+clears the hold on the next `swarm.sh merge`. After reading every merge, the check counts the line's
+copies in the head's file. The head must hold the copies the merge kept, plus the ones it dropped,
+plus any the base has added since (at the PR's merge base with the base). A head can hold as many
+copies as the base and still lack the line: when the PR added a `}` of its own and its merge dropped
+the base's `}`, the counts match, but the dropped one is not back. The line prints once for each copy
+the head is short, so a head that put back one of two dropped copies still prints the other. A copy the PR adds
+after the merge for a reason of its own also counts as put back, since a count cannot tell the two
+apart. When
 `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
@@ -248,9 +256,7 @@ or gh no longer lists the head), `merge` refuses for a new review instead, with 
 nothing is recorded. On a story PR either hold is recorded on the item in review, as a protected-path
 hold is: `protected: <PR URL> <head> <time> dropped base lines: ...`, with each `|` written as `¦`,
 since the record separates its entries with ` | `. A later `swarm.sh merge` that finds nothing dropped
-removes the record. `--release` reads no commits, since a release PR changes only `plugin.json`. A
-commit that puts a dropped line back does not clear the hold: the scan reads each merge as it was made.
-Only a branch rebuilt without that merge, or your merge by hand, ends it.
+removes the record. `--release` reads no commits, since a release PR changes only `plugin.json`.
 
 Under `merge --head <reviewed>`, a head that has moved past the reviewed one is checked first, at
 the head check. `merge` takes it with no new review when every commit on its first-parent chain back
@@ -1050,6 +1056,7 @@ It works in the clone of `<owner/repo>` (the project, or `<repos_dir>/<name>`), 
 It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/head` and `<base>` into refs of its own, and checks that the fetched commit is `<head>`.
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
 A line counts only while the base still has it, both at the fetched `<base>` and at the PR's merge base with it.
+It also counts only while `<head>` has not put it back: `<head>`'s file must hold the copies the merge kept, plus the ones it dropped, plus any the base added since, and the line prints once for each copy it is short.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
 Each dropped line prints as `<sha7> <file>: <text>`.

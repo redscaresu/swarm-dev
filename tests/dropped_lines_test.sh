@@ -3,8 +3,9 @@
 # no network). Each case starts from f's BASE0 lines on main and a branch pr off it. Most have main
 # replace line three with three-main and main-added, pr replace it with three-pr, and pr merge main,
 # resolving f to the lines the case gives. A base line the resolution dropped prints as
-# `<merge sha7> f: <text>` with exit 1; the PR's own lines, its own removals, conflict markers and
-# whitespace-only lines never print; a merge it cannot check exits 2 with one line saying why.
+# `<merge sha7> f: <text>` with exit 1, until a later commit puts it back in the PR's head; the PR's own
+# lines, its own removals, conflict markers and whitespace-only lines never print; a merge it cannot
+# check exits 2 with one line saying why.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -158,6 +159,10 @@ printf '%s\n' a b c-pr d e | put "${R}" d
 M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; printf '%s\n' a b c-pr d e | put "${R}" d; git -C "${R}" rev-parse HEAD)"
 check "a base copy of a line the PR removed another copy of, which the resolution dropped, prints" \
   "${M:0:7} d: c-main"$'\n'"${M:0:7} d: return nil"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# A PR commit then puts both back: the head holds one 'return nil' to main's two, the PR having removed the
+# other on purpose, and the merge owes the head only its own (none kept, one dropped).
+printf '%s\n' a b c-pr c-main 'return nil' d e | put "${R}" d
+check "the same once a PR commit puts both back, one 'return nil' to main's two: nothing" "exit 0" "$(scan "${R}" main pr)"
 
 # The merge base has '}' twice; the PR removes the first and the resolution drops the second as well,
 # which both parents had.
@@ -223,6 +228,10 @@ R="$(new_repo bracebothadded)"; lines '}' three | put "${R}" f; on "${R}" pr; at
 M="$(at_seven '}' | merge "${R}" main -)"
 check "a line the merge base had, a copy each side added, main's dropped by the resolution: it prints" \
   "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The head holds two '}', as many as main, yet main's is not back: the merge kept two and dropped one, so the
+# head owes three. A PR commit then puts main's back after two.
+printf '%s\n' one two '}' "${BASE0[@]:2:5}" '}' "${BASE0[@]:7}" | put "${R}" f
+check "the same once a PR commit puts main's '}' back, three in the head: nothing" "exit 0" "$(scan "${R}" main pr)"
 
 # An octopus merge on the PR branch.
 R="$(new_repo octopus)"; git -C "${R}" branch b1; git -C "${R}" branch b2
@@ -287,6 +296,42 @@ M="$(lines three-pr three-main | merge "${R}" main -)"
 on "${R}" main; git -C "${R}" rm -q f; git -C "${R}" commit -qm 'delete f'; on "${R}" pr
 check "a dropped line of a file main has since deleted: it still prints" \
   "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# A line the PR's head holds again is no drop: pr's merge of main drops main-added, and a later pr commit
+# puts it back, so the head and main each hold one copy. Read merge by merge, it would still print.
+R="$(new_repo restored)"; conflict "${R}"
+lines three-pr three-main | merge "${R}" main - >/dev/null
+lines three-pr three-main main-added | put "${R}" f
+check "a line the merge dropped and a later PR commit put back, one copy in the head as in main: nothing, exit 0" \
+  "exit 0" "$(scan "${R}" main pr)"
+
+# The same drop, with a later pr commit that edits f elsewhere and leaves main-added out.
+R="$(new_repo unrestored)"; conflict "${R}"
+M="$(lines three-pr three-main | merge "${R}" main -)"
+lines three-pr three-main | sed 's/^ten$/ten-pr/' | put "${R}" f
+check "a line the merge dropped that a later PR commit did not put back: it prints, exit 1" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# main's f holds main-added twice, the merge drops both, and a later pr commit puts one back.
+R="$(new_repo restoredone)"; lines three-main main-added main-added | put "${R}" f; on "${R}" pr; lines three-pr | put "${R}" f
+M="$(lines three-pr three-main | merge "${R}" main -)"
+check "two copies of a line the merge dropped: both print" \
+  "${M:0:7} f: main-added"$'\n'"${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+lines three-pr three-main main-added | put "${R}" f
+check "the same once a later PR commit puts one of the two back: it prints once" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# main adds main-added again, after eleven, once pr's merge has dropped its first copy, and pr's second
+# merge of main brings that copy in cleanly: the head holds one copy to main's two, and the dropped one is
+# still missing. The merge owes the head what it kept, what it dropped and what main added since.
+R="$(new_repo readded)"; conflict "${R}"
+M="$(lines three-pr three-main | merge "${R}" main -)"
+on "${R}" main; { lines three-main main-added; echo main-added; } | put "${R}" f; on "${R}" pr
+merge "${R}" main >/dev/null
+check "a dropped line main added again since, brought in by a clean merge: the head holds one of two, it prints" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+{ lines three-pr three-main main-added; echo main-added; } | put "${R}" f
+check "the same once a PR commit puts the dropped copy back: nothing" "exit 0" "$(scan "${R}" main pr)"
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's

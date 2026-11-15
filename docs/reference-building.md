@@ -812,16 +812,11 @@ is `step-up --resume`. Before it reads the diff, each round, it runs `swarm.sh d
 <owner/repo> <n> <head> <base>` in the background on the round's head: the head its brief names on
 round 1, and from round 2, or on a moved head it follows, the command `review-agent --next` prints, on the head that round pins. A
 run that is killed, or that exits with anything but 0 or 1, counts as exit 2. On exit 1, each line
-it printed is a base line one of the PR's own merges dropped. The check reads each merge and never
-the head, so it prints a line again after the builder has put it back. The agent counts the
-whole-line copies of the text in the merge's file and in the round's head, with control characters
-such as tabs taken off as the check takes them off
-(`git show <rev>:<file> | LC_ALL=C sed 's/[[:cntrl:]]//g' | grep -cxF -- '<text>'`). A line
-is fixed only when the head's count is at least the merge's plus the times the check printed it, so
-another copy of the text, or a longer line holding it, does not count. A line the check cut to 300
-characters never matches and stays a finding. Each line
-not back is a finding to fix this round, whatever else the round finds, and the builder is told to
-restore it in a commit of its own. Once a later round finds it back, it is logged
+it printed is a base line one of the PR's own merges dropped that the round's head has not put back:
+the check counts the head's copies of it, so a line the builder restored no longer prints
+([reference-merging.md § Commands](reference-merging.md#commands)). Each line it printed is a
+finding to fix this round, whatever else the round finds, and the builder is told to restore it in a
+commit of its own. Once a later round's run no longer prints it, it is logged
 `log-finding --reviewer conductor --round <n> dropped-lines <PR URL> "<first line>"`. When the
 builder answers in the PR that the drop is meant, the agent may accept that as a decline. Its reply
 on the pass then names the drop and the answer, so whoever merges sees it. An exit 2 (it could not
