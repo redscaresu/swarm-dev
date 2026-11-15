@@ -1525,7 +1525,13 @@ EOF
 # since that file is read as a finished review of its head the moment it exists (review_pass,
 # wait review-<slug>); with findings to fix, to the .round.md beside it, which it tells the builder (tell
 # counts the round, and may step the build up or hold it) after waiting for it, then waits for its push,
-# runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
+# with wait --stall --past on the head the fix goes on, after a tell the worktree's HEAD just before it
+# goes (or before a queued one's delivery check), so an earlier push is no fix. Every wait for a fix is
+# one: after findings, a wording or green-step nudge, a queued tell's delivery (a delivery that stepped
+# the build up too), the round file nudged to a stepped-up build, and --next's worktree refusal. It
+# ends at once on `pushed <sha>` while the builder's turn may still run. The waits before a tell and
+# before a queued tell's delivery check, and every wait on the builder that is not for a fix, stay
+# plain turn waits, so a tell goes at once and lands on the head it is about. Then it runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
 # in the same session. Findings that are all wording go as a nudge instead, no round, and the head it pushes
 # is checked with review-agent --recheck (review_recheck), whose pass writes <findings file>, then review_handoff; its
 # refusal naming --next counts the round (review_rounds), and --next runs the full round. A stop before a
@@ -1583,13 +1589,13 @@ restart of it is running: in both cases, wait on it the same way. A build steppe
 round's findings were told has none of them in its handover brief (that brief pastes ${4}, which
 holds no findings to fix): once the new builder is idle, send it ${round} as a nudge, which is no
 round (write ${nudge} as below holding what ${round} holds, then \`${sw} tell $1 nudge ${nudge}\`),
-and wait on it again."
+and wait for its fix with \`${sw} wait --stall --past <HEAD before the tell> $1\`, as below."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, commit or push here:
 the builder changes the code. Merge only as the pass step below says. The files you write are
 ${4}, ${round} and, to nudge the builder, ${nudge}.
 
-$(guard_rule "\`${sw} wait --stall <slug>\`, \`${sw} wait-pr <PR URL>\` and, after the builder pushes, \`${sw} wait-pr --head <sha> <PR URL>\`")
+$(guard_rule "\`${sw} wait --stall <slug>\`, for a fix \`${sw} wait --stall --past <sha> <slug>\`, \`${sw} wait-pr <PR URL>\` and, after the builder pushes, \`${sw} wait-pr --head <sha> <PR URL>\`")
 
 The story touches: $(fm "${story}" touches)
 
@@ -1603,6 +1609,20 @@ never a loop of your own. It prints \`idle\`, or \`done\` for a builder with no 
 the builder's turn has ended.${stepped} When it ends any other way (\`stalled:\`, \`stuck:\`, a timeout
 or an error), stop with what it printed, as below: the builder is then the conductor's or the lead's
 to act on.
+
+A wait for a fix, at each place this brief names one, is that wait with \`--past <head>\` added,
+<head> the full sha the fix goes on top of. After a tell, <head> is what \`git rev-parse HEAD\` prints
+just before the tell goes, or, for a queued tell, just before you wait for its delivery, once the
+builder's turn has ended: a push the builder made before it had the tell is no fix of it, and would
+end the wait at once, while one it makes as the delivery lands must still end it. It ends every way the wait above does, and also exits 0
+with \`pushed <sha>\` as soon as this worktree is clean at a new commit <sha> that is the PR's head,
+while the builder's turn may still be running. On \`pushed <sha>\`, go on at once with <sha> as the
+head the builder pushed, as this brief says for a pushed head: its turn need not have ended, and
+read its pane (\`herdr agent read ${agent} --source recent-unwrapped\`) for any finding it declined.
+On \`idle\` or \`done\`, go on as after the wait above. Every other wait on the builder is the plain
+wait above. Before a tell it must be: a tell sent once the builder's turn has ended goes at once,
+not queued, and the wait before a queued tell's delivery check must not end on a push, or the queued
+tell would land on a head it was not about.
 
 A tell to a busy builder is queued, not refused: it prints \`queued: ${agent} (busy); delivered when
 its turn ends, so do not tell it again\` and exits 0, and its queue's check sends it once the
@@ -1623,8 +1643,9 @@ delivery did before you wait on the builder, since a delivery of findings that h
 the lead or steps the build up leaves \`.sent\` too: when ${story} now has a \`held_for:\` line, stop
 with \`held for the lead: <that line>\`, as below; when ${PROJECT_DIR}/.swarm/events.tsv gained an
 \`escalate\` line for $1 since your tell whose outcome starts \`ok (findings-\`, the delivery stepped
-the build up with the findings in its handover brief: tell it nothing, and wait on the new builder
-as above. Otherwise wait for the builder once more, as above: that turn is the one that has it.
+the build up with the findings in its handover brief: tell it nothing, and wait for the new builder's
+fix with \`${sw} wait --stall --past <HEAD before the delivery> $1\`, as above. Otherwise the builder has the tell: wait for its fix with
+\`${sw} wait --stall --past <HEAD before the delivery> $1\`, as above.
 
 ${4} is read as a finished review of the head on its \`head:\` line the moment it exists, so write it
 only when a round passes, or when you stop. To stop before a round passes, write ${4} with the Write
@@ -1644,8 +1665,9 @@ brief says to follow it. To follow a moved head, write no review file for the he
 green step below on the new head, then \`review-agent --next\`, which prints this round again on
 the new head (or the next round, when findings went out since), and do that round: its dropped-lines
 check and codex again, then triage. When --next refuses because the worktree is not at the PR's
-head or has uncommitted changes, the builder is still at work: wait for it as above, then follow
-again from the green step. A second such refusal on the same head ends the follow: write ${4} with
+head or has uncommitted changes, the builder is still at work: wait for its fix with
+\`${sw} wait --stall --past <the head the green step ran on> $1\`, as above, then follow again from
+the green step. A second such refusal on the same head ends the follow: write ${4} with
 the Write tool holding two lines, \`head: <the head you were on>\` and \`head moved: <that refusal
 line>\`, then stop. When --next refuses any other way, stop with what it printed, as above.
 
@@ -1663,7 +1685,8 @@ To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: t
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
 When tell prints \`queued:\`, the nudge goes when the builder's turn ends: do as above. After each
-nudge, wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
+nudge, wait for the builder's fix with \`${sw} wait --stall --past <HEAD before the tell> $1\`,
+as above, then wait for green again on the head it pushed. A wait on a
 head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> $2\`:
 right after a push GitHub can still report the old head, which the plain wait-pr would call green.
 That HEAD is this worktree's commit, pushed or not: when wait-pr exits 2 with \`the PR's head is
@@ -1742,8 +1765,9 @@ finished review. When every finding to fix is wording (a comment, doc or error-t
 misstates the code) and each cites the one file:line it rewrites, send them as a wording nudge in
 place of the findings tell below: a nudge is no round, so the ladder does not move. Write ${nudge} as
 above holding what ${round} holds, wait for the builder as above, run \`${sw} tell $1 nudge ${nudge}\`,
-and from there go on as below for a findings tell, a \`queued:\` one included. Otherwise wait
-before you tell, so the findings go at once and count their round now:
+and from there go on as below for a findings tell, a \`queued:\` one included: once the nudge is
+sent, wait for the fix with \`${sw} wait --stall --past <HEAD before the tell> $1\`, as above.
+Otherwise wait before you tell, so the findings go at once and count their round now:
 wait for the builder as above, then run \`${sw} tell $1 findings ${round}\`. When tell prints
 \`queued:\` (the builder took a turn meanwhile), do as above, and tell it nothing more. When tell
 says another step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
@@ -1754,8 +1778,9 @@ builder's pane, read it (\`herdr agent read ${agent} --source recent-unwrapped\`
 arrived, send them as a nudge, which is no round: write ${nudge} as above holding what ${round}
 holds, and run \`${sw} tell $1 nudge ${nudge}\`. Then wait on it as below. When tell says $1 is held
 for the lead, that its step-up failed partway, or refuses for any other reason, stop with what it
-printed, as above. Once the findings are sent, wait for the builder as above. Then read the
-builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`). When \`git rev-parse HEAD\`
+printed, as above. Once the findings are sent, wait for the fix with
+\`${sw} wait --stall --past <HEAD before the tell> $1\`, as above. Then read the builder's reply
+(\`herdr agent read ${agent} --source recent-unwrapped\`). When \`git rev-parse HEAD\`
 is still the head you reviewed (no fix was committed), and the builder declined each finding you
 sent with a reason you accept, the round passes on that head, as one with nothing to fix does: log
 each as declined, with \`--because "<the builder's reason, one line>"\`, rebut them in the PR as above, in one comment with each finding and the builder's

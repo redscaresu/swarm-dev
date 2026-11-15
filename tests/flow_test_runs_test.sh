@@ -10,8 +10,9 @@
 # the 5 slowest full runs, two runs that start in the same second paired by PID; a start line alone,
 # a filtered run, a shard, an interrupted run and a run before --since count nowhere in that baseline.
 # The builder block counts story/* runs of every filter (a TESTS filter, N files, all) with their
-# median and p90, and no run on main or -, shard, interrupted run or torn line. With no log the section
-# prints nothing. TZ is UTC.
+# median and p90, and no run on main or -, shard, interrupted run or torn line. The timeouts block
+# counts test.sh's reap lines in events.tsv in the window, not one before it nor codex-review's, with
+# or without the log; with neither it prints timeouts 0 alone. TZ is UTC.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -146,15 +147,29 @@ printf '%s\n' $'2026-10-02T09:00:00Z\t2026-10-02T09:06:40Z\t400\t4\tall\tb-400\t
 printf '2026-10-03T18:00:00Z\t2026-10-03T18:01:45Z\t105\t4\ttests/a_test.sh\tstory/j\t99.00\t10\t0\t0\t10'
 } >> "${P}/.swarm/test-runs.tsv"
 section() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=test_runs bash "${ROOT}/bin/swarm.sh" flow "$@" | grep -v '^## test_runs$'); }
-# The full runs alone, story/c's among them, fill the at_once table; the four builders' runs the last block.
-check "the buckets, medians, slowest five and builders' runs" "$(section --since 2026-10-01)" "$(printf '%s\n' \
+# The full runs alone, story/c's among them, fill the at_once table; the four builders' runs the next
+# block; no reap line yet, so timeouts 0.
+check "the buckets, medians, slowest five, builders' runs and timeouts 0" "$(section --since 2026-10-01)" "$(printf '%s\n' \
   $'at_once\truns\tmedian_s\tp90_s\tmedian_load' $'1\t5\t200\t700\t2.00' $'2\t1\t500\t500\t8.00' $'3-4\t2\t950\t1000\t25.00' $'5+\t2\t500\t600\t6.00' '' \
   $'start\tseconds\tbranch\tat_once\tstatus' $'2026-10-02T12:00:00Z\t1000\tb-1000\t4\t0' $'2026-10-02T11:00:00Z\t900\tb-900\t3\t0' \
   $'2026-10-02T08:00:00Z\t700\tb-same\t1\t0' $'2026-10-02T08:00:00Z\t600\tb-same\t5\t0' $'2026-10-02T10:00:00Z\t500\tb-500\t2\t0' '' \
-  $'builder_runs\tmedian_s\tp90_s' $'4\t195\t400')"
+  $'builder_runs\tmedian_s\tp90_s' $'4\t195\t400' '' timeouts 0)"
 check "a window with no run says so, and counts no builders' runs" "$(section --since 2026-11-01)" "$(printf '%s\n' \
-  'no full test runs logged in the window (2026-11-01 to 9999-12-30)' '' $'builder_runs\tmedian_s\tp90_s' $'0\t-\t-')"
+  'no full test runs logged in the window (2026-11-01 to 9999-12-30)' '' $'builder_runs\tmedian_s\tp90_s' $'0\t-\t-' '' timeouts 0)"
+# Reap lines in events.tsv: 3 of test.sh's in the window (one with its slug/role tail, one on the
+# window's last day), 1 of test.sh's before it, 1 codex-review reap and a story line in it.
+printf '%s\n' $'2026-10-01T10:00:00Z\treap\ttests/a_test.sh\t-\tTIMEOUT after 600s' \
+  $'2026-10-02T11:00:00Z\treap\ttests/b_test.sh\tw1-2\tTIMEOUT after 1800s ~~ slug=s-b role=builder' \
+  $'2026-10-03T23:00:00Z\treap\ttests/a_test.sh\t-\tTIMEOUT after 601s' \
+  $'2026-09-30T23:59:59Z\treap\ttests/a_test.sh\t-\tTIMEOUT after 600s' \
+  $'2026-10-02T12:00:00Z\treap\tcodex-s-b\t-\ttimed out after 20 min ~~ slug=s-b role=builder' \
+  $'2026-10-02T12:00:00Z\tstory\ts-b\t-\tok' > "${P}/.swarm/events.tsv"
+check "timeouts counts test.sh's reap lines in the window, never codex-review's" \
+  "$(section --since 2026-10-01 --until 2026-10-03 | tail -2)" $'timeouts\n3'
 rm "${P}/.swarm/test-runs.tsv"
-check "with no log (a project with no scripts/test.sh) it prints nothing" "$(section)" ""
+check "with no log but reap lines, it prints the timeouts block alone, counting them" \
+  "$(section --since 2026-10-01 --until 2026-10-03)" $'timeouts\n3'
+rm "${P}/.swarm/events.tsv"
+check "with no log and no reap line (a project with no scripts/test.sh), timeouts 0 alone" "$(section)" $'timeouts\n0'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

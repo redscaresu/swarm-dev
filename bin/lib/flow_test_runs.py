@@ -8,9 +8,15 @@
 # seconds and median load (- with no run); then, after a blank line, TSV start seconds branch at_once
 # status: the 5 slowest, slowest first. After a blank line, TSV builder_runs median_s p90_s: the
 # builders' runs (branch story/*) of every filter, all included and shards not, with their median and
-# p90 seconds (- with none). With no log (a project with no scripts/test.sh) it prints nothing; with
-# no full run in the window, a line in place of the baseline. --epic does not narrow it.
-import datetime, os, statistics
+# p90 seconds (- with none). With no log (a project with no scripts/test.sh) it prints none of these;
+# with no full run in the window, a line in place of the baseline. Last, after a blank line when any
+# block came before, TSV timeouts, with or without the log: the reap lines scripts/test.sh writes to
+# events.tsv for a test file past TEST_FILE_TIMEOUT (outcome `TIMEOUT after <n>s`) whose local day is
+# in the window; codex-review's reap lines (`timed out after <N> min`) are not counted. --epic does not
+# narrow it.
+import datetime, os, re, statistics
+from events_outcome import outcome
+from report import local_day, merge_time
 
 BUCKETS = (("1", 1, 1), ("2", 2, 2), ("3-4", 3, 4), ("5+", 5, float("inf")))
 SLOWEST = 5
@@ -62,3 +68,15 @@ elif runs:
 if lines:
     print("\nbuilder_runs\tmedian_s\tp90_s")
     print("\t".join([str(len(builders))] + median_p90(sorted(builders))))
+
+TEST_REAP = re.compile(r"TIMEOUT after [0-9]+s")   # scripts/test.sh's reap outcome
+timeouts = 0
+for line in open(events, errors="ignore") if os.path.exists(events) else ():
+    f = line.rstrip("\n").split("\t")
+    if len(f) != 5 or f[1] != "reap" or not TEST_REAP.fullmatch(outcome(f)):
+        continue
+    t = merge_time(f[0])
+    if t and since <= local_day(t).isoformat() <= until:
+        timeouts += 1
+print(("\n" if lines else "") + "timeouts")
+print(timeouts)
