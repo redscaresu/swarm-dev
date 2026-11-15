@@ -23,6 +23,8 @@
 # nothing; an upgrade of a story's epic ends its wait, and a reopening reconcile ends it until the next start.
 # A later close ends an open item; a failed start while the builder runs opens none; a wait runs from
 # the newest close, and a review line restarts it.
+# One wait --lead poll with a resend and a prompt candidate reads the process list (ps -A -ww) for
+# resend_pass and prompt_lines once, plus resend_pass's re-check before its Enter; the next poll reads it again.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -437,6 +439,60 @@ held="$(
   cut -f2,3,5 "${EVENTS_LOG}" 2>/dev/null || true
 )"
 check "held_story logs held" "${held}" $'held\ts\tok (paused)'
+
+# One wait --lead poll reads the process list (ps -A -ww) once for resend_pass and prompt_lines: a poll
+# with a resend candidate (an idle builder, its brief unsent in its box) and a prompt candidate (a
+# blocked agent on a permission prompt) resends one and prints the other's prompt: line, with ps and
+# herdr stubs logging each call, in order, to one log. resend_pass reads ps twice (the poll's read, then
+# its re-check before the Enter); prompt_lines, which runs after the Enter, reads none of its own. No
+# other reader in the poll reads ps here: no story is on the board.
+W="${ROOT}/ps-poll"; WB="${ROOT}/ps-bin"; WL="${ROOT}/ps-poll.log"; WS=11111111-2222-3333-4444-555555555555
+# Names of this run's own: ps is the whole machine's, and a swarm.sh naming one elsewhere skips it.
+WR="lqwr$$"; WP="lqwp$$"
+mkdir -p "${W}/.claude/swarm" "${W}/docs/stories" "${W}/.swarm/state" "${W}/.swarm/lead" "${WB}" \
+  "${CLAUDE_CONFIG_DIR}/projects/ps-poll"
+git -C "${W}" init -q; : > "${W}/.claude/swarm/config"; : > "${W}/.swarm/lead/seen"
+printf 'w:p1 %s\nw:p2 %s\n' "${WR}" "${WP}" > "${W}/.swarm/state/tab"
+printf '2026-10-26\tcode\t%s\tclaude\topus\thigh\t%s\n' "${WR}" "${WS}" > "${W}/.swarm/agents.tsv"
+: > "${CLAUDE_CONFIG_DIR}/projects/ps-poll/${WS}.jsonl"   # its session, with no turn since the brief
+printf '%s\tstory\t%s\t-\tok\n' "$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 120)))')" \
+  "${WR}" > "${W}/.swarm/events.tsv"
+printf '╭───╮\n│ Claude Code │\n╰───╯\n\n────\n❯ [Pasted text #1 +40 lines]\n────\n' > "${ROOT}/ps-p1.txt"
+cp "${REPO}/tests/fixtures/panes/prompt.txt" "${ROOT}/ps-p2.txt"
+printf '#!/bin/sh\nR="%s"; L="%s"\n' "${ROOT}" "${WL}" > "${WB}/herdr"
+cat >> "${WB}/herdr" <<STUB
+echo "herdr \$*" >> "\${L}"
+case "\$1 \$2" in
+  "agent list") printf '{"result":{"agents":[%s,%s]}}\n' \
+    '{"name":"${WR}","agent_status":"idle","pane_id":"w:p1"}' '{"name":"${WP}","agent_status":"blocked","pane_id":"w:p2"}' ;;
+  "agent read") cat "\${R}/ps-\${3#w:}.txt" ;;
+  *) echo '{"result":{}}' ;;
+esac
+STUB
+printf '#!/bin/sh\necho "ps $*" >> "%s"\nexec %s "$@"\n' "${WL}" "$(command -v ps)" > "${WB}/ps"
+chmod +x "${WB}/herdr" "${WB}/ps"
+out="$(cd "${W}" && env -u SWARM_PROJECT HOME="${ROOT}/home" CLAUDE_PROJECTS_DIR="${CLAUDE_CONFIG_DIR}/projects" PATH="${WB}:${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead \
+  bash "${REPO}/bin/swarm.sh" wait --lead 0 2>&1)" || true
+check "the poll prints the prompt candidate's prompt: line" "$(grep -c "^prompt: ${WP} (prompt), exit: " <<< "${out}")" 1
+check "the poll sends the resend candidate's Enter" "$(grep -c '^herdr pane send-keys w:p1 Enter$' "${WL}")" 1
+check "one poll reads ps -A -ww twice, both resend_pass's" "$(grep -c '^ps -A -ww ' "${WL}")" 2
+check "no ps -A -ww after the resend's Enter: prompt_lines reads none of its own" \
+  "$(awk '/^herdr pane send-keys / { on = 1 } on && /^ps -A -ww / { n++ } END { print n + 0 }' "${WL}")" 0
+# A wait --lead runs poll after poll in one process: resend_pass, each poll's first reader, drops the last
+# poll's list even when it reads none, so prompt_lines (poll_ps) reads ps afresh.
+stale="$(
+  PROJECT_DIR="${ROOT}/stale"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_step_up_findings=3; CFG_top_rung_rounds=2; mkdir -p "${PROJECT_DIR}"
+  # shellcheck source=bin/lib/agents.sh
+  source "${REPO}/bin/lib/agents.sh"
+  # shellcheck source=bin/lib/lifecycle.sh
+  source "${REPO}/bin/lib/lifecycle.sh"
+  POLL_PS="last poll"; POLL_PS_OK=1; LEAD_AGENTS_OK=""
+  resend_pass
+  # shellcheck disable=SC2329  # poll_ps calls it, in place of the real ps
+  ps() { echo "this poll"; }
+  poll_ps && echo "${NO_AGENT_PS}"
+)"
+check "a poll's resend_pass drops the last poll's process list" "${stale}" "this poll"
 
 [[ ${fails} -eq 0 ]] || { echo "${section}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

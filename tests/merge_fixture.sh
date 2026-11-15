@@ -282,11 +282,12 @@ fresh() {
 # merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,
 # output in ${ROOT}/out. Its CI waits get ${MERGE_CI} seconds (5 unless the file sets it: a merge that
 # merges the base in also reads the new head's workflows, which on a loaded machine can take longer).
+# A caller's MERGE_RUN array, when set, is a command swarm.sh runs under (merge_rules_test.sh's on_tty).
 merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
+  (cd "${P}" && ${MERGE_RUN[@]+"${MERGE_RUN[@]}"} env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
     SWARM_MERGE_CI_SECONDS="${MERGE_CI:-5}" SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 # events — each events.tsv line's command, target and outcome(), the outcome without its key=value tail
