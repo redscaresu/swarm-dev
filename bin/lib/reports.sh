@@ -438,8 +438,9 @@ dataset_report() {
 #     block 1 or 2 counted.
 #   run_times: .swarm/run-times.tsv, one row per status, next and dash run (timed), its rows whose
 #     start's local day is in the window: TSV command runs median_s p90_s over_60s, per command, with
-#     the median and p90 (nearest rank) seconds and the share over 60 s. A line with no log, another
-#     with no row in the window. --epic does not narrow it.
+#     the median and p90 (nearest rank) seconds and the share over 60 s; after a blank line, a by-load
+#     block, TSV command load runs median_s, per command and 1-minute load band (<10, 10-20, 20+, -).
+#     A line with no log, another with no row in the window. --epic does not narrow it.
 #   start_failures: TSV day failed restarted_10m not_restarted, per local day in the window, the review-agent
 #     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
