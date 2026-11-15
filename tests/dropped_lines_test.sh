@@ -280,6 +280,14 @@ M="$(squashed_f seven-child seven-main | merge "${R}" main -)"
 check "a stacked child's own merge drops a line main still has: it prints; its parent's merge prints nothing" \
   "${M:0:7} f: seven-added"$'\n'"exit 1" "$(scan "${R}" main child)"
 
+# main deletes f after pr's merge dropped main-added from it: a commit with no such file under any name git
+# finds still counts the line, as a rename past git's detection would look the same.
+R="$(new_repo deleted)"; conflict "${R}"
+M="$(lines three-pr three-main | merge "${R}" main -)"
+on "${R}" main; git -C "${R}" rm -q f; git -C "${R}" commit -qm 'delete f'; on "${R}" pr
+check "a dropped line of a file main has since deleted: it still prints" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
 # commits (${tmp}/commits.json, honouring --jq) and logs each call.

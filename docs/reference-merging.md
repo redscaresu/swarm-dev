@@ -230,9 +230,11 @@ them, so a resolution that keeps one copy has dropped nothing. If the merge base
 the line, each side's new copy is still owed, since two new copies of a `}` or a `fi` can be two
 separate additions. A line the base itself no longer has does not count: when the base's file has
 no copy of it at the base's tip, or at the PR's merge base with the base, the line is not printed.
-A stacked build keeps its parent's merges in its history after the parent's squash merge lands on
-the base, so a line one of those merges dropped on purpose stops counting once the squash has taken
-it off the base. A line the PR's own merge drops while the base still has it still prints. When
+A file the base deleted, or renamed past what git detects, still counts its lines, since the two
+look the same. A stacked build keeps its parent's merges in its history after the parent's squash
+merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
+squash has taken it off the base. A line the PR's own merge drops while the base still has it still
+prints. When
 `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
