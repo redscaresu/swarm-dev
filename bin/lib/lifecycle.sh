@@ -3250,7 +3250,7 @@ for p in sys.argv[1:]:
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
 # with stuck_lines' just before them and main_red_lines' `main-red:` lines (from events.tsv and the file the
 # last heads pass wrote, lead_bases), reported_lines' and sign_blocked_lines' after.
-# It fails, with that read's status, when the holds or a story's held_for: cannot be read. It never calls gh. It drops
+# It fails, with that read's status, when a story's held_for: or the holds (on a second read) cannot be read. It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
@@ -3258,8 +3258,10 @@ for p in sys.argv[1:]:
 lead_queue() {
   local f held tag line v keep="" holds shown slug prs seen=" "
   # A read that fails (a state file or story file that cannot be read, whose die ends only its $(...))
-  # fails the queue with its status, so lead_wake keeps LEAD_SEEN as the last good read left it.
-  holds="$(protected_holds)" || return
+  # fails the queue with its status, so lead_wake keeps LEAD_SEEN as the last good read left it. The holds
+  # are read twice before that: a merge's reconcile can remove a state file between protected_holds' list
+  # and its awk, and the second read, listing the board again, skips a file that is gone. Only the second says why.
+  holds="$(protected_holds 2>/dev/null)" || holds="$(protected_holds)" || return
   while IFS= read -r f; do
     held="$(get_fm "${f}" held_for)" || return
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
@@ -4923,12 +4925,13 @@ LEAD_QUEUE_RC=0
 
 # lead_exit <status> — wait --lead's EXIT trap: kill the poll's sleep, remove the pid file while it
 # still names this run, and, for a non-zero <status> with nothing said (LEAD_ENDED), print
-# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>.
+# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>, even
+# when that write fails (a HUP from a closed terminal leaves no stdout): under set -e a failed echo would make it 1.
 lead_exit() {
   trap '' USR1 TERM INT HUP   # a signal now would add a second line
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   [[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"
-  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead"
+  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead" || true
 }
 
 # lead_signal <status> [replaced] — wait --lead's USR1, TERM, INT and HUP traps, set before its argument
@@ -4942,7 +4945,8 @@ lead_signal() {
   [[ -z "${LEAD_ENDED}" ]] || return 0
   [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
   LEAD_SLEEP=""
-  [[ -z "${2:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
+  # A failed write (no stdout) still exits <status>, as lead_exit's does.
+  [[ -z "${2:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now" || true; }
   exit "$1"
 }
 
