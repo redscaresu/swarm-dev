@@ -89,7 +89,8 @@ HLD, after checking that none of those epics has work on it.
    one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
    than the worktree, or, on a board outside the repo, newer than the HLD file.
    Each agent's pane closes (`swarm.sh close <name>`) once its JSON has been read, never while only
-   its `.partial` exists. A pane still working is left open, and the report names it.
+   its `.partial` exists, except to restart one stuck on an error. A pane still working is left
+   open, and the report names it.
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
    fills its `## Epics` section with one link per epic. It changes nothing else. Right after writing
    the epics, before the commit and codex pass (and on a board outside the repo, before the report),
@@ -183,7 +184,7 @@ chain at most 3 stories deep, and a story's scope opens with what it needs from 
 a skeptic only on each `risk: high` story (capped at five, the rest logged), a codex pass and a critic, all in
 parallel. `risk: high` goes only to real-cloud, teardown, credentials and safety paths. Agents write their answers to
 `.swarm/<epic>/`. Each agent's pane closes (`swarm.sh close <name>`) once its answer has been read, never while
-only its `.partial` exists; a pane still working is left open, and the report names it. The user sees refuted stories, contradictions, the risky stories and stories ÷
+only its `.partial` exists, except to restart one stuck on an error; a pane still working is left open, and the report names it. The user sees refuted stories, contradictions, the risky stories and stories ÷
 longest chain first, and approves before the board PR opens; review fixes are folded into
 each story's scope. Once the board PR is open, each skeptic, codex and critic finding is logged
 against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is four agents (survey, lead, codex, critic) when no story is `risk: high`, plus up to five skeptics (including any added when review moves a story to `risk: high`) and, for a multi-repo epic, two more surveys, so

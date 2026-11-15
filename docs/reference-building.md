@@ -236,8 +236,9 @@ nothing in its `depends_on` holding up its planning, and not built (**A built ep
 `next` takes does not name, while no plan of it runs: no `scope-<epic>` tab record (or numbered
 `scope-<epic>-<n>` one) in `.swarm/state`, and no open plan board PR (its `_board-scope-<epic>`
 worktree). A plan's
-record goes when its panes close, so a plan that stopped with no stories and no PR brings the line
-back. A lead story whose `after:` names its epic does not count as one of the epic's stories. An epic
+record goes when its panes close, so the line comes back for a plan that stopped with no stories and
+no PR, and for a full `/plan-epic` run whose panes the lead closed while it waits for the user's
+approval, before its board PR opens. A lead story whose `after:` names its epic does not count as one of the epic's stories. An epic
 that a rerun of an interrupted `/plan-hld` will overwrite gets no line, as `next` leaves it to that
 rerun. Both lines come from the predicates `next`'s steps use, so they read what those read: the
 board, `.swarm/state`, the board PR worktrees and, for an active epic with no open story, the board's

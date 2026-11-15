@@ -65,9 +65,11 @@ has codex 'one `codex`, role `codex`'
 has close-once-read 'Once you have read an agent.s `<project>/\.swarm/\$1/<name>\.json`, run `swarm\.sh close <name>` for it'
 has close-never-partial 'Never close an agent while only its `\.partial` exists: that run is unfinished, and the agent may be started again from it'
 has close-working-named 'A pane still working is left open, and your report names it'
+# The restart route in /swarm-dev:swarm closes an agent stuck on an error, often with only a .partial.
+has close-error-exception 'The one exception is an agent stuck on an error, which you restart as /swarm-dev:swarm says: `swarm\.sh close <name>`, then start it again'
 # The reference section runs to the next ## or the end of whichever file holds it.
 m=$(awk 'FNR==1{on=0} /^## Decomposing an HLD/{on=1;next} /^## /{on=0} on' "${M[@]}" | tr '\n' ' ' | tr -s ' ')
-has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its JSON has been read, never while only its `\.partial` exists\. A pane still working is left open, and the report names it' "$m"
+has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its JSON has been read, never while only its `\.partial` exists, except to restart one stuck on an error\. A pane still working is left open, and the report names it' "$m"
 has critic 'one `critic`, role `critic`'
 has agent-tab 'swarm\.sh agent plan-\$1 <name> "<project>" <role>'
 has agents-in-project 'start each agent in `<project>`, as `/plan-epic` does, so its one write lands inside its working directory'

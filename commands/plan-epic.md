@@ -21,8 +21,12 @@ and replies with that path. Put each prompt below in `.swarm/briefs/<name>.md`, 
 **Closing.** Once you have read an agent's `.swarm/$1/<name>.json`, run `swarm.sh close <name>` for
 it (each survey, the lead, each skeptic, codex, the critic and the split critic): its work is done,
 and an open pane sits idle for hours. Never close an agent while only its `.partial` exists: that
-run is unfinished, and the agent may be started again from it. A pane still working is left open,
-and your report names it.
+run is unfinished, and the agent may be started again from it. The one exception is an agent stuck
+on an error, which you restart as /swarm-dev:swarm says: `swarm.sh close <name>`, then start it
+again. A pane still working is left open, and your report names it. Once every pane is closed and
+before the board PR opens, `swarm.sh next` and `swarm.sh wait --lead` print `idle: epic $1 has no
+plan running, exit: /swarm-dev:plan-epic $1`: that is this run waiting for the user's approval, not
+a plan to start again.
 
 **An expired login.** If a `wait` prints `auth`, that agent stopped on "Login expired · Please run
 /login". No agent can fix that, and only the user's `/login` clears it. Stop, and tell the user to
