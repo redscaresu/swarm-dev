@@ -3087,17 +3087,40 @@ stop_lines() {
   done
 }
 
+# PLAN_START_GRACE: seconds after a plan agent's start mark (plan_mark) before plan_lines may call it ended.
+# The mark is written before its pane opens, and the agent sits idle until its brief lands, so a poll in
+# between would see an agent that has not begun. It is the longest start_agent can take after the mark:
+# two tries for the pane's shell (ENV_READY_MS each, clean_env's fresh pane), two herdr agent start tries
+# (HERDR_START_MS each), and the brief's delivery, the larger of a fable brief's SLOW_PROMPT_TIMEOUT_MS
+# and deliver_prompt's two tries of PROMPT_TIMEOUT_MS, each followed by as long again of settle reads;
+# then a margin for the pane's opening and the naps between tries (PLAN_START_MARGIN). 10 minutes by
+# default, longer with SWARM_PROMPT_TIMEOUT_MS.
+PLAN_START_MARGIN=60
+PLAN_START_GRACE=$(( (2 * ENV_READY_MS + 2 * HERDR_START_MS \
+  + (SLOW_PROMPT_TIMEOUT_MS > 4 * PROMPT_TIMEOUT_MS ? SLOW_PROMPT_TIMEOUT_MS : 4 * PROMPT_TIMEOUT_MS)) / 1000 + PLAN_START_MARGIN ))
+
 # plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
-# agents have all written their output: a tab record scope-<epic> (has_records' overflow scope-<epic>-<n>
-# too) of an epic on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit,
-# that lists at least one `<pane> <name>` and has no plan board PR worktree (plan_pr_open; _board-plan-<hld>
-# for an HLD). Each <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only
-# when it is newer than its planner's resume reference and parses as JSON. The reference is the epic file;
-# for split-critic the scope worktree, which is gone here, so a listed split critic never counts; for an
-# HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing reference counts
-# nothing. Board and .swarm files, one python3 for the JSON of a swarm whose outputs are all fresh; no gh or herdr.
+# agents have all written their output, and `plan-missing: <epic> <name> ended without its output, exit:
+# /swarm-dev:plan-epic <epic> (it starts that agent again)` for each agent of its attempt that has ended
+# without one. A swarm is a tab record scope-<epic> (has_records' overflow scope-<epic>-<n> too) of an epic
+# on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit, or a
+# .swarm/<slug>/started directory of such an epic or HLD that no record names; planned: only with a record
+# that lists an agent and no plan board PR worktree (plan_pr_open; _board-plan-<hld> for an HLD). Its agents are the record's `<pane>
+# <name>` lines and the attempt's start marks, .swarm/<epic>/started/<name> (plan_mark), newer than the
+# reference below: next_pane prunes a failed or closed pane from the record, never from the marks. Each
+# <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only when it is newer
+# than its planner's resume reference and parses as JSON. The reference is the epic file; for
+# split-critic the scope worktree, so a split critic counts, and can be missing, only while that exists;
+# for an HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing
+# reference counts nothing. planned: needs every agent counted. plan-missing: names a
+# marked agent with no counted output whose mark is PLAN_START_GRACE seconds old and that the poll's
+# herdr list (LEAD_AGENTS) shows in no pane of the swarm's own tab records, or shows idle or done with no background
+# task in flight (bg_running, over its session log); a poll with no herdr list keeps the plan-missing: lines
+# LEAD_SEEN has, as stop_lines does. Board and .swarm files, one python3 for a swarm's fresh outputs' JSON,
+# one for the herdr list once an agent may have ended, and bg_running's per idle agent; no gh.
 plan_lines() {
-  local f label kind slug item groups="" names name n ref out exit done_list files
+  local f label kind slug item groups="" names listed name n ref out exit done_list files rows seen bad mark started fresh
+  local live live_read hname age wt panes
   for f in "${STATE_DIR}"/scope-?* "${STATE_DIR}"/plan-?*; do
     [[ -f "${f}" ]] || continue
     label="${f##*/}"
@@ -3110,40 +3133,99 @@ plan_lines() {
     [[ -f "${item}/${slug}.md" ]] || continue
     groups+="${kind} ${slug}"$'\n'
   done
+  # A plan with start marks but no tab record: its first agent's start failed before a tab opened. Its
+  # epic's (else its HLD's) swarm, unless a record already names the slug.
+  for f in "${PROJECT_DIR}"/.swarm/*/started; do
+    [[ -d "${f}" ]] || continue
+    slug="${f%/started}"; slug="${slug##*/}"
+    ! grep -qxF -e "scope ${slug}" -e "plan ${slug}" <<< "${groups}" || continue
+    if [[ -f "${BOARD}/epics/${slug}.md" ]]; then groups+="scope ${slug}"$'\n'
+    elif [[ -f "${BOARD}/hld/${slug}.md" ]]; then groups+="plan ${slug}"$'\n'; fi
+  done
   while read -r kind slug; do
     [[ -n "${slug}" ]] || continue
     if [[ "${kind}" == scope ]]; then
-      ! plan_pr_open "${slug}" || continue
+      wt=""; ! plan_pr_open "${slug}" || wt=1
       exit="/swarm-dev:plan-epic ${slug}"
     else
-      [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || continue
+      wt=""; [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || wt=1
       exit="/swarm-dev:plan-hld ${slug}"
     fi
-    names=""
+    listed=""; panes=""; live=""; live_read=""
     for f in "${STATE_DIR}/${kind}-${slug}" "${STATE_DIR}/${kind}-${slug}"-*; do
       { [[ -f "${f}" ]] && label_record "${f}" "${kind}-${slug}"; } || continue
-      names+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+      listed+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+      panes+=" $(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { printf "%s ", $1 }' "${f}")"
     done
-    done_list=""; files=()
+    names="${listed}"
+    for f in "${PROJECT_DIR}/.swarm/${slug}/started"/*; do [[ ! -f "${f}" ]] || names+="${f##*/}"$'\n'; done
+    # rows: "<n> <name> <started 0|1> <fresh 0|1>" per agent, each <n> once.
+    done_list=""; files=(); rows=""; seen=" "
     while IFS= read -r name; do
       [[ -n "${name}" ]] || continue
       n="${name%-"${slug}"}"
-      [[ " ${done_list//,/} " != *" ${n} "* ]] || continue
-      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"
+      [[ "${seen}" != *" ${n} "* ]] || continue
+      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"; mark="${PROJECT_DIR}/.swarm/${slug}/started/${name}"
       if [[ "${kind}" == plan ]]; then
         ref="${PROJECT_DIR}/.swarm/${slug}/base-rev"; [[ "${BOARD_IN_REPO}" == 1 ]] || ref="${BOARD}/hld/${slug}.md"
       elif [[ "${n}" == split-critic ]]; then ref="$(worktree_for "${PROJECT_DIR}" "_board-scope-${slug}")"
       else ref="${BOARD}/epics/${slug}.md"; fi
       # -nt alone is true against a missing reference.
-      [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]] || { files=(); break; }
-      files+=("${out}"); done_list+=", ${n}"
+      started=0; [[ ! -f "${mark}" || ! -e "${ref}" || ! "${mark}" -nt "${ref}" ]] || started=1
+      # A mark from an earlier attempt, of an agent no longer in the record, is no agent of this one.
+      [[ ${started} == 1 ]] || grep -qxF -- "${name}" <<< "${listed}" || continue
+      fresh=0; if [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]]; then fresh=1; files+=("${out}"); fi
+      rows+="${n} ${name} ${started} ${fresh}"$'\n'; seen+="${n} "
     done < <(awk '!seen[$0]++' <<< "${names}")
-    [[ ${#files[@]} -gt 0 ]] || continue
-    python3 -I -c 'import json, sys
+    [[ -n "${rows}" ]] || continue
+    bad=""
+    if [[ ${#files[@]} -gt 0 ]]; then
+      # The fresh outputs that do not parse, one per line.
+      bad="$(python3 -I -c 'import json, sys
 for p in sys.argv[1:]:
-    with open(p, encoding="utf-8") as fh:
-        json.load(fh)' "${files[@]}" 2>/dev/null || continue
-    echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+    try:
+        with open(p, encoding="utf-8") as fh:
+            json.load(fh)
+    except Exception:
+        print(p)' "${files[@]}" 2>/dev/null)" || continue
+    fi
+    out=""
+    while read -r n name started fresh; do
+      [[ -n "${n}" ]] || continue
+      if [[ ${fresh} == 1 ]] && ! grep -qxF -- "${PROJECT_DIR}/.swarm/${slug}/${n}.json" <<< "${bad}"; then
+        done_list+=", ${n}"; continue
+      fi
+      done_list="-"   # an agent without its output: no planned: line
+      [[ ${started} == 1 ]] || continue
+      age="$(perl -e 'print time - (stat shift)[9]' "${PROJECT_DIR}/.swarm/${slug}/started/${name}" 2>/dev/null)" || age=0
+      (( ${age:-0} >= PLAN_START_GRACE )) || continue
+      if [[ -z "${live_read}" ]]; then
+        live_read=1
+        [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+        # "<name> <status>" for each agent in a pane of this swarm's own tab records: another plan's
+        # agent of the same bare name (critic, lead) says nothing about this one.
+        [[ -n "${LEAD_AGENTS_OK}" ]] \
+          && live="$(SWARM_PANES="${panes}" json "'\n'.join('%s %s' % (a.get('name') or '-', a.get('agent_status') or 'unknown') for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" \
+          || live_read=none
+      fi
+      if [[ "${live_read}" == none ]]; then
+        grep -F "plan-missing: ${slug} ${n} ended without its output, " "${LEAD_SEEN}" 2>/dev/null || true; continue
+      fi
+      no_agent_name hname "${name}"
+      case "$(awk -v n="${hname}" '$1 == n { print $2; exit }' <<< "${live}")" in
+        "") ;;   # in no pane of this swarm's records: its pane closed, it never started, or another holds the name
+        # A turn that ended with a background task in flight still waits on it.
+        idle|done) ! bg_running "${hname}" || continue ;;
+        *) continue ;;
+      esac
+      out+="plan-missing: ${slug} ${n} ended without its output, exit: ${exit} (it starts that agent again)"$'\n'
+    done <<< "${rows}"
+    # While the plan's board PR worktree exists the plan is in its board PR, or about to be: no planned: line,
+    # but an agent that ended without its output is still named (/plan-hld makes the worktree before any agent).
+    # planned: needs a tab record that lists an agent: marks alone outlive a finished plan's closed tab.
+    [[ -n "${wt}" || -z "${listed//$'\n'/}" || "${done_list}" == -* || -z "${done_list}" ]] \
+      || echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+    printf '%s' "${out}"
   done < <(awk '!seen[$0]++' <<< "${groups}")
 }
 
@@ -3161,7 +3243,8 @@ for p in sys.argv[1:]:
 # events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
 # whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
 # (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list, and plan_lines'
-# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output. wait --lead adds `unsent brief:
+# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output and
+# `plan-missing: <epic> <name> ended without its output, exit: ...` for one of its agents that ended without it. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
