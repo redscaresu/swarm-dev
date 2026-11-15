@@ -170,6 +170,20 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent, or review-<slug> for story <slug>'s PR, merges from one"
 }
 
+# pane_review_name — review-<slug> when every tab record for the pane running this (HERDR_PANE_ID)
+# names review-<slug>, not a retired name (-done, -done<N>); else nothing. It reads the records only,
+# never herdr: review_pane's first step, and handed_review's check before it asks herdr anything.
+pane_review_name() {
+  local f tabs=() name
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
+  done
+  [[ ${#tabs[@]} -gt 0 ]] || return 0
+  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
+  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  echo "${name}"
+}
+
 # review_pane <agents> — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact
 # record: every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>),
 # the newest agents.tsv line for its agent name (agent_name) has role review, and in <agents>
@@ -178,13 +192,9 @@ merge_caller() {
 # record left stale (the agent exited, or retire_agent renamed it in herdr but could not rewrite
 # the record) has no such agent in the pane.
 review_pane() {
-  local f tabs=() name role
-  for f in "${STATE_DIR}"/*; do
-    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
-  done
-  [[ ${#tabs[@]} -gt 0 ]] || return 0
-  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
-  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  local name role
+  name="$(pane_review_name)"
+  [[ -n "${name}" ]] || return 0
   role="$(awk -F'\t' -v n="$(agent_name "${name}")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
   [[ "${role}" == review ]] || return 0
   [[ "$(SWARM_PANE="${HERDR_PANE_ID}" SWARM_NAME="$(agent_name "${name}")" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" <<< "$1" 2>/dev/null)" != True ]] \
@@ -2208,10 +2218,11 @@ within() {
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
 # has its own, and made only by the first skip, so a report that skips nothing leaves none behind. A
 # report that is killed mid-frame removes it through report_cleanup, its caller's EXIT trap.
-# Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
-# the rest of the report, so an edit made to a board file during it shows on the next report, and so
-# does a board-state write another swarm.sh makes. One this process makes (state_set, state_drop, in a
-# $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the next read sees it.
+# Then it reads the board's files once (board_snapshot), and fm, get_fm and epic_stories answer from
+# that read for the rest of the report, so an edit made to a board file during it shows on the next
+# report, and so does a board-state write another swarm.sh makes. One this process makes (state_set,
+# state_drop, in a $( ) subshell too) ends the snapshot (its mark is REPORT_SKIP_FILE.written), so the
+# next read sees it.
 # A snapshot that fails leaves every read to the files, as before.
 report_start() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
