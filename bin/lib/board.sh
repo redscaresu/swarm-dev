@@ -669,21 +669,13 @@ next_step() {
 # no answer, and an answer non_fix_change leaves uncached (a commit no PR lists yet) is kept for
 # NON_FIX_RETRY seconds (release_memo), so dash, which runs next every frame, asks gh at most that often.
 release_bare() {
-  local since="$1" tag="$2" base="$3" ver="${2#v}" repo="" out rc=0 why f v got="" cov="" line
+  local since="$1" tag="$2" base="$3" ver="${2#v}" out rc=0 why f v got="" cov="" line
   # A version that is not x.y.z (1.2.0-beta) has no patch or minor to name: a release as before, as
   # release_stage takes such a tag.
   if [[ ! "${ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "release"; echo "${since}: cut a release (${tag} is not v<x.y.z>, so next cannot tell a patch from a minor)"; return
   fi
-  if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then
-    rc=1; out="failed: ${repo}"
-  else
-    # On a board outside the repo, non_fix_change fails before it reads the empty repo.
-    if ! out="$(release_memo get "${repo}" "refs/tags/${tag}" "origin/${base}")"; then
-      out="$(release_changes "${repo}" "refs/tags/${tag}" "origin/${base}")" || rc=$?
-      [[ ${rc} != 0 ]] || release_memo put "${repo}" "refs/tags/${tag}" "origin/${base}" <<< "${out}"
-    fi
-  fi
+  out="$(release_fixes "${tag}" "${base}")" || rc=$?
   if [[ ${rc} == 0 && -z "${out}" ]]; then
     echo "release"
     echo "${since}, and every one is a fix: cut v${ver%.*}.$((10#${ver##*.} + 1)), a patch"; return
@@ -753,6 +745,23 @@ release_memo() {
   [[ "${text}" == *$'\n'* && "${rest%%$'\n'*}" == "${key}" && "${at}" =~ ^[0-9]+$ ]] || return 1
   (( $(date +%s) - at < NON_FIX_RETRY )) || return 1
   [[ "${rest}" != *$'\n'* ]] || printf '%s\n' "${rest#*$'\n'}"
+}
+
+# release_fixes <tag> <base> — non_fix_change's lines for refs/tags/<tag>..origin/<base> in the repo
+# origin_nwo names, for release_bare and release_stage: nothing when every change is a fix, else one
+# line per change. When either read fails (a board outside the repo among them) it exits 1 and the
+# last line is `failed: <why>`. Its gh calls are made only while the caches have no answer (see
+# release_bare), so dash, which runs next every frame, asks gh at most every NON_FIX_RETRY seconds.
+release_fixes() {
+  local tag="$1" base="$2" repo="" out rc=0
+  if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then echo "failed: ${repo}"; return 1; fi
+  # On a board outside the repo, non_fix_change fails before it reads the empty repo.
+  if ! out="$(release_memo get "${repo}" "refs/tags/${tag}" "origin/${base}")"; then
+    out="$(release_changes "${repo}" "refs/tags/${tag}" "origin/${base}")" || rc=$?
+    [[ ${rc} != 0 ]] || release_memo put "${repo}" "refs/tags/${tag}" "origin/${base}" <<< "${out}"
+  fi
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+  return "${rc}"
 }
 
 # release_changes <owner/repo> <from> <ref> — non_fix_change's lines on stdout, and when it fails, a
@@ -1430,15 +1439,17 @@ board_excludes() {
 # too; a deleted one's is ignored. Prints nothing when no epic carries a stage, the board is outside
 # the repo or the tag is not x.y.z: a release as today. Else its first line is
 #   release <S>        no epic file carrying stage S is left on the board or the base
-#   patch <x.y.z+1>    S is held, and above this patch of the tag's line, and no staged work merged
-#                      since the tag: what did merge, under an unstaged epic or none, goes out in
-#                      the patch (nothing checks that it is a fix)
+#   patch <x.y.z+1>    S is held, and above this patch of the tag's line, no staged work merged
+#                      since the tag, and non_fix_change (release_fixes) finds every change since the
+#                      tag a fix: what merged under an unstaged epic or none goes out in the patch
 #   held               S is held and staged work merged since the tag: a story of a staged epic (its
 #                      epic: chain) deleted since the tag (a story's PR deletes its file), or kept on
-#                      the board at status: done when it was not done at the tag
+#                      the board at status: done when it was not done at the tag; or no staged work
+#                      merged but a change since the tag is no fix, or non_fix_change failed: the
+#                      release-held: line then ends `; no patch: <that change, or the failure>`
 # and, unless release, the release-held: line next prints. One git log call.
 release_stage() {
-  local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held patch
+  local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held patch fixes rc nopatch=""
   [[ ${BOARD_IN_REPO} == 1 && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
   pre="$(board_rel)"
   # map: "<epic> <stage> <parent>" a line, the epics here first, so a slug's first line wins; here:
@@ -1502,8 +1513,17 @@ release_stage() {
   # The patch only below S: with S one patch above the tag, it would be the stage's own version.
   patch="${tag%.*}.$((10#${tag##*.} + 1))"
   if [[ -n "${s}" ]] && ! version_gt "${s}" "${patch}"; then work=1; fi
-  if [[ -z "${work}" ]]; then echo "patch ${patch}"; else echo held; fi
-  echo "${held}, open epics:${open}, patches only${bad}"
+  # A patch carries only fixes: the first change that is no fix, or a failed read, holds it.
+  if [[ -z "${work}" ]]; then
+    rc=0; fixes="$(release_fixes "$1" "$2")" || rc=$?
+    if [[ ${rc} == 0 && -z "${fixes}" ]]; then echo "patch ${patch}"; nopatch=""
+    elif [[ ${rc} == 0 ]]; then echo held; nopatch="; no patch: ${fixes%%$'\n'*}"
+    else
+      fixes="${fixes##*$'\n'}"
+      echo held; nopatch="; no patch: non_fix_change cannot tell the fixes (${fixes#failed: })"
+    fi
+  else echo held; fi
+  echo "${held}, open epics:${open}, patches only${bad}${nopatch}"
 }
 
 # staged_chain <epic> <tag x.y.z> <map> — true when <epic>, or an epic up its parent: chain in <map>

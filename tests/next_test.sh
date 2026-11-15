@@ -1029,13 +1029,40 @@ STAGE="item epics/e1.md 'status: active' 'stage: v1.3.0'"
 REVIEW="item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
 HELD="release-held: v1.3.0, open epics: e1, patches only"
 expect_release "an open stage epic and a fix since the tag: the patch on the tag's line, not release v1.3.0" "release v1.2.1 (patch)" 0 \
-  "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+  "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
 has_line "an open stage epic: the release-held: line names it" "${HELD}"
 no_text "the patch prints no retro" "retro v"
 v="${out%%$'\n'*}"; v="${v#release v}"; v="${v% (patch)}"
 # merge --release's own test of the bump (bin/lib/merge.sh, release_check): MAJOR.MINOR.PATCH.
 if python3 -c 'import re, sys; sys.exit(not re.fullmatch(r"\d+\.\d+\.\d+", sys.argv[1]))' "${v}"; then echo "ok   the patch version ${v} is MAJOR.MINOR.PATCH, as merge --release takes it"
 else echo "FAIL the patch version '${v}' is not MAJOR.MINOR.PATCH"; fails=$((fails + 1)); fi
+# A patch carries only fixes (non_fix_change, as for a bare release): a held stage with a change since
+# the tag that no fix made gives no release step, and its release-held: line names the first such change.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "merged_as s2"
+sha="$(git -C "${rdir}" rev-parse --short=7 origin/main)"
+release_next; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "gate" ]]; then echo "ok   a held stage, a commit since the tag from a story PR with no fix: line: no release step"
+else echo "FAIL a held stage, a story PR with no fix: line: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "its release-held: line names the commit that is no fix" \
+  "${HELD}; no patch: ${sha} #3 story/s2: docs/stories/s2.md had no fix: true before the merge"
+no_text "the held stage with a non-fix change prints no retro" "retro v"
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+sha="$(git -C "${rdir}" rev-parse --short=7 origin/main)"
+release_next; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "gate" ]]; then echo "ok   a held stage, a commit no PR lists: no release step"
+else echo "FAIL a held stage, a commit no PR lists: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "a commit no PR lists is named in the release-held: line" "${HELD}; no patch: ${sha}: no merged PR has this commit"
+# A failed read is no answer: the patch is held, and the line names the failure.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "gate" ]]; then echo "ok   a held stage with gh failing: no release step"
+else echo "FAIL a held stage with gh failing: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "gh failing: the release-held: line names the failure" \
+  "${HELD}; no patch: non_fix_change cannot tell the fixes (gh repo view named no GitHub repo for $(grep -o "[^ ]*origin.git" <<< "${out}" | head -1) (or gave no answer in time))"
+# A non-fix story merged before the tag, still on the board at done, is not a change since it.
+expect_release "a held stage, a non-fix story merged before the tag, a fix story after it: the patch" "release v1.2.1 (patch)" 0 \
+  "echo y > bin/y" "merged_as s2" "item stories/s2.md 'status: done' 'kind: code' 'epic: e1'" "${STAGE}" "${REVIEW}" "${COMMIT}" \
+  "git -c tag.gpgsign=false tag -f v1.2.0 >/dev/null" "echo x > bin/x" "${FIX}"
 expect_release "an open stage epic whose story merged since the tag: no release step" "gate" 0 \
   "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: ready' 'kind: code' 'epic: e1'" "${COMMIT}" \
   "git rm -q docs/stories/s0.md" "echo x > bin/x" "${COMMIT}"
@@ -1057,10 +1084,10 @@ else echo "FAIL release v1.3.0's why does not name the stage and its retro, or a
 expect_release "the stage epic deleted, a draft epic of the next stage on the board: still release v1.3.0" "release v1.3.0" 0 \
   "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "item epics/e2.md 'status: draft' 'stage: v1.4.0'" "retro_file 1.3.0 1.2.0" "echo x > bin/x" "${COMMIT}"
 expect_release "a stage epic still on the board at status: done holds it" "release v1.2.1 (patch)" 0 \
-  "item epics/e1.md 'status: done' 'stage: v1.3.0'" "echo x > bin/x" "${COMMIT}"
+  "item epics/e1.md 'status: done' 'stage: v1.3.0'" "echo x > bin/x" "${FIX}"
 has_line "a done stage epic on the board is named as open" "${HELD}"
 expect_release "a malformed stage: holds the release" "release v1.2.1 (patch)" 0 \
-  "item epics/e1.md 'status: active' 'stage: 1.3'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+  "item epics/e1.md 'status: active' 'stage: 1.3'" "${REVIEW}" "echo x > bin/x" "${FIX}"
 has_line "a malformed stage: is named in the release-held: line" "release-held: no valid stage, open epics: e1, patches only (e1's stage: '1.3' is not v<x.y.z>)"
 # A child epic with parent: and no stage: carries no stage: a board with no stage field releases as
 # today, whatever other front matter its epics have.
@@ -1076,24 +1103,24 @@ expect_release "a staged epic's story kept done on the board since the tag: no r
 has_line "a staged story done since the tag: the release-held: line after the step" "${HELD}"
 expect_release "a staged epic's story done at the tag already: still the patch" "release v1.2.1 (patch)" 0 \
   "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: done' 'kind: code' 'epic: e1'" "${COMMIT}" \
-  "git -c tag.gpgsign=false tag -f v1.2.0 >/dev/null" "echo x > bin/x" "${COMMIT}"
+  "git -c tag.gpgsign=false tag -f v1.2.0 >/dev/null" "echo x > bin/x" "${FIX}"
 # A staged epic deleted here, in a commit not pushed yet, is still on origin/main: it holds the stage.
-release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
-out="$(cd "${rdir}" && git rm -q docs/epics/e1.md && eval "${COMMIT}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && git rm -q docs/epics/e1.md && eval "${COMMIT}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"
 if [[ "${out%%$'\n'*}" == "release v1.2.1 (patch)" ]]; then echo "ok   a staged epic deleted here but not on origin/main still holds the stage"
 else echo "FAIL a staged epic deleted here but not on origin/main: want 'release v1.2.1 (patch)', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
 has_line "an epic deleted here but not on origin/main is named in the release-held: line" "${HELD}"
 rm -rf "${rdir}"
 # An epic whose stage: an edit here removed, not committed: origin/main's copy still holds it, once.
-release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
-out="$(cd "${rdir}" && grep -v '^stage:' docs/epics/e1.md > e1.tmp && mv e1.tmp docs/epics/e1.md && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && grep -v '^stage:' docs/epics/e1.md > e1.tmp && mv e1.tmp docs/epics/e1.md && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"
 if [[ "${out%%$'\n'*}" == "release v1.2.1 (patch)" ]]; then echo "ok   a stage: removed here but not on origin/main still holds the stage"
 else echo "FAIL a stage: removed here but not on origin/main: want 'release v1.2.1 (patch)', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
 has_line "an epic whose stage: was removed here is named in the release-held: line once" "${HELD}"
 rm -rf "${rdir}"
 # A quote with no match is not stripped: v1.2.0" is malformed, not the tag's own stage to pass over.
 expect_release "a stage: with an unmatched quote is malformed and holds the release" "release v1.2.1 (patch)" 0 \
-  "item epics/e1.md 'status: active' 'stage: v1.2.0\"'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+  "item epics/e1.md 'status: active' 'stage: v1.2.0\"'" "${REVIEW}" "echo x > bin/x" "${FIX}"
 has_line "an unmatched quote is named in the release-held: line" "release-held: no valid stage, open epics: e1, patches only (e1's stage: 'v1.2.0\"' is not v<x.y.z>)"
 # The patch goes out only below S: with the stage one patch above the tag, the patch would be the
 # stage's own version, so there is no release step.
@@ -1103,12 +1130,12 @@ has_line "the stage one patch above the tag is held" "release-held: v1.2.1, open
 # stage: is read as slug_list reads a value: a trailing # comment (the epics README template writes
 # one on that line) and trailing whitespace go.
 expect_release "a stage: with a trailing # comment, as the template writes it, is read as its version" "release v1.2.1 (patch)" 0 \
-  "item epics/e1.md 'status: active' 'stage: v1.3.0  # the release that ships it'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+  "item epics/e1.md 'status: active' 'stage: v1.3.0  # the release that ships it'" "${REVIEW}" "echo x > bin/x" "${FIX}"
 has_line "a commented stage: holds under its version, not as malformed" "${HELD}"
 # A deleted epic's malformed stage is ignored: its merged story is not staged work, so the patch stands.
 expect_release "a deleted epic's malformed stage is ignored: its merged story is not staged work" "release v1.2.1 (patch)" 0 \
   "${STAGE}" "${REVIEW}" "item epics/d1.md 'status: active' 'stage: 1.3'" "item stories/s0.md 'status: ready' 'kind: code' 'epic: d1'" "${COMMIT}" \
-  "git rm -q docs/stories/s0.md docs/epics/d1.md" "echo x > bin/x" "${COMMIT}"
+  "git rm -q docs/stories/s0.md docs/epics/d1.md" "echo x > bin/x" "${FIX}"
 has_line "a deleted malformed stage is not named in the release-held: line" "${HELD}"
 # The stages cost a git log, read only once release_due is due: dash runs next_step every frame.
 # GIT_LOG's git notes each call, then runs the real one.
@@ -1123,14 +1150,14 @@ step_git_logs() { # <setup>... — how many git log calls `swarm.sh _step` (next
 n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > docs/stories/README.md" "${COMMIT}")"
 if [[ "${n}" == 0 ]]; then echo "ok   next_step makes no git log call when release_due is not due"
 else echo "FAIL next_step makes ${n} git log call(s) when release_due is not due"; fails=$((fails + 1)); fi
-n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}")"
+n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}")"
 if [[ "${n}" == 1 ]]; then echo "ok   next_step reads the stages with one git log call once a release is due"
 else echo "FAIL next_step makes ${n} git log call(s) once a release is due, not 1"; fails=$((fails + 1)); fi
-# status and dash show the release-held: line next prints. gh fails here, as offline.
-release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
-out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" status 2> /dev/null)"
+# status and dash show the release-held: line next prints. gh is the stub that lists the fix.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" status 2> /dev/null)"
 has_line "status prints the release-held: line under Next" "  ${HELD}"
-out="$(cd "${rdir}" && env -u HERDR_ENV COLUMNS=120 PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" dash 2> /dev/null)"
+out="$(cd "${rdir}" && env -u HERDR_ENV COLUMNS=120 PATH="${REL_GH}:${PATH}" bash "${SWARM}" dash 2> /dev/null)"
 has_line "dash prints the release-held: line" "${HELD}"
 rm -rf "${rdir}"
 

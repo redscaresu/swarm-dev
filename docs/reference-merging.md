@@ -1010,8 +1010,11 @@ stage and its retro file. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
 only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
 while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
-tag's line is below S, the step is `release v<x.y.z+1> (patch)`. What merged under an unstaged
-epic, or under no epic, goes out in that patch: nothing checks that it is a fix. A merged story is
+tag's line is below S, and every change since the tag came from a `fix: true` story or a fix-main
+build (the test a bare `release` uses), the step is `release v<x.y.z+1> (patch)`. What merged under an
+unstaged epic, or under no epic, goes out in that patch. A change that is no fix, or a read that
+fails, gives no release step instead, and the `release-held:` line ends `; no patch: <that change, or
+the failure>`. A merged story is
 one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
 `status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
 to the steps after it. An epic on the board whose `stage:` is not
