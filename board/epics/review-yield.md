@@ -11,10 +11,10 @@ depends_on: []
 
 **Done when:**
 - Every logged finding records which reviewer raised it (codex, code-review, conductor, lead, or unknown for old lines): `swarm.sh log-finding` takes it, the briefs and conduct rules pass it, and old lines without it still read.
-- `swarm.sh review-yield [--since YYYY-MM-DD]` prints, per reviewer and per finding kind: findings raised, fixed, declined, the decline rate, and review rounds per PR (from tell:findings lines); a stub findings/events fixture pins the numbers.
-- After one epic's worth of data with reviewers recorded, the lead posts the report on this epic's lead story and makes the tuning change it shows (a prompt line that names the kinds a reviewer keeps raising and that get declined, or dropping /code-review for docs/chore/board-only PRs), each as its own PR with the before numbers; a later report shows the decline rate for the tuned reviewer or kind went down, or the lead says it did not and reverts.
+- ~~`swarm.sh review-yield`~~: not built. `swarm.sh flow`'s `reviewers` and `review_loops` sections give the same per-reviewer and per-kind figures (narrowed with the user, 2026-11-15).
+- The tuning change and its after reading move to review-yield-tuning (narrowed with the user, 2026-11-15).
 - The swarm-dev board's existing findings (about 60% declined: 207 declined vs 140 fixed on 2026-10-15; 364 vs 211, 63%, at the baseline cut on 2026-10-16) are summarised in that lead story as the baseline, by kind.
-- The review prompt drops or demotes the finding kinds the v0.30.0 build's reviewers raised and builders almost always declined (duplicate-code 56 of 58, missing-case 30 of 32, efficiency 21 of 22, hot-path-cost 17 of 18; 950 of 1,417 findings declined overall); PRs with 4+ rounds fall under the HLD's bar.
+- Demoting the four kinds (duplicate-code, missing-case, efficiency, hot-path-cost), the after reading and the 4+ round bar move to review-yield-tuning, which switches `demote_kinds` on once a release carries demote-kinds-key (narrowed with the user, 2026-11-15). The codex-time-limit and codex-bump-not-a-finding stories are not built.
 
 **Out of scope:** removing codex or /code-review outright. Changing what counts as a finding kind.
 
