@@ -3700,9 +3700,9 @@ sign_seen() {
 # pass's read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read),
 # and takes a pane resend_pass read this poll from LEAD_READS, never reading it twice; a pane
 # resend_pass failed to read is not read again. LEAD_STUCK keeps each agent's key (herdr's status and
-# the time of the newest own-work entry in its Claude session log or its Task subagents' logs, found by
-# report.py's session_log and read by session_mtime.py's session_work, - with no log or no such entry; a
-# write to the log that is no work of the agent's leaves it as it was), what its pane showed and when it was last read.
+# the time of the newest own-work entry in its Claude session log, found by report.py's session_log and
+# read by session_mtime.py's last_work, - with no log or no such entry; a write to the log that is no
+# work of the agent's, or work in its Task subagents' logs, leaves it as it was), what its pane showed and when it was last read.
 # A pane last found clear is read again only when its key changed or STUCK_RECHECK seconds have passed;
 # one last found stuck is read every poll, as a user can clear it with no turn. Agents are read in the
 # order of their last read, oldest first, so slow reads that use up the budget leave the rest first in
@@ -3764,7 +3764,7 @@ prompt_lines() {
   # The candidates, oldest read first (LEAD_STUCK's time; never read, 0), then in herdr's order.
   rows="$(SWARM_PANES="$(own_panes)" SWARM_ROLES="${CO_WRITER_ROLES}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, re, sys
-sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log; from session_mtime import session_work
+sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log; from session_mtime import last_work
 own, skip = set(os.environ["SWARM_PANES"].split()), set(os.environ["SWARM_ROLES"].split())
 agents = {}
 try:
@@ -3797,11 +3797,15 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
     role, sid = agents.get(n, ("", ""))
     if role in skip:
         continue
-    # The newest own-work entry, in the log or its Task subagents logs, not the mtime of the log: a write
-    # to it that is no work of the agent (a resume prompt, a compaction, an API error) is the same stop.
+    # The newest own-work entry in the log, not its mtime: a write to it that is no work of the agent (a
+    # resume prompt, a compaction, an API error) is the same stop. Its Task subagents logs are left out,
+    # since a subagent still at work would move the key on every poll while the agent sits at one stop.
     at, path = "-", session_log(sys.argv[2], sid)
     if path:
-        at = str(session_work(path) or "-")
+        try:
+            at = str(last_work(path) or "-")
+        except OSError:
+            pass
     rows.append((read.get((n, p), (0, ""))[0], n, p, st + ":" + at))
 for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     print("\t".join((n, p, k)))' "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" "${LEAD_STUCK}" <<< "${LEAD_AGENTS}" 2>/dev/null)" \

@@ -375,10 +375,11 @@ own only when the resend read none. While `swarm.sh upgrade` runs, no pane is re
 The check runs after the resend and shares its budget: 10 seconds a read, and none started 20 seconds
 into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
 waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time of
-the newest entry of its own work in its Claude session log or its Task subagents' logs (an assistant
-message or a tool result), what its pane showed and when it was last read. A write to the log that is
-not the agent's work, such as a resume prompt, a compaction or Claude Code's own API error entry,
-leaves that time as it was. A pane last found clear is read again when the status or the work time has changed, or after 5 minutes
+the newest entry of its own work in its Claude session log (an assistant message or a tool result),
+what its pane showed and when it was last read. A write to the log that is not the agent's work, such
+as a resume prompt, a compaction or Claude Code's own API error entry, leaves that time as it was. So
+does work in its Task subagents' logs: a subagent still at work would otherwise make one stop new on
+every poll. A pane last found clear is read again when the status or the work time has changed, or after 5 minutes
 (`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
 last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
 first, so slow reads that use up one poll's budget leave the rest first in line for the next. Each

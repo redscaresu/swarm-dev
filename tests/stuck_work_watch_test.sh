@@ -135,8 +135,10 @@ check "a write to the session log with no new own work does not wake the lead ag
   test "$(count "prompt: " "$(run)")" = 0
 work "${log}" 2030-09-01T00:00:00Z
 check "a new own-work entry after it does" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+# A Task subagent still at work while the agent sits at the same stop moves no key.
 mkdir -p "${log%.jsonl}/subagents"; work "${log%.jsonl}/subagents/agent-1.jsonl" 2030-10-01T00:00:00Z
-check "so does new own work in a Task subagent's log" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+check "own work in a Task subagent's log alone, at the same stop, gives no second line" \
+  test "$(count "prompt: " "$(run)")" = 0
 cp "${FX}/manual.txt" "${ROOT}/pane.txt"; run > /dev/null; reads > /dev/null
 cp "${FX}/empty-box.txt" "${ROOT}/pane.txt"; run > /dev/null
 check "a stuck pane is read every poll, so manual mode turned off with no turn clears its line" \
