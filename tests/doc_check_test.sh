@@ -290,8 +290,8 @@ else
 fi
 
 # The line cap. The real docs have no line past it, and in a fixture a 151-word line is named in each
-# scanned place, AGENTS.md included, while a 150-word line, a fenced 300-word line, an untracked file and
-# files outside the scanned places are not.
+# scanned place, AGENTS.md included, before a fence and after its indented close, while a 150-word line, a
+# fenced 300-word line, an untracked file and files outside the scanned places are not.
 long="$(line_cap "${REPO}")"
 if [[ -z "${long}" ]]; then
   echo "ok   no docs line outside a code fence runs past ${LINE_CAP} words"
@@ -303,15 +303,15 @@ words() { local i; for ((i = 0; i < $1; i++)); do printf 'w%d ' "${i}"; done; }
 cap="${tmp}/capfix"
 mkdir -p "${cap}/docs/sub" "${cap}/commands" "${cap}/skills/swarm-dev/refs" "${cap}/skills/other" "${cap}/templates/docs" "${cap}/tests"
 for f in README.md AGENTS.md docs/a.md commands/c.md skills/swarm-dev/refs/s.md templates/docs/t.md; do
-  { echo "# Head"; echo; echo "  $(words 151)"; words 150; echo; echo '```'; words 300; echo; echo '  ```'; } > "${cap}/${f}"
+  { echo "# Head"; echo; echo "  $(words 151)"; words 150; echo; echo '```'; words 300; echo; echo '  ```'; words 151; echo; } > "${cap}/${f}"
 done
 for f in docs/sub/deep.md skills/other/o.md tests/t.md llms.txt; do words 151 > "${cap}/${f}"; done
 git -C "${cap}" init -q && git -C "${cap}" add -A
 words 151 > "${cap}/docs/untracked.md"
-want=$'AGENTS.md:3\t151 words\nREADME.md:3\t151 words\ncommands/c.md:3\t151 words\ndocs/a.md:3\t151 words\nskills/swarm-dev/refs/s.md:3\t151 words\ntemplates/docs/t.md:3\t151 words'
+want=$'AGENTS.md:3\t151 words\nAGENTS.md:8\t151 words\nREADME.md:3\t151 words\nREADME.md:8\t151 words\ncommands/c.md:3\t151 words\ncommands/c.md:8\t151 words\ndocs/a.md:3\t151 words\ndocs/a.md:8\t151 words\nskills/swarm-dev/refs/s.md:3\t151 words\nskills/swarm-dev/refs/s.md:8\t151 words\ntemplates/docs/t.md:3\t151 words\ntemplates/docs/t.md:8\t151 words'
 got="$(line_cap "${cap}" | LC_ALL=C sort)"
 if [[ "${got}" == "${want}" ]]; then
-  echo "ok   fixture docs: a line one word past ${LINE_CAP} is named by file and line in each scanned place, and a ${LINE_CAP}-word line, a fenced one and unscanned files are not"
+  echo "ok   fixture docs: a line one word past ${LINE_CAP} is named by file and line in each scanned place, before a fence and after it closes, and a ${LINE_CAP}-word line, a fenced one and unscanned files are not"
 else
   echo "FAIL fixture line cap: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
