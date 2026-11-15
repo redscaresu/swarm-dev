@@ -6,13 +6,13 @@ description: What swarm-dev is (a Claude Code plugin that plans epics, splits th
 swarm-dev turns an agreed design into merged PRs. The user agrees an HLD or an epic with a co-author
 agent; agents split it into epics and one-PR stories, then build the stories in parallel, each in
 its own herdr pane the user can watch. The user approves every level before the next one starts.
-This text covers v0.30.0. All state lives in the board, the directory `swarm.sh config board_dir` prints.
+This text covers v0.30.1. All state lives in the board, the directory `swarm.sh config board_dir` prints.
 
 ## First run in a project
 
 Work from the root of a git repo with a GitHub origin. The slash commands, `swarm.sh conduct` and
 every agent run inside herdr (`HERDR_ENV=1`). `init`, `next`, `status`, `config`, `flow`, `dash`,
-`outcomes`, `wait-pr`, `version` and `update` also work outside it.
+`outcomes`, `retro`, `handover`, `wait-pr`, `version` and `update` also work outside it. Agents use your session's provider. A Claude subscription needs nothing passed. Foundry (`CLAUDE_CODE_USE_FOUNDRY`) passes `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL`. Bedrock (`CLAUDE_CODE_USE_BEDROCK`) passes `AWS_BEARER_TOKEN_BEDROCK` and `ANTHROPIC_DEFAULT_*_MODEL`.
 
 1. `swarm.sh init` creates the board, `.claude/swarm/`, a CI workflow and a pre-commit hook, and
    names the `Bash(swarm.sh merge *)` allow rule if it is missing. It overwrites no file but an unedited old `Board.base`.

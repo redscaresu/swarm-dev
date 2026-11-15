@@ -217,7 +217,8 @@ whether a builder is at work or not. For each one it prints:
   or a conflict with the base, counted from when a poll first saw it on that head. A push resets both. A
   head whose review passed (`.swarm/reviews/<slug>.md` is a pass on it) has no pending findings, since the PR
   then waits on its merge. A conflict on such a head is still pending. The builder must also be live in
-  the poll's herdr list and idle, with no background task in its session and no test suite running in its
+  the poll's herdr list and idle, with no background task in its session launched less than 3 times
+  `stall_minutes` ago (a swarm.sh wait counts at any age) and no test suite running in its
   pane (`make test`, `make check` or `scripts/test.sh`). `.swarm/lead/pr-heads` keeps each open PR's head
   and when a poll first saw it. Findings told before then do not count, so a head seen first after a long gap
   in `wait --lead` waits for its next findings. The line names N, never the minutes that passed, so it
@@ -374,9 +375,12 @@ own only when the resend read none. While `swarm.sh upgrade` runs, no pane is re
 
 The check runs after the resend and shares its budget: 10 seconds a read, and none started 20 seconds
 into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
-waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time its
-Claude session log last changed, what its pane showed and when it was last read. A pane last found
-clear is read again when the status or the log time has changed, or after 5 minutes
+waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time of
+the newest entry of its own work in its Claude session log (an assistant message or a tool result),
+what its pane showed and when it was last read. A write to the log that is not the agent's work, such
+as a resume prompt, a compaction or Claude Code's own API error entry, leaves that time as it was. So
+does work in its Task subagents' logs: a subagent still at work would otherwise make one stop new on
+every poll. A pane last found clear is read again when the status or the work time has changed, or after 5 minutes
 (`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
 last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
 first, so slow reads that use up one poll's budget leave the rest first in line for the next. Each
@@ -392,7 +396,10 @@ The kinds and their exits:
 - `api-error`: the turn ended on Claude Code's `API Error:` (or `API Error (<model>):`) line, a model
   error among them. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
-  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. While
+  the wait runs, `.swarm/lead/stuck` keeps the work time from before it, so when the wait ends the
+  same API error wakes the lead again only if the agent did new work in between. Exit:
+  `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
@@ -403,8 +410,8 @@ The kinds and their exits:
 The line wakes the lead once per stop. It stays in `.swarm/lead/seen` while the agent is stuck. A
 skipped agent, a pane read that fails, and a herdr list, list parse or `ps` that fails all keep the
 last poll's line, so a missed read neither drops it nor wakes the lead again. A new stop wakes the lead
-even when its line reads the same: one found after the agent moved on, after a turn (its session log
-changed), or in a pane the agent came back in. Manual mode is a state, not a stop, so a builder in it
+even when its line reads the same: one found after the agent moved on, after a turn (new work in its
+session log), or in a pane the agent came back in. Manual mode is a state, not a stop, so a builder in it
 answering prompt after prompt wakes the lead once, and its line stays while it works between them. A
 pane the resend sent Enter to in a poll is left for the next poll to read.
 
@@ -621,7 +628,8 @@ the marks stay after a finished plan's tab is closed.
 A marked agent gets the line when its file does not count, its mark is older than the longest
 a start can take (10 minutes by default: two tries at the pane's shell, two at herdr's start, and
 the brief's delivery, which a larger `SWARM_PROMPT_TIMEOUT_MS` makes longer), and the poll's herdr list shows it in no pane of this plan's own
-tab records, or shows it idle or done with no background task still running in its session. An agent
+tab records, or shows it idle or done with no background task still running in its session that it
+launched less than 3 times `stall_minutes` ago (a swarm.sh wait counts at any age). An agent
 of the same name in another plan's pane does not count: plan agents share bare names such as
 `critic`. While any agent's file does not count, there is no `planned:` line. The board PR
 worktree does not hold this line back, so an in-repo HLD plan, which runs with its worktree there

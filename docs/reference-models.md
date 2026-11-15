@@ -140,6 +140,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   A test run has no age limit, because a builder's own full suite can run for hours; a hung run keeps the agent working until someone reads its pane.
   A background task the agent's session waits on counts as work for `wait --stall` and `dash` in the same way: a shell, an async subagent or a monitor it started, with no `<task-notification>` carrying a `<status>` for it since.
   It counts only while its launch is younger than 3 times `stall_minutes`, so a server left running in the background does not keep a builder from stalling.
+  A background command that is only swarm.sh's own waits (`wait`, `watch`, `wait-pr` or `merge`, each of which ends on its own) counts at any age.
   A codex builder has no session log, so it has no background task.
   For `wait --stall` alone, a builder whose signer cannot sign its uncommitted work (the signer probe says `blocked`) is not stalled either, while its last sign of life is under 3 times `stall_minutes` old (see `wait --stall` in [§ Building](reference-building.md#building)).
   `dash` reads an agent's processes and its background tasks only once it is past `stall_minutes`, so an agent working under it costs no read.

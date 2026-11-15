@@ -245,7 +245,20 @@ A file the base deleted, or renamed past what git detects, still counts its line
 look the same. A stacked build keeps its parent's merges in its history after the parent's squash
 merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
 squash has taken it off the base. A line the PR's own merge drops while the base still has it still
-prints. When
+prints. A line the PR's head still holds does not count, so a commit that puts a dropped line back
+clears the hold on the next `swarm.sh merge`. After reading every merge, the check counts the line's
+copies in the head's file. The head must hold at least the copies the merge kept plus the ones it
+dropped. It must also hold at least as many as the base's file has at the PR's merge base with the
+base, less any the PR's own commits had removed before the merge. The first number catches a drop
+that the PR's own copies would hide: when the PR added a `}` of its own and its merge dropped the
+base's `}`, the head has as many as the base, but one fewer than the merge kept and dropped together.
+The second catches a copy the base added after the merge standing in for the dropped one. The head
+owes the larger of the two. Adding them would ask a stacked build's head twice for its parent's own
+copies, which reach the base through the parent's squash merge. The line prints once for each copy
+the head is short, so a head that put back one of two dropped copies still prints the other. The
+check counts copies and cannot tell one from another. A copy the PR adds after the merge for a reason
+of its own counts as put back. So does a copy the base adds after the merge, when the PR holds a copy
+the base does not. When
 `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
@@ -259,9 +272,7 @@ or gh no longer lists the head), `merge` refuses for a new review instead, with 
 nothing is recorded. On a story PR either hold is recorded on the item in review, as a protected-path
 hold is: `protected: <PR URL> <head> <time> dropped base lines: ...`, with each `|` written as `¦`,
 since the record separates its entries with ` | `. A later `swarm.sh merge` that finds nothing dropped
-removes the record. `--release` reads no commits, since a release PR changes only `plugin.json`. A
-commit that puts a dropped line back does not clear the hold: the scan reads each merge as it was made.
-Only a branch rebuilt without that merge, or your merge by hand, ends it.
+removes the record. `--release` reads no commits, since a release PR changes only `plugin.json`.
 
 Under `merge --head <reviewed>`, a head that has moved past the reviewed one is checked first, at
 the head check. `merge` takes it with no new review when every commit on its first-parent chain back
@@ -966,15 +977,21 @@ goes on with no pane, as it does for a pane closed by hand.
 
 ## Releases
 
-No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
-release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
-`v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
-outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`,
-`Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no
-release due). It reads local refs only, since reconcile has just pulled. The lead opens a PR
-from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
-when `next` printed a bare `release` does it bump to the next minor version (a patch when every
-change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
+No story PR bumps `.claude-plugin/plugin.json`.
+A release is due once the project has `.claude-plugin/plugin.json`, the tag `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no release due).
+`next` reads local refs for this, since reconcile has just pulled.
+With no stage (see below), `next` then checks each change since the tag against one `gh pr list` of the merged PRs.
+A change is a fix when its PR came from a `story/fix-main-<sha7>` branch, or from a story whose file had `fix: true` before the merge.
+When every change is a fix, `next` prints a bare `release`, and a bare release is always a patch.
+Any other change makes the release a minor, and so does a check that cannot answer.
+A minor needs a done retro file first: `<board>/retros/v<version>.md` on `origin/<base>`, with `covers:` and `done:` in the [retros README](../templates/docs/retros/README.md)'s format.
+Only a version above the tag's minor counts, so a patch's retro file never selects a release.
+Until such a file is on the base, `next` prints `retro v<x.y.z>` for the next minor.
+Its why names the `retro-v<x-y-z>` lead story and `swarm.sh retro --since <w>`, where `<w>` is the tag's `v<x.y.0>` when that tag exists, else the tag.
+Once the file is there, `next` prints `release v<version>`, the lowest version whose retro file is done, and its why quotes the file's `covers:` line.
+On a board outside the project's repo, `next` can read no retro file, so it always prints `retro`; there `merge --release` cannot read one either, and you merge the release PR yourself.
+The lead opens a PR from `release/v<new>` that bumps only that file, to the version `next` named: the bare release's patch, `release v<version>`, the stage's v<S>, or the patch it named.
+It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
 every behaviour change since the tag, and the release PR names it. When nothing since the tag
 changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
 stands in for the docs PR. For swarm-dev's own repo, the release PR body also lists the behaviour
@@ -987,7 +1004,9 @@ Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release
 reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
 epics an edit in your checkout deleted or changed before it reached the base (a release ships the
 base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
-is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
+is left on the board, a stage's release is a minor, so it waits on a done `retros/v<S>.md` on the
+base. Until then the step is `retro v<S>`. After that it is `release v<S>`, and its why names the
+stage and its retro file. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
 only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
 while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
@@ -998,8 +1017,8 @@ one whose file was deleted since the tag (a story's PR deletes its file), or one
 to the steps after it. An epic on the board whose `stage:` is not
 `v<x.y.z>` holds the release too, and the line names it. `merge --release` does not read the hold, so the lead cuts a
 release only when `next` prints it. A board where no epic has `stage:`
-releases as before, with a plain `release`. So does a board outside the project's repo, since git
-can't list its deleted epics.
+reads no stages, so its release is a patch or a minor, as above. So does a
+board outside the project's repo, since git can't list its deleted epics.
 
 Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
 minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or
@@ -1066,6 +1085,7 @@ It works in the clone of `<owner/repo>` (the project, or `<repos_dir>/<name>`), 
 It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/head` and `<base>` into refs of its own, and checks that the fetched commit is `<head>`.
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
 A line counts only while the base still has it, both at the fetched `<base>` and at the PR's merge base with it.
+It also counts only while `<head>` has not put it back: `<head>`'s file must hold at least the copies the merge kept plus the ones it dropped, and at least as many as the base's file has at the PR's merge base with it, less any the PR's own commits had removed before the merge. The line prints once for each copy `<head>` is short.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
 Each dropped line prints as `<sha7> <file>: <text>`.
@@ -1095,7 +1115,7 @@ It refuses a story PR, or a board PR under `--board`, that sets an epic `active`
 Where the base has a merge queue, `merge` enqueues the PR.
 Where it has none and the base gained code since the head's CI ran, `merge` has GitHub merge the base in, waits for the new head's CI and merges that head ([§ Merging](reference-merging.md#merging)).
 If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](reference-merging.md#merging)).
-Under either merge mode it holds a story or `--board` PR whose own merge of the base dropped a line of the base, or whose merges it cannot check, and refuses one whose head moved on GitHub for a new review ([§ Merging](reference-merging.md#merging), Held for dropped base lines).
+Under either merge mode it holds a story or `--board` PR whose own merge of the base dropped a line of the base that its head has not put back, or whose merges it cannot check, and refuses one whose head moved on GitHub for a new review ([§ Merging](reference-merging.md#merging), Held for dropped base lines).
 With `--head <sha>`, it merges a head that moved past `<sha>` only when all it added is git's own clean merges of the base (same section).
 
 **`swarm.sh review <slug> [--head <sha>] <PR URL>...`**
