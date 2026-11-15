@@ -24,11 +24,12 @@ def pane_ids(pane, entries):
     ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
     return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
 # pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
-# labels). A workspace herdr gives no label for is "-"; a tab is record, the name swarm-dev gave the tab
-# (its tab record's), so where, status and dash name it alike whether or not herdr labelled it.
+# labels). A workspace herdr gives no label for is "-". A tab herdr gives no label for (or no tab list)
+# is record, the name swarm-dev gave the tab (its tab record's), with the tab's id when herdr gave one,
+# `t1 (w1:t3)`, so where, status and dash's rows and tree all tell swarm-dev's name from herdr's label.
 def pane_where(pane, entries, labels, record="-"):
     ws, tab = pane_ids(pane, entries)
-    return labels[0].get(ws) or "-", labels[1].get(tab) or record
+    return labels[0].get(ws) or "-", labels[1].get(tab) or (f"{record} ({tab})" if tab else record)
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True
@@ -336,7 +337,7 @@ BOX_PROMPT = re.compile(r"(>|❯)(\s|$)")
 STOP_LINE = re.compile(r"\s*(⏺|●)|(>|❯) +\S")
 # LOGIN_STOP: Claude Code's "<reason> · Please run /login", not a reply that only mentions /login.
 LOGIN_STOP = re.compile(r"(⏺|●)\s*([^·]*·\s*)?Please run /login\s*(·|$)")
-API_STOP = re.compile(r"(⏺|●)\s*API Error:")
+API_STOP = re.compile(r"(⏺|●)\s*API Error( \([^)]*\))?:")
 MANUAL_MODE = re.compile(r"\s*⏸ manual mode on")
 MID_COMMAND = "esc to interrupt"
 def turn_lines(lines):
@@ -356,7 +357,8 @@ def stuck_kind(text):
     #     dialog is none (wait answers it);
     #   login: the turn ended (the last STOP_LINE in turn_lines) on Claude Code's "<reason> · Please
     #     run /login" ("Login expired · Please run /login");
-    #   api-error: the turn ended on an `API Error:` reply at the margin, as pane_stop reads it;
+    #   api-error: the turn ended on an `API Error:` (or `API Error (<model>):`) reply at the margin, as
+    #     pane_stop reads it, a model error (pane_stop's model-error) included;
     #   manual: the footer under the input box says manual mode.
     # Else a pane mid-command (esc to interrupt after the last reply), at an empty input box or on a
     # menu above the input box is none.

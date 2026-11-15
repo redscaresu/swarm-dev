@@ -91,7 +91,8 @@ mkdir -p "${TEST_HOME}"; : > "${ROOT}/gitconfig"
 for f in zshenv zprofile zshrc; do echo "export ZSH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
 for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
 run() {
-  (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
+  # The session's own Bedrock key and model pins (a builder on Bedrock has them) never reach a test agent: -u first, then the cases below set their own.
+  (cd "${p}" && env -u SWARM_PROJECT -u AWS_BEARER_TOKEN_BEDROCK -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_SONNET_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
     "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
@@ -376,15 +377,41 @@ check "and HERDR_PANE_ID, which would replace the agent's own pane" "yes|yes|0" 
 # arguments"). The lead already chose Foundry, so swarm.sh passes them on without a config line.
 FOUNDRY=(ANTHROPIC_FOUNDRY_RESOURCE=res-1 ANTHROPIC_FOUNDRY_API_KEY=fkey ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x)
 SAVED=("${PROVIDER[@]}")
-PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}")
+PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}" CLAUDE_CODE_USE_BEDROCK=0)   # PROVIDER's Bedrock flag is on: this case tests Foundry alone
 run agent t7 foundry-off "${p}" hld "${ROOT}/brief.md" >/dev/null
 check "with CLAUDE_CODE_USE_FOUNDRY=0, the Foundry settings stay out" "||" \
   "$(var foundry-off ANTHROPIC_FOUNDRY_RESOURCE)|$(var foundry-off ANTHROPIC_FOUNDRY_API_KEY)|$(var foundry-off ANTHROPIC_DEFAULT_OPUS_MODEL)"
-PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}" CLAUDE_CODE_USE_FOUNDRY=1)
+PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}" CLAUDE_CODE_USE_FOUNDRY=1 CLAUDE_CODE_USE_BEDROCK=0)   # Foundry alone, as in foundry-off
 run agent t7 foundry-on "${p}" hld "${ROOT}/brief.md" >/dev/null
 check "with it on, an agent that builds nothing gets the endpoint, key and model names" "res-1|fkey|opus-x|" \
   "$(var foundry-on ANTHROPIC_FOUNDRY_RESOURCE)|$(var foundry-on ANTHROPIC_FOUNDRY_API_KEY)|$(var foundry-on ANTHROPIC_DEFAULT_OPUS_MODEL)|$(var foundry-on PROVIDER_KEY)"
 PROVIDER=("${SAVED[@]}")
+
+# --- Bedrock on: its API key and model pins reach every agent with no agent_env line.
+# Why: a session on AWS Bedrock keeps its API key (AWS_BEARER_TOKEN_BEDROCK) and model pins only in the
+# environment, so an agent without them hangs at its first request instead of failing. The lead already
+# chose Bedrock, so swarm.sh passes them on. AWS_SECRET_ACCESS_KEY (in run's environment) stays opt-in.
+# If someone drops the Bedrock branch of agent_env_names, the =1 and =true cases go red.
+BEDROCK=(AWS_BEARER_TOKEN_BEDROCK=bkey ANTHROPIC_DEFAULT_OPUS_MODEL=op-b ANTHROPIC_DEFAULT_SONNET_MODEL=so-b ANTHROPIC_DEFAULT_HAIKU_MODEL=ha-b)
+for flag in 1 true; do
+  PROVIDER=("${SAVED[@]}" "${BEDROCK[@]}" CLAUDE_CODE_USE_BEDROCK="${flag}")
+  run agent t8 "bedrock-${flag}" "${p}" hld "${ROOT}/brief.md" >/dev/null
+  check "with CLAUDE_CODE_USE_BEDROCK=${flag}, an agent gets the key and all three model pins, and not AWS_SECRET_ACCESS_KEY" "bkey|op-b|so-b|ha-b||" \
+    "$(var "bedrock-${flag}" AWS_BEARER_TOKEN_BEDROCK)|$(var "bedrock-${flag}" ANTHROPIC_DEFAULT_OPUS_MODEL)|$(var "bedrock-${flag}" ANTHROPIC_DEFAULT_SONNET_MODEL)|$(var "bedrock-${flag}" ANTHROPIC_DEFAULT_HAIKU_MODEL)|$(var "bedrock-${flag}" AWS_SECRET_ACCESS_KEY)|"
+done
+# If someone widens the flag test to "set", the =0 case goes red.
+PROVIDER=("${SAVED[@]}" "${BEDROCK[@]}" CLAUDE_CODE_USE_BEDROCK=0)
+run agent t8 bedrock-off "${p}" hld "${ROOT}/brief.md" >/dev/null
+check "with CLAUDE_CODE_USE_BEDROCK=0 and no Foundry flag, neither the key nor a model pin reaches an agent" "||||" \
+  "$(var bedrock-off AWS_BEARER_TOKEN_BEDROCK)|$(var bedrock-off ANTHROPIC_DEFAULT_OPUS_MODEL)|$(var bedrock-off ANTHROPIC_DEFAULT_SONNET_MODEL)|$(var bedrock-off ANTHROPIC_DEFAULT_HAIKU_MODEL)|"
+PROVIDER=("${SAVED[@]}")
+# agent_env naming the key as well as the flag being on: the final environment collapses repeats, so
+# count the names agent_env_names itself returns. If someone drops its duplicate check, this goes red.
+# shellcheck disable=SC2016 # the child shell expands $1
+names="$(cd "${p}" && env -u ANTHROPIC_DEFAULT_SONNET_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL AWS_BEARER_TOKEN_BEDROCK=bkey CLAUDE_CODE_USE_BEDROCK=1 CLAUDE_CODE_USE_FOUNDRY=0 ANTHROPIC_DEFAULT_OPUS_MODEL=op-b \
+  bash -c '. "$1/lib/agents.sh"; CFG_agent_env="AWS_BEARER_TOKEN_BEDROCK"; agent_env_names' _ "${SWARM%/*}" 2>&1)"
+check "agent_env naming AWS_BEARER_TOKEN_BEDROCK with the flag on returns it once, beside the model pin" "1|1" \
+  "$(tr ' ' '\n' <<< "${names}" | grep -cx AWS_BEARER_TOKEN_BEDROCK)|$(tr ' ' '\n' <<< "${names}" | grep -cx ANTHROPIC_DEFAULT_OPUS_MODEL)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

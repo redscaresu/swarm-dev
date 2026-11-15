@@ -92,13 +92,11 @@ fresh() {
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
-  polls=0
 }
 # poll — one read of the lead's queue, inside herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc.
 # poll [VAR=value]... — one read of the lead's queue, inside herdr; output in ${ROOT}/out, exit code in
 # ${ROOT}/rc.
 poll() {
-  polls=$((polls + 1))
   (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead "$@" \
     bash "${SWARM}" wait --lead 0 > "${ROOT}/out" 2>&1) && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
@@ -754,7 +752,7 @@ poll
 check "a failed step-up in a running upgrade's epic still fires" step_fires na-u2
 unbusy; rm -f "${P}/.swarm/upgrade.pid"
 
-# --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case
+# --- the cost of a poll: one herdr list (two on a poll with new missing-agent lines), no per-pane read, no gh call, with a ready and a review case
 # live, a failed step-up's marker and a review agent that never started.
 fresh "merge = agent"; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; ev close na-a
 story na-r "kind: code" "status: review" "prs: ${URL}"; ev story na-r; built na-r; ev close review-na-r
@@ -765,9 +763,14 @@ listed nr-c; sed 's/"idle"/"working"/' "${FX}/agents" > "${FX}/agents.new"; mv "
 poll
 check "the marker's line comes out beside the no-agent lines" test "$(grep -c '^step-up failed: na-x, exit: swarm.sh step-up --resume na-x$' "${ROOT}/out")" == 1
 check "and so does the no-review line" grep -qxF "no-review: nr-c ${URL}, exit: swarm.sh review-agent nr-c ${URL}, or the fallback reviewer" "${ROOT}/out"
+first="$(cat "${ROOT}/herdr.log")"
 poll; poll
-want=""; for ((i = 0; i < polls; i++)); do want+="agent list"$'\n'; done
-check "each poll makes one herdr agent list and no other herdr call" test "$(cat "${ROOT}/herdr.log")" == "${want%$'\n'}"
+# The first poll prints new missing-agent lines, so it reads herdr's list once more before it prints
+# them (line_holds); the next two print nothing new and read it once each.
+check "the poll that prints new lines makes two herdr agent lists and no other herdr call" \
+  test "${first}" == "agent list"$'\n'"agent list"
+check "each later poll makes one herdr agent list and no other herdr call" \
+  test "$(cat "${ROOT}/herdr.log")" == "${first}"$'\n'"agent list"$'\n'"agent list"
 check "and no gh call" test ! -e "${ROOT}/gh.log"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
