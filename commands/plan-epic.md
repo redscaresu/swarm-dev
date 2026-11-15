@@ -24,9 +24,9 @@ and an open pane sits idle for hours. Never close an agent while only its `.part
 run is unfinished, and the agent may be started again from it. The one exception is an agent stuck
 on an error, which you restart as /swarm-dev:swarm says: `swarm.sh close <name>`, then start it
 again. A pane still working is left open, and your report names it. Once every pane is closed and
-before the board PR opens, `swarm.sh next` and `swarm.sh wait --lead` print `idle: epic $1 has no
-plan running, exit: /swarm-dev:plan-epic $1`: that is this run waiting for the user's approval, not
-a plan to start again.
+before the board PR opens, `swarm.sh next` offers `plan-epic $1`, either as its step or as the line
+`idle: epic $1 has no plan running, exit: /swarm-dev:plan-epic $1`, and `swarm.sh wait --lead` can
+print that line. Either one is this run waiting for the user's approval, not a plan to start again.
 
 **An expired login.** If a `wait` prints `auth`, that agent stopped on "Login expired · Please run
 /login". No agent can fix that, and only the user's `/login` clears it. Stop, and tell the user to

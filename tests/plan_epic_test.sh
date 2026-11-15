@@ -124,7 +124,7 @@ has close-working-named 'A pane still working is left open, and your report name
 # The restart route in /swarm-dev:swarm closes an agent stuck on an error, often with only a .partial.
 has close-error-exception 'The one exception is an agent stuck on an error, which you restart as /swarm-dev:swarm says: `swarm\.sh close <name>`, then start it again' "$flat"
 # With every pane closed and no board PR yet, next's idle line for this epic is the run waiting for approval.
-has close-idle-waiting 'Once every pane is closed and before the board PR opens, `swarm\.sh next` and `swarm\.sh wait --lead` print `idle: epic \$1 has no plan running, exit: /swarm-dev:plan-epic \$1`: that is this run waiting for the user.s approval, not a plan to start again' "$flat"
+has close-idle-waiting 'Once every pane is closed and before the board PR opens, `swarm\.sh next` offers `plan-epic \$1`, either as its step or as the line `idle: epic \$1 has no plan running, exit: /swarm-dev:plan-epic \$1`, and `swarm\.sh wait --lead` can print that line\. Either one is this run waiting for the user.s approval, not a plan to start again' "$flat"
 has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its answer has been read, never while only its `\.partial` exists, except to restart one stuck on an error; a pane still working is left open, and the report names it' "$mflat"
 
 # /epic writes a draft epic on the board with its four sections, and only the user's agreement makes it active.
