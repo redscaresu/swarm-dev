@@ -7,7 +7,7 @@ Part of [the reference](reference.md), which lists every section and the file th
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time, the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose message a caller may have handled (it still reaches the terminal).
 Only the read-only commands are exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `grants`, `cost`, `outcomes`, `flow`, `dataset`, `retro`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, `swarms`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and `tidy` without `--yes`), so a new command is logged until someone names it read-only.
 The exception is `wait`, `wait --lead`, `wait-pr` and a conductor's `watch`, whose lines are below.
-Each has the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in `sha=`.
+Their `nudge`, `resume`, `resend`, `pr-opened` and `first-green` lines each have the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in `sha=`.
 Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
 A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
 The stall rule skips those lines, because none is a sign of life.
@@ -138,16 +138,16 @@ The stall rule skips those lines, because none is a sign of life.
   A `wait-timeout` carries `activity=` when the agent made no progress during the wait: no commit or edit in its story's worktree and no assistant message or tool line in its session log since the wait began.
   Its value names what was still running when the wait ran out, comma-joined: `bg` (a background task of the session), `test` (a test suite in its pane), `sign` (work its signer cannot sign), or `none`.
   With progress, the line has no `activity=`.
+  A `wait` that times out with no progress writes `sign-blocked` and `sign-clear` too, as it reads `activity=`.
 - `wait --lead`: `wait --lead` logs each Enter it sends an unsent brief as `resend <agent>`.
 - `wait --stall`: `wait --stall` writes `sign-blocked` when a builder it would otherwise call stalled, with no sign of life for under 3 times `stall_minutes`, cannot sign its uncommitted work, and `sign-clear` when that builder can sign again.
-  A `wait` that times out with no progress writes them too, as it reads `activity=`.
   Each is written once per change of state ([§ Building](reference-building.md#building)).
   Neither ends a login episode.
   `wait --stall` writes `stalled` when a builder shows no sign of life for `stall_minutes`.
   The line carries three inputs: `bg=` (a background task of its session), `test=` (a test suite in its pane) and `sign=` (work its signer cannot sign), each `1` when it read so.
   The wait calls a builder stalled only when all three read `0`, so its line always has `bg=0 test=0 sign=0`.
-- `wait-pr`: `wait-pr` logs `first-green <slug>` the first time a PR on `story/<slug>` is green, once per PR, even when two waits on it go green at once (the lead's bare `watch` and a PR on any other branch log none).
-- `watch`: A conductor's `watch` (`--epic` or `--backlog`) logs `pr-opened <slug>` when it says a story PR opened.
+- `wait-pr`: `wait-pr` logs `first-green <slug>` the first time a PR on `story/<slug>` is green, once per PR, even when two waits on it go green at once (a PR on any other branch logs none).
+- `watch`: A conductor's `watch` (`--epic` or `--backlog`) logs `pr-opened <slug>` when it says a story PR opened (the lead's bare `watch` logs none).
 
 The log is local to the machine and append-only, holds names and paths but never a brief's or a message's contents, and a write that fails never fails the command.
 The outcome field is the one place free text gets in: the reason given to a `reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`), and the first line of a failed command's error.
