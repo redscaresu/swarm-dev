@@ -38,13 +38,16 @@ from collections import Counter
 # counts as one put back, and so does one the base adds after it where the PR side holds a copy the
 # base does not. Where that merge base has no such file under any name git finds, every L prints.
 # A line the PR's head extends is no drop either (extended): after that, a printed L of EXTENDED_WORDS
-# or more words does not print when the head's F holds a line with every word of L in the same order
-# (words split on whitespace), as when the PR inserted a section into a table row the base also changed,
-# and no line printed before it claimed that copy. Only the head's copies of a line beyond the most
-# <base>'s F or the F of `git merge-base <base> <head>` holds can stand for L, and none of a text any
-# merge printed, so a base line the resolution kept, or a dropped line's own copies, never clears
-# another. Two base lines extended into one head line still print one, and a line whose words were
-# changed or taken out still prints.
+# or more words does not print when the head's F holds a line that is L with words added or only its
+# spacing changed, and no line printed before it claimed that copy, as when the PR inserted a section
+# into a table row the base also changed. That head line holds every word of L in the same order (words
+# split on whitespace), and L's words are more than EXTENDED_SHARE of its own, so a longer line that only
+# happens to hold L's words (`[ -n "$x" ] || exit 1` for a dropped `exit 1`) does not clear L. Only the
+# head's copies of a line beyond the most <base>'s F or the F of `git merge-base <base> <head>` holds can
+# stand for L, and none of a text any merge printed, so a base line the resolution kept, or a dropped
+# line's own copies, never clears another. Where either commit has no such file under any name git
+# finds, its copies are unknown, and no head line stands for L. Two base lines extended into one head
+# line still print one, and a line whose words were changed, taken out or reordered still prints.
 # Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
@@ -59,8 +62,10 @@ from collections import Counter
 
 TEXT_CHARS = 300   # the most of a dropped line's text it prints (merge.sh's FIX_MAIN_LINE_CHARS)
 GIT_SECONDS = 120  # the longest one git call may run
-EXTENDED_WORDS = 2  # the fewest words a printed line needs for a longer head line to clear it: a lone
-                    # `}` or `fi` is a word of many lines a PR writes for itself
+EXTENDED_WORDS = 3  # the fewest words a printed line needs for a longer head line to clear it: a `}` or
+                    # an `exit 1` is in many lines a PR writes for itself (`} else {`, `|| exit 1`)
+EXTENDED_SHARE = 0.5  # a printed line's words must be more than this share of the words of a head line
+                      # that clears it, so that line is the printed one with words added
 OUTSIDE, FIRST, SECOND, ANCESTOR = 0, 1, 2, 3   # where a line of the remerged file sits
 HUNK = re.compile(rb"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 MARKER = re.compile(rb"^(?:<{7,}|\|{7,}|>{7,})(?: |$)|^={7,}$")
@@ -242,12 +247,14 @@ def scan(m, pr, base_side, ours):
 
     def spare(path, after):
         """the head's copies of each line of the file beyond the most that <base> or the merge base of <base>
-        and <head> (LATER) holds, each file read under that commit's own name for it (named)"""
+        and <head> (LATER) holds, each file read under that commit's own name for it (named); none where one
+        of them has no such file, as its copies are then unknown"""
         if (path, after) not in spares:
-            base = Counter()
-            for rev in LATER:
-                base |= copies(rev, path, after) or Counter()
-            spares[path, after] = (named(HEAD, path, after)[1] or Counter()) - base
+            later, base = [copies(rev, path, after) for rev in LATER], Counter()
+            for got in later:
+                base |= got or Counter()
+            known = all(got is not None for got in later)
+            spares[path, after] = (named(HEAD, path, after)[1] or Counter()) - base if known else Counter()
         return spares[path, after]
 
     def owing(path, text, printed):
@@ -301,9 +308,13 @@ def missing(found):
     return left[::-1]
 
 def extends(text, head):
-    """whether head's words (split on whitespace) hold every word of text, in the same order"""
-    words = iter(head.split())
-    return all(word in words for word in text.split())
+    """whether head is text with words added or its spacing changed: head's words (split on whitespace) hold
+    every word of text in the same order, and text's are more than EXTENDED_SHARE of them"""
+    wanted, words = text.split(), head.split()
+    if len(wanted) <= EXTENDED_SHARE * len(words):
+        return False
+    rest = iter(words)
+    return all(word in rest for word in wanted)
 
 def extended(left, found):
     """the lines of left (missing's entries) that no line the head added extends: in print order, an entry of
