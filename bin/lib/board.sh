@@ -31,6 +31,7 @@ BOARD_SNAP_RE='^_BS_[seh]_[A-Za-z0-9_]+$'
 # key (BOARD_SNAP_RE): _ - and . in a file's name are encoded as _5f, _2d and _2e. A file whose name
 # has any other character, or that cannot be read, and an item whose state file cannot be read, are
 # left out, so they are read as before (and fail as before). <mark-file> becomes BOARD_SNAP_MARK.
+# Then it indexes each story's epic from that read (board_snap_index), which epic_stories answers from.
 # Fails, with no snapshot, when awk does; every read then goes to the files.
 board_snapshot() {
   local d f s line out files=()
@@ -83,6 +84,44 @@ board_snapshot() {
     printf -v "${line%%=*}" '%s' "${line#*=}"
   done <<< "${out}"
   BOARD_SNAP="${BOARD}"$'\t'"${BOARD_STATE_DIR}"
+  board_snap_index
+}
+
+# board_snap_index — board_snapshot's story-to-epic index, read from the snapshot it has just taken:
+# for each story it holds, _BS_s_<name>__I is the epic the story counts in (epic_stories' rule: its
+# epic:, but none for an after_story), empty for none. epic_stories answers from it during the report,
+# so one report reads each story's epic once, not once per epic. It goes with the rest of the snapshot
+# (board_snap_drop), so a board-state write that changes a story's kind, after or epic drops it too.
+board_snap_index() {
+  local f v e
+  for f in "${BOARD}/stories"/*.md; do
+    board_snap_var s "${f##*/}" || continue
+    v="${BOARD_SNAP_VAR}"
+    [[ -n "${!v:-}" ]] || continue
+    e="$(fm "${f}" epic)"
+    [[ -z "${e}" ]] || ! after_story "${f}" || e=""
+    printf -v "${v}__I" '%s' "${e}"
+  done
+}
+
+# board_snap_live — true while this shell holds a report's snapshot of the board it reads now. When a
+# board-state write made the mark (board_snap_written), in this shell or a subshell, or BOARD or
+# BOARD_STATE_DIR is another, it drops the snapshot first and fails.
+board_snap_live() {
+  [[ -n "${BOARD_SNAP:-}" ]] || return 1
+  [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]] || return 0
+  board_snap_drop
+  return 1
+}
+
+# board_snap_var <s|e|h> <file-name> — set BOARD_SNAP_VAR to the variable that marks a story, epic or
+# HLD file named <file-name> in the snapshot (BOARD_SNAP_RE's encoding). Fails, setting it to nothing,
+# for a name board_snapshot leaves out. It sets a variable, not output, so it costs no subshell.
+board_snap_var() {
+  local n="$2"
+  BOARD_SNAP_VAR=""
+  [[ "${n}" =~ ^[A-Za-z0-9._-]+\.md$ ]] || return 1
+  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; BOARD_SNAP_VAR="_BS_$1_${n//./_2e}"
 }
 
 # board_snap_read <F|G> <file> <key> — print <key>'s value for <file> from the report's snapshot (F:
@@ -93,17 +132,16 @@ board_snapshot() {
 # board-state write made the mark (board_snap_written), in this shell or a subshell, it drops the
 # snapshot first, so every read after the write sees it.
 board_snap_read() {
-  [[ -n "${BOARD_SNAP:-}" ]] || return 1
-  if [[ -e "${BOARD_SNAP_MARK}" || "${BOARD_SNAP}" != "${BOARD}"$'\t'"${BOARD_STATE_DIR}" ]]; then board_snap_drop; return 1; fi
-  local n="${2##*/}" t
+  board_snap_live || return 1
+  local n t
   case "${2%/*}" in
     "${BOARD}/stories") t=s ;;
     "${BOARD}/epics") t=e ;;
     "${BOARD}/hld") t=h ;;
     *) return 1 ;;
   esac
-  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${n}" =~ ^[A-Za-z0-9._-]+\.md$ && -e "$2" ]] || return 1
-  n="${n%.md}"; n="${n//_/_5f}"; n="${n//-/_2d}"; n="_BS_${t}_${n//./_2e}"
+  [[ "$3" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -e "$2" ]] && board_snap_var "${t}" "${2##*/}" || return 1
+  n="${BOARD_SNAP_VAR}"
   [[ -n "${!n:-}" ]] || return 1
   n+="__$1_$3"
   [[ -z "${!n+x}" ]] || printf '%s\n' "${!n}"
@@ -212,7 +250,7 @@ state_read() {
 board() {
   local f
   for f in "${BOARD}/$1"/*.md; do
-    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] || continue
+    [[ -e "${f}" && "${f##*/}" != README.md ]] || continue
     echo "${f}" 2>/dev/null || return 0
   done
   return 0
@@ -236,9 +274,22 @@ after_story() { waits_on_epic "$(get_fm "$1" kind)" "$(get_fm "$1" after)" "$(fm
 
 # epic_stories <epic> — the story files that count in <epic>, any status: those naming it, but an
 # after_story. Every test of an epic's stories reads them here, taken whole first (a loop that returns
-# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored).
+# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored). During a report
+# it walks the board's stories in board order, as board does, and takes each one's epic from the
+# snapshot's index (board_snap_index) with no process, reading a story the index lacks (one made
+# since the snapshot) as it would with no report.
 epic_stories() {
-  local s
+  local s v
+  # The index keeps no epic for a story with none and an after_story alike, so "" walks the board.
+  if [[ -n "$1" ]] && board_snap_live; then
+    for s in "${BOARD}/stories"/*.md; do
+      [[ -e "${s}" && "${s##*/}" != README.md ]] || continue
+      if board_snap_var s "${s##*/}" && v="${BOARD_SNAP_VAR}__I" && [[ -n "${!v+x}" ]]; then
+        [[ "${!v}" != "$1" ]] || echo "${s}"
+      elif [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}"; then echo "${s}"; fi
+    done
+    return 0
+  fi
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}" && echo "${s}"
   done < <(board stories)
@@ -248,10 +299,10 @@ epic_stories() {
 # epic_has_stories <epic> [<slug>] — true when a story counts in <epic> (epic_stories). With <slug>,
 # one but <slug>: story_brief's test for the epic's last story.
 epic_has_stories() {
-  local s list
+  local s n list
   list="$(epic_stories "$1")"
   while IFS= read -r s; do
-    [[ -z "${s}" || "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
+    n="${s##*/}"; [[ -z "${s}" || "${n%.md}" == "${2:-}" ]] || return 0
   done <<< "${list}"
   return 1
 }
@@ -357,7 +408,7 @@ epic_report_stale() {
 epic_after_only() {
   local s slug list
   [[ "$(fm "$1" status)" == active ]] || return 1
-  slug="$(basename "$1" .md)"
+  slug="${1##*/}"; slug="${slug%.md}"
   list="$(epic_stories "${slug}")"
   while IFS= read -r s; do
     [[ -z "${s}" || "$(fm "${s}" status)" == "done" ]] || return 1
@@ -490,7 +541,8 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line. basename here, unlike the
+  # loops below: next_test.sh makes it fail on a story's path, to show a failure in next_step stops next.
   while IFS= read -r f; do
     buildable_story "${f}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
@@ -517,7 +569,7 @@ next_step() {
   fi
   # A built epic (every story merged, its file still here) is reported, never planned again.
   while IFS= read -r f; do
-    slug="$(basename "${f}" .md)"
+    slug="${f##*/}"; slug="${slug%.md}"
     epic_built "${slug}" || continue
     epic_report_stale "${slug}" || continue
     echo "conduct ${slug}"
@@ -533,14 +585,14 @@ next_step() {
   # Neither HLD arm calls gh: dash runs next every frame. An open plan PR (its worktree) lets the
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     [[ "$(hld_due "${f}")" == plan && -z "$(hld_blocked "${f}")" ]] || continue
     ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
-    slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
+    slug="${f##*/}"; slug="${slug%.md}"; when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
     echo "escalated ${slug}"
     if [[ "${held}" == top-rung ]]; then
       echo "${slug} is held (top-rung): its builder on or above the ladder's top rung drew another findings round, which was not sent (the block names the file); re-scope it, lift the hold with swarm.sh reset ${slug} <reason> and send the findings with swarm.sh tell ${slug} findings <file>, or close its builder, PR and worktree as its block says and swarm.sh drop ${slug} <reason>, then tell the user why"
@@ -580,7 +632,7 @@ next_step() {
   fi
   # A planned HLD with no epic left is finished; while its finish PR is open, it is a gate row.
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     [[ "$(hld_due "${f}")" == finish ]] || continue
     ! hld_pr_open "${slug}" finish || continue
     echo "hld ${slug}"; echo "the planned HLD ${slug} has no epics left on the board: run swarm.sh finish ${slug}"; return
@@ -705,7 +757,7 @@ idle_epic_lines() {
   plannable="$(plannable_epics)"; current="$(idle_stage)"
   while IFS= read -r f; do
     [[ -n "${f}" ]] || continue
-    slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
+    slug="${f##*/}"; slug="${slug%.md}"; st="$(fm "${f}" status)"
     [[ "${slug}" != "${named}" ]] || continue
     case "${st}" in
       draft|later)
@@ -2473,7 +2525,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 waiting_on_user() {
   local f kind slug when start agreed stage prev why waiting="" holds="${1-}" hread="${1+1}"
   while IFS= read -r f; do
-    kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
+    kind=$(fm "${f}" kind); slug="${f##*/}"; slug="${slug%.md}"
     case "$(fm "${f}" status)" in
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
@@ -2490,7 +2542,7 @@ waiting_on_user() {
       # agreed: <today> in the edit that sets it active, as /epic does. On a board in the repo, one agreed
       # and parked today has that date at the base already, which is no ticket, so its agreed: line goes
       # in a board PR first. A board outside the repo has no board PR and no guard.
-      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md); start="set it active with agreed: <today> to start it"
+      later) when="$(fm "${f}" unasked_plan)"; slug="${f##*/}"; slug="${slug%.md}"; start="set it active with agreed: <today> to start it"
         agreed="$(get_fm "${f}" agreed)"
         [[ ${BOARD_IN_REPO} != 1 || -z "${agreed}" || "$(slug_list "${agreed}")" != "$(date +%F)" ]] \
           || start="it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next"
@@ -2503,12 +2555,12 @@ waiting_on_user() {
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
       # A staged draft is the lead's to set active once the stage before it is tagged (next's stage).
       # A draft the epic guard would let go active unagreed (draft_lead_why) is the lead's too.
-      draft) slug=$(basename "${f}" .md); stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
+      draft) slug="${f##*/}"; slug="${slug%.md}"; stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
         if [[ -n "${stage}" ]]; then waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'
         elif why="$(draft_lead_why "${f}")" && [[ -n "${why}" ]]; then waiting+="  draft epic: ${slug}, the lead sets it active (${why})"$'\n'
         else waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'; fi ;;
       review) [[ -n "${hread}" ]] || { holds="$(protected_holds)"; hread=1; }
-        waiting+="$(merge_rows "${f}" "epic $(basename "${f}" .md)" "${holds}")"$'\n' ;;
+        slug="${f##*/}"; waiting+="$(merge_rows "${f}" "epic ${slug%.md}" "${holds}")"$'\n' ;;
     esac
   done < <(board epics)
   # Every stage PR's worktree, its epics drafts or not: once the PR merges they are active, and the
@@ -2517,7 +2569,7 @@ waiting_on_user() {
     [[ -z "${stage}" ]] || waiting+="  stage PR awaiting merge: v${stage}"$'\n'
   done <<< "$(stage_worktrees)"
   while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
+    slug="${f##*/}"; slug="${slug%.md}"
     # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
@@ -2680,7 +2732,9 @@ unblock_startable() {
 
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated, the
 # outcome without its key=value tail (EVENT_OUTCOME_AWK), so `reconcile<tab>ok (reopened)` compares whole.
-last_event() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s { last = $2 "\t" outcome($5) } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
+# A pane-closed line is skipped: it says a pane closed, not what became of the story, and a tidy
+# after a reopen would otherwise hide the reopen.
+last_event() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s && $2 != "pane-closed" { last = $2 "\t" outcome($5) } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
 # delete_item <file> — delete a story, epic or HLD file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
@@ -2956,7 +3010,9 @@ get_fm_or_gone() {
 # (decline_only_round, read once) is a decline-only end instead: it writes decline-only <slug> ok (round N)
 # with round=N and verdict=decline-only, and its review line has the same. A --head that passes writes
 # review-finished <slug> ok with the review line's fields; a review held writes none. A failed read of
-# decline_only_round is a pass, never a failed review.
+# decline_only_round is a pass, never a failed review. A story put in review under merge = human with no
+# HLD merge grant, from review-<slug>'s own pane, has that pane closed once this command has exited
+# and the agent is idle (handed_review).
 mark_review() {
   local f url held want="" slug round="" verdict=pass n="" head base merges
   REVIEW_ACCEPTED=""
@@ -2996,6 +3052,37 @@ mark_review() {
   if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
     review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
   fi
+  if [[ "${f}" == "${BOARD}/stories/"* && "${CFG_merge}" == human ]] && ! no_agent_granted "${slug}"; then
+    handed_review "${slug}"
+  fi
+}
+
+# handed_review <slug> — mark_review's handover under merge = human with no HLD merge grant over the
+# story (no_agent_granted): review-<slug> merges nothing after this, so when this command runs in its
+# own pane (review_pane, the record merge and tell go by), it is retired (retire_agent) and its session
+# archived, as merged_review does for a merge, and close_when_idle closes the pane once this command has
+# exited and the agent's turn has ended. A grant the board shows makes the agent run swarm.sh merge
+# next, whose reconcile closes it instead; swarm.sh grants, which the agent asks, grants merge only
+# when the board does too, so no pane closes under a merge. From any other pane (the lead's, a
+# conductor's), outside herdr, or with herdr unable to list its agents, it closes nothing. The story is
+# already in review, so it asks herdr nothing unless the pane's tab record names review-<slug>
+# (pane_review_name), and each herdr call it makes, retire_agent's too, is bounded (bound_herdr): a
+# herdr that hangs leaves the pane open, and review still exits. It never fails the review: a retire or
+# close that fails is said, with the command that closes the pane then.
+handed_review() {
+  [[ "${HERDR_ENV:-}" == 1 && -n "${HERDR_PANE_ID:-}" ]] || return 0
+  [[ "$(pane_review_name)" == "review-$1" ]] || return 0
+  (
+    local agents name rc
+    bound_herdr
+    agents="$(note_agents)" || { echo "review-$1 was left open: herdr cannot list its agents; close it with swarm.sh close review-$1 once it is done"; exit 0; }
+    [[ "$(review_pane "${agents}")" == "$1" ]] || exit 0
+    name="$(agent_name "review-$1")"
+    ( set -e; retire_agent "review-$1" ) </dev/null &
+    wait $! || { rc=$?; echo "review-$1 was left open and not retired (exit ${rc}); close it with swarm.sh close review-$1 once it is done"; exit 0; }
+    ( set -e; archive_session "review-$1"; close_when_idle "${name}" "${HERDR_PANE_ID}" ) </dev/null &
+    wait $! || echo "review-$1 was retired but left open (exit $?); close it with swarm.sh tidy --yes once it is done"
+  )
 }
 
 REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may take
