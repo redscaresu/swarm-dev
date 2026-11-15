@@ -128,8 +128,10 @@ lines are no queue item: none goes into
 signal only that newer run sends. A run answers it at once while it sleeps between polls; one still in a
 slow read 5 s later gets a KILL and prints nothing. `wait-failed: exit <rc>, exit: swarm.sh wait --lead`
 comes on any other non-zero exit that printed nothing, and keeps that exit code: an invalid argument, a
-lock it could not take, a failed read of the queue, or a TERM from anything else, such as a tool's
-timeout (exit 143). Its stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
+lock it could not take, a failed read of the queue (such as a story's board-state file it cannot
+read), or a signal from anything else: a TERM, such as a tool's timeout (exit 143), an INT from
+Ctrl-C (exit 130) or a HUP from a closed terminal (exit 129). Each of those removes its pid file. Its
+stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
 left it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
