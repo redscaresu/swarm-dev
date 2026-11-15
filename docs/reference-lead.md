@@ -44,7 +44,11 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   epic keeps its `# ` heading, so renaming an `active` epic needs no ticket. git pairs a rename by
   content, uncommitted moves included, and pairs a deleted epic with a new one that is half alike
   too, so the heading decides: an epic moved and given another heading needs a ticket, its old
-  `agreed:` still counted, and one more than half rewritten reads as new.
+  `agreed:` still counted, and one more than half rewritten reads as new. An `agreed:` date that an
+  epic the PR deletes or renames away had on the base is no ticket for any epic the PR sets
+  `active`, so a new epic cannot carry that date across. The refusal names the deleted epic, and a
+  failed read of it refuses too. If two epics were agreed the same day, delete the old one in one
+  PR and add the new one in another, or give the new one a `parent:` or `hld:` ticket.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
   days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
@@ -60,6 +64,12 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   changes or is locked, when `board/<name>` is checked out anywhere else (the main checkout, or
   another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
+
+**Retro files.** A retro's file is `<board>/retros/v<version>.md`, named for the version being released.
+Its front matter holds `covers: v<from>..v<to>` and `done: YYYY-MM-DD`, each on one line with no quotes.
+A file in `retros/` that lacks either field is a note, and no check reads it as a retro.
+[templates/docs/retros/README.md](../templates/docs/retros/README.md) gives the format, the `retro-<version>` lead story and how the file lands, and `swarm.sh init` copies it to the board.
+The Retros view in `Board.base` lists every file whose `covers:` is set.
 
 **Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
 alone. Only a plan or an agreement PR gets a codex review, and only when its name names an HLD or
@@ -122,8 +132,10 @@ lines are no queue item: none goes into
 signal only that newer run sends. A run answers it at once while it sleeps between polls; one still in a
 slow read 5 s later gets a KILL and prints nothing. `wait-failed: exit <rc>, exit: swarm.sh wait --lead`
 comes on any other non-zero exit that printed nothing, and keeps that exit code: an invalid argument, a
-lock it could not take, a failed read of the queue, or a TERM from anything else, such as a tool's
-timeout (exit 143). Its stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
+lock it could not take, a failed read of the queue (such as a story's board-state file it cannot
+read), or a signal from anything else: a TERM, such as a tool's timeout (exit 143), an INT from
+Ctrl-C (exit 130) or a HUP from a closed terminal (exit 129). Each of those removes its pid file. Its
+stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
 left it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
@@ -298,6 +310,16 @@ base's read fails on 3 heads passes in a row (`SWARM_LEAD_PRS_WARN_AFTER`, the s
 stderr, or `could not tell the base of <owner/repo>` when it could not pick the base. The lead clears it:
 check `gh auth status`, that gh can see the repo, and `base_branches`.
 
+**A usage estimate past `usage_warn_percent` wakes the lead once a week.** With the key set, each poll
+reads the session logs at most once every 10 minutes (`SWARM_USAGE_EVERY`, 600 seconds). The first time
+the estimate of the week's share, or of Fable's own limit, reaches the key, the poll prints `usage: estimate
+<N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, at or past usage_warn_percent <P> (...; /usage is the truth),
+exit: check /usage, as nothing stops on this`. Once the line has printed, it writes the time of that estimate to
+`.swarm/lead/usage-warned`, and no poll reads the logs again while that time is in the current usage week,
+even when a reading added or changed later moves the week's edges. It is an estimate and a warning, never a gate. A read that fails or takes
+over 60 seconds prints a warning on stderr and no line. How the estimate is made, and how to calibrate
+it, is in reference-models.md § Settings.
+
 **A brief left in an idle agent's input box is submitted once.** herdr types a long brief into the
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
 its input box. On each read, `wait --lead` takes the agents this project opened that the read's one
@@ -367,9 +389,10 @@ The kinds and their exits:
   `wait` answers it.
 - `login`: the turn ended on "Please run /login". Exit: `the user runs /login, then swarm.sh tell
   <agent> resume <file>`.
-- `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
+- `api-error`: the turn ended on Claude Code's `API Error:` (or `API Error (<model>):`) line, a model
+  error among them. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
-  up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+  up. A running `wait` never resumes a model error: it ends at once on `stuck: model error`. Exit: `herdr agent read <agent>, then tell the user what it shows`.
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
@@ -567,6 +590,47 @@ one that costs money, or one whose merge `held:` it for the user. An `unconfirme
 check by hand, goes to the lead, so its note does get a line. `review-agent` removes the note when it starts a new agent, so the line goes
 then; a start that fails with no agent running puts the note back. It reads the same herdr list as
 `no-agent:`; a poll whose list failed keeps the `stopped:` lines it saw last.
+
+**Plan swarm lines.** A plan swarm whose agents have all written their output wakes the lead too.
+`/plan-epic` opens its agents in a tab recorded as `.swarm/state/scope-<epic>`, and `/plan-hld` in
+`plan-<hld>`. The record has a `<pane> <name>` line for each agent still open. Each agent writes
+`.swarm/<epic>/<name>.json`, where `<name>` is the record's name less a trailing `-<epic>`
+(`survey-<epic>` writes `survey.json`). When every listed agent's file counts, `wait --lead` prints
+`planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>`, or
+`planned: <hld> (<names> done), exit: /swarm-dev:plan-hld <hld>` for an HLD's plan. A file counts
+when it parses as JSON and is newer than its planner's resume reference. For `/plan-epic` that is
+the epic file, and for its split critic the plan's board PR worktree. For `/plan-hld` it is
+`.swarm/<hld>/base-rev`, or the HLD file on a board outside the repo. A malformed file, or one
+from an earlier attempt, does not count, and neither does a `.partial`. There is no `planned:` line while
+the plan's board PR worktree exists (`<repo>-wt/_board-scope-<epic>`, or `_board-plan-<hld>`),
+from `board-pr start` until `board-pr done`: the plan is then in its board PR, or about to be.
+As `/plan-hld` makes its worktree before it starts an agent, an HLD's plan gets this line only
+when its worktree is gone. The lead runs the exit, which reuses the outputs and starts the next step.
+The next step's agents change the names, so the line comes again when that step ends.
+
+An agent that ended without its output gets a line of its own:
+`plan-missing: <epic> <name> ended without its output, exit: /swarm-dev:plan-epic <epic> (it starts that agent again)`,
+with the `/swarm-dev:plan-hld <hld>` exit for an HLD's plan. The record alone cannot say which
+agents a plan expects: a start that fails closes its pane, you can close one by hand, and the next
+start in the tab then drops that pane's line from the record. So `swarm.sh agent` also leaves a start mark,
+`.swarm/<epic>/started/<name>`, before it opens the pane. The plan's agents are the record's and
+those whose mark is newer than the same resume reference; an older mark is an earlier attempt's.
+A plan with marks and no record at all, because its first start failed before a tab opened, is read
+too. It can get `plan-missing:` lines but never `planned:`, which needs a record that lists an agent:
+the marks stay after a finished plan's tab is closed.
+A marked agent gets the line when its file does not count, its mark is older than the longest
+a start can take (10 minutes by default: two tries at the pane's shell, two at herdr's start, and
+the brief's delivery, which a larger `SWARM_PROMPT_TIMEOUT_MS` makes longer), and the poll's herdr list shows it in no pane of this plan's own
+tab records, or shows it idle or done with no background task still running in its session. An agent
+of the same name in another plan's pane does not count: plan agents share bare names such as
+`critic`. While any agent's file does not count, there is no `planned:` line. The board PR
+worktree does not hold this line back, so an in-repo HLD plan, which runs with its worktree there
+from the start, gets it too. A split critic can be named only while that worktree, its reference,
+exists. A poll
+whose herdr list failed keeps the `plan-missing:` lines it saw last. Both lines read the tab
+records, the start marks, the board and `.swarm` files, with one `python3` for the JSON, one for
+the poll's herdr list and one for each idle agent's session log, and make no gh or herdr call of their own. Both are alerts, so a run's first
+read prints them.
 
 **A conductor that reported with agent work left wakes the lead too.** A conductor writes
 `.swarm/conduct-<epic>.report.md` as its last act, and a new `swarm.sh conduct` removes an earlier
@@ -825,6 +889,7 @@ Wait until the lead's queue gains one of these, and print each new one:
 - a story PR whose idle builder has sat 60 minutes on findings or a conflict (`stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`)
 - a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`)
 - a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`)
+- with `usage_warn_percent` set, a usage estimate that reaches it, once a usage week (`usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, ...`; reference-models.md § Settings)
 - any other line [§ The lead](reference-lead.md#the-lead) lists
 
 A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`.

@@ -11,6 +11,7 @@ GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pin
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+WATCH_POLL=60           # seconds between watch's polls, scaled (nap); its poll-cache max age is one under it
 MAIN_CI_OK=0            # ci_gate main's exit codes, as ci_gate.py names them (CI_OK, CI_RED)
 MAIN_CI_RED=1
 FIX_MAIN_LINES=20       # FAIL lines fix-main prints and puts in its story
@@ -334,12 +335,13 @@ unticketed_why() {
 # epic_guard — merge's refusal of a board or story PR that sets an epic active with no ticket
 # (merge_pr's locals files, only, url and base): epic_unticketed on one changed path under the board's
 # epics/ at a time (board_epics), so a read error or a bad grants: names the epic it was checking too,
-# with every changed path for its parent: check. Then stage_gate's refusal of one set active above the
+# with every changed path for its parent: check and its deleted-epic check (a refusal for an agreed:
+# that a deleted epic had names that epic). Then stage_gate's refusal of one set active above the
 # stage the base allows, whatever lead_epics says, on every changed epic at once, so the base is fetched
 # once. A failure that printed no reason refuses all the same. The line starts --board: on that route
 # only.
 epic_guard() {
-  local p s why list pre="${only:+${only}: }"
+  local p s why clause list pre="${only:+${only}: }"
   list="$(board_epics <<< "${files}")"
   [[ -n "${list}" ]] || return 0
   while IFS= read -r p; do
@@ -347,7 +349,10 @@ epic_guard() {
     # Outside the $(...), where a merge_fail would not stop this.
     why="$(epic_unticketed merge_read "${p}" "${files}")" \
       || merge_fail "${pre}$(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
-    [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -n "${why}" ]] || continue
+    # After a tab, the clause naming the deleted epic whose agreed: it carries.
+    clause=""; [[ "${why}" != *$'\t'* ]] || clause="${why#*$'\t'}"
+    merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on)${clause}; commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${list}"
   why="$(stage_gate merge_read "${list}" "${files}")" \
     || merge_fail "${pre}$(unticketed_why "${why:-cannot check the stages}"), so whether ${url} sets an epic active above the stage ${base} allows is unknown"
@@ -1422,6 +1427,7 @@ conduct_ready() {
     case "$(conductor_stop "${c}")" in
       auth) echo "no conductor started: ${c} stopped on an expired login, which would stop a new one too"; return 0 ;;
       stuck) echo "no conductor started: ${c} stopped on an API error, which would stop a new one too"; return 0 ;;
+      model) echo "no conductor started: ${c} stopped on a model error, which would stop a new one too"; return 0 ;;
     esac
   done 3<<< "$(running_conductors)"
   while read -r e <&3; do
@@ -2936,11 +2942,14 @@ watch_repos() {
 # (review_on_head, which counts a head merge made from a reviewed head), and
 # green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
 # checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
+# Under watch (WATCH_SHARE set, watch_prs), ci_gate age's check-runs and status reads go through the poll
+# cache, so concurrent watches share them; next's reads go to GitHub.
 queued_line() {
-  local slug="${4#story/}" m
+  local slug="${4#story/}" m share_dir=""
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
   if review_on_head "${slug}" "$3"; then return 0; fi
-  m="$(ci_gate age "$1" "$3" 2>/dev/null)" || return 0
+  if (( ${WATCH_SHARE:-0} > 0 )); then share_dir="${PROJECT_DIR}/.swarm/poll-cache"; fi
+  m="$(SWARM_POLL_CACHE="${share_dir}" SWARM_POLL_CACHE_SECONDS="${WATCH_SHARE:-0}" ci_gate age "$1" "$3" 2>/dev/null)" || return 0
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${m}" =~ ^[0-9]+$ ]] && (( m >= CFG_queue_minutes )); then echo "queued: $1 #$2 $4 green ${m}m with no review on ${3:0:7}"; fi
 }
@@ -2988,9 +2997,17 @@ queued_sent() {
 # poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a watch
 # with --epic or --backlog steps up a story of its own whose PR went red on STEP_UP_RED_HEADS heads of
 # its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
+# Concurrent watches share each poll's reads: the open-PR list (watch_rows), each head's check runs and
+# queued_line's ci_gate age reads go through the poll cache (bin/lib/poll_cache.py, .swarm/poll-cache),
+# which takes a read another watch made under WATCH_SHARE seconds ago, and keeps a read only when it
+# succeeded. WATCH_SHARE is one second under a poll (WATCH_POLL, scaled as nap: 59 s), so a lone watch
+# never reads its own; 0 (a scaled poll under 2 s) is off. A shared read can be up to that old, so a
+# change can take a poll longer to be seen. The mergeable read (watch_mergeable) is never shared: it is
+# keyed by PR number, not head, and a kept MERGEABLE would hide a new conflict.
 watch_prs() {
-  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
   watch_scope "$@"; watch_repos die
+  WATCH_SHARE="$(awk -v s="$(scaled "${WATCH_POLL}")" 'BEGIN { n = int(s) - 1; print (n > 0 ? n : 0) }')"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
   # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
@@ -3050,7 +3067,7 @@ watch_prs() {
         fi
         # A failed read (a spent rate limit prints an error body and exits 1) counts as unknown for this
         # poll, said once per PR, with gh's reason, until a read of that PR next succeeds.
-        if ! runs="$(gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" \
+        if ! runs="$(watch_gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"' 2>&1)" \
           || ! [[ "${runs}" =~ ^[0-9]+\ [0-9]+$ ]]; then
           if [[ "${unread}" != *" ${repo}#${n} "* ]]; then
@@ -3106,8 +3123,17 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
-    nap 60
+    nap "${WATCH_POLL}"
   done
+}
+
+# watch_gh <gh args...> — gh <args>, for watch: through the poll cache's command form while WATCH_SHARE
+# is on (watch_prs), which prints a kept read's output or runs gh, keeping it only when gh exits 0; a
+# failed read prints gh's stdout, then its stderr, and exits as gh did.
+watch_gh() {
+  if (( ${WATCH_SHARE:-0} > 0 )); then
+    python3 -I "${SWARM_HOME}/bin/lib/poll_cache.py" "${PROJECT_DIR}/.swarm/poll-cache" "${WATCH_SHARE}" -- gh "$@"
+  else gh "$@"; fi
 }
 
 # opened_due <slug> <sha> — true when a scoped watch says <slug>'s PR, its head at <sha>, opened: its
@@ -3128,10 +3154,11 @@ opened_due() {
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
 # <seconds since its last update>` (0 when the local clock is behind GitHub's), through REST, whose budget
 # is apart from GraphQL's (gh pr list spent that dry under a swarm). A row that does not parse is left
-# out. When gh fails it fails, printing gh's output, its last line the error.
+# out. When gh fails it fails, printing gh's output, its last line the error. Read through watch_gh, so
+# concurrent watches share it.
 watch_rows() {
   local list
-  list="$(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
+  list="$(watch_gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
     -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \([now - (.updated_at|fromdateiso8601), 0] | max | floor)"' 2>&1)" \
     || { printf '%s\n' "${list}"; return 1; }
   awk '$1 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && NF == 4' <<< "${list}"
@@ -3424,8 +3451,8 @@ status_report() {
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
     # Each agent in this project's panes, read once (pane_check): when its pane last changed, and an
     # API error or auto mode denial it stopped on.
-    # shellcheck disable=SC2034 # pane_kind and pane_at are pane_check's, kept local here
-    local own pane name pane_kind pane_at; own=" $(own_panes | tr '\n' ' ') "
+    # shellcheck disable=SC2034 # pane_kind, pane_at and pane_line are pane_check's, kept local here
+    local own pane name pane_kind pane_at pane_line; own=" $(own_panes | tr '\n' ' ') "
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
