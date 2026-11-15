@@ -217,7 +217,8 @@ whether a builder is at work or not. For each one it prints:
   or a conflict with the base, counted from when a poll first saw it on that head. A push resets both. A
   head whose review passed (`.swarm/reviews/<slug>.md` is a pass on it) has no pending findings, since the PR
   then waits on its merge. A conflict on such a head is still pending. The builder must also be live in
-  the poll's herdr list and idle, with no background task in its session and no test suite running in its
+  the poll's herdr list and idle, with no background task in its session launched less than 3 times
+  `stall_minutes` ago (a swarm.sh wait counts at any age) and no test suite running in its
   pane (`make test`, `make check` or `scripts/test.sh`). `.swarm/lead/pr-heads` keeps each open PR's head
   and when a poll first saw it. Findings told before then do not count, so a head seen first after a long gap
   in `wait --lead` waits for its next findings. The line names N, never the minutes that passed, so it
@@ -627,7 +628,8 @@ the marks stay after a finished plan's tab is closed.
 A marked agent gets the line when its file does not count, its mark is older than the longest
 a start can take (10 minutes by default: two tries at the pane's shell, two at herdr's start, and
 the brief's delivery, which a larger `SWARM_PROMPT_TIMEOUT_MS` makes longer), and the poll's herdr list shows it in no pane of this plan's own
-tab records, or shows it idle or done with no background task still running in its session. An agent
+tab records, or shows it idle or done with no background task still running in its session that it
+launched less than 3 times `stall_minutes` ago (a swarm.sh wait counts at any age). An agent
 of the same name in another plan's pane does not count: plan agents share bare names such as
 `critic`. While any agent's file does not count, there is no `planned:` line. The board PR
 worktree does not hold this line back, so an in-repo HLD plan, which runs with its worktree there

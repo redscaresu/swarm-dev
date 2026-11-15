@@ -12,6 +12,10 @@
 # a hook or script that runs that arm, and the tests that name the changed file. It selects every test for --functions' full, a caller at a
 # file's top level, the catch-all arm, a call by a name built at run time ("cmd_${x}", eval), a test
 # that runs swarm.sh and names no arm's command, or a function no test reaches.
+# select_tests.py --known prints the tests the map selects for the paths it is sure of, and for each
+# path that would select every test only its row's floor: it names that path on stderr, and why, as
+# one CI's full run covers. A git command that fails leaves every path out. It prints nothing when no
+# test is left; scripts/select-tests.sh --run runs this list.
 # select_tests.py --check-map reads paths from stdin (`git ls-files`) and names each one under bin/,
 # scripts/, commands/, hooks/ or docs/ that no row matches; it exits 1 when there is one.
 # select_tests.py --functions prints, one per line, the bin/ functions those changes reach: each
@@ -21,7 +25,7 @@
 # stderr, for a line in no function (top level, a setting), a function it cannot parse, a .py no
 # function names or a hook, script or test runs, or a git command that fails. It prints nothing, and
 # says so on stderr, when no change reaches those files.
-# The default mode and --check-map read the map and tests/ of the git checkout the current directory
+# The default mode, --known and --check-map read the map and tests/ of the git checkout the current directory
 # is in, and exit 2 on a map that does not parse or lists a test file that is not there; --functions
 # reads no map.
 import glob
@@ -118,38 +122,71 @@ def naming(root, tests, path):
     return out
 
 
-# select(root, rows, paths, base) — (the tests to run, None) or (None, why) for every test. The paths a
-# `reach` row select the tests that name them, and go to reaching() together, after the rest.
-def select(root, rows, paths, base):
-    tests, picked, reach = all_tests(root), set(), []
-    for path in paths:
-        row = row_for(rows, path)
-        if row is None:
-            return None, f"{path}: no row in {MAP} matches it"
-        n, _, targets = row
-        if targets == ["all"]:
-            return None, f"{path}: {MAP}:{n} maps it to all"
-        for t in targets:
-            if t == "named":
-                found = naming(root, tests, path)
-                if not found:
-                    return None, f"{path}: no test names {os.path.basename(path)}"
-                picked.update(found)
-            elif t == "self":
-                if path not in tests:
-                    return None, f"{path}: the test is gone"
+# by_row(root, rows, tests, path) — (the tests the path's row selects, its row's targets, why), why
+# None or the reason it selects every test. A `reach` row's tests here are its floor and the tests
+# that name the path; reaching() adds the rest. With a why, the tests are the row's floor alone.
+def by_row(root, rows, tests, path):
+    row = row_for(rows, path)
+    if row is None:
+        return set(), [], f"{path}: no row in {MAP} matches it"
+    n, _, targets = row
+    if targets == ["all"]:
+        return set(), targets, f"{path}: {MAP}:{n} maps it to all"
+    picked, why = set(), None
+    for t in targets:
+        if t == "named":
+            found = naming(root, tests, path)
+            if not found:
+                why = f"{path}: no test names {os.path.basename(path)}"
+            picked.update(found)
+        elif t == "self":
+            if path not in tests:
+                why = f"{path}: the test is gone"
+            else:
                 picked.add(path)
-            elif t == "reach":
-                reach.append(path)
-                picked.update(naming(root, tests, path))   # a test that reads the file as text
-            elif t != "none":
-                picked.add(t)
-    if reach:
-        found, why = reaching(root, base, reach)
+        elif t == "reach":
+            picked.update(naming(root, tests, path))   # a test that reads the file as text
+        elif t != "none":
+            picked.add(t)
+    return picked, targets, why
+
+
+# select(root, rows, paths, base, known=False) — (the tests to run, gaps). gaps is [] or, for every
+# test, [(path, why)]: the first path the map cannot select for. The paths a `reach` row select
+# together, through reaching(), after the rest. With known, gaps holds every such path, and the tests
+# are those the map selects for the other paths plus each gap's row floor: when the `reach` paths
+# together give every test, each goes to reaching() alone, so only the ones that still do are gaps.
+def select(root, rows, paths, base, known=False):
+    tests, picked, reach, gaps = all_tests(root), set(), {}, []
+    for path in paths:
+        found, targets, why = by_row(root, rows, tests, path)
         if why:
-            return None, why
+            gaps.append((path, why))
+            if not known:
+                return None, gaps
+            picked |= found
+        elif "reach" in targets:
+            reach[path] = found
+        else:
+            picked |= found
+    if not reach:
+        return sorted(picked), gaps
+    found, why = reaching(root, base, list(reach))
+    if not why:
         picked |= found
-    return sorted(picked), None
+        for floor in reach.values():
+            picked |= floor
+        return sorted(picked), gaps
+    if not known:
+        return None, [(list(reach)[0], why)]
+    for path, floor in reach.items():
+        found, why = reaching(root, base, [path])
+        if why:
+            gaps.append((path, why))
+        else:
+            picked |= found
+        picked |= floor
+    return sorted(picked), gaps
 
 
 def git(root, *args):
@@ -662,8 +699,8 @@ def check_map(rows, paths):
 
 
 def main(argv):
-    if argv[1:] not in ([], ["--check-map"], ["--functions"]):
-        print("usage: select_tests.py [--check-map | --functions]", file=sys.stderr)
+    if argv[1:] not in ([], ["--known"], ["--check-map"], ["--functions"]):
+        print("usage: select_tests.py [--known | --check-map | --functions]", file=sys.stderr)
         return 2
     try:
         root = subprocess.run(("git", "rev-parse", "--show-toplevel"), check=True, capture_output=True, text=True).stdout.strip()
@@ -692,15 +729,22 @@ def main(argv):
         for label in labels:
             print(label)
         return 0
+    known = argv[1:] == ["--known"]
     try:
         base = merge_base(root)
-        picked, why = select(root, rows, changed(root, base), base)
+        picked, gaps = select(root, rows, changed(root, base), base, known)
     except subprocess.CalledProcessError as e:
-        picked, why = None, f"git {e.cmd[3]} failed: {e.stderr.strip()}"
-    if picked is None:
-        print(f"select-tests: every test: {why}", file=sys.stderr)
+        picked, gaps = None, [(None, f"git {e.cmd[3]} failed: {e.stderr.strip()}")]
+    if known:
+        for path, why in gaps:
+            name = path or "every path"
+            why = why.removeprefix(name + ": ")
+            print(f"select-tests: {name}: not run here, as CI's full run covers it: {why}", file=sys.stderr)
+        picked = picked or []
+    elif picked is None:
+        print(f"select-tests: every test: {gaps[0][1]}", file=sys.stderr)
         picked = all_tests(root)
-    elif not picked:
+    if not picked and not gaps:
         print("select-tests: no test file covers this branch's changes", file=sys.stderr)
     for t in picked:
         print(t)

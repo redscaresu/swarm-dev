@@ -71,7 +71,7 @@ Useful while it runs:
 - `swarm.sh dash [--watch [seconds]]`, and `swarm.sh dash --project <dir>` (repeatable): the board, agents, running-now box, merges-per-day speedometer, model ladder and recent events on one read-only screen; each `--project` draws another project.
 - `swarm.sh where <agent>`: the pane, workspace and tab of one of this project's agents. `swarm.sh swarms`: every swarm running on this machine.
 - `swarm.sh tidy [--yes]`: close empty panes and retired agents' panes; lists them first.
-- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag, `stage v<T>` when staged draft epics can go active because the base has a tag at or above the minor before their stage, and `idle:` lines for capacity nothing uses (`dash` shows them too).
+- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag and every one is a fix (a patch), `retro v<x.y.z>` before a minor release that no done retro file covers, `stage v<T>` when staged draft epics can go active because the base has a tag at or above the minor before their stage, and `idle:` lines for capacity nothing uses (`dash` shows them too).
 - `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic. It starts builds and review agents, never reviews or merges a PR, and ends the epic with its report, written only once no agent work is left (the `finish:` line on a merge or handover note says so). `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead, and with `--epic` or `--backlog` also once when a story PR of theirs opens.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story, a green PR that waits on the user, an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode, one of `next`'s `idle:` lines for blocked stories, for ready stories with no build and for an epic that can start or has no plan running, a reviewed story PR left unmerged past `queue_minutes` (`unmerged:`), a story PR that conflicts with its base (`conflict:`), a review agent's stop note that no running conductor has (`stopped:`), a plan swarm whose agents have all written their output (`planned:`) or one that ended without it (`plan-missing:`), or a `usage:` warning once the usage estimate passes `usage_warn_percent`, among others: [§ The lead](docs/reference-lead.md#the-lead) in docs/reference-lead.md lists every line. A run with nothing new to report ends on `timeout:` (exit 1), `replaced:` when a newer run took over (exit 143), or `wait-failed: exit <rc>` on an error; a run killed outright or stopped before it started prints nothing (docs/reference-lead.md says when). It also starts a review agent itself: when a `review-agent` start was cut short with tries left, it runs the next try, and its `no-review:` line says `(started N of 3)`.
 - `swarm.sh wait-pr --head <sha> <pr-url>`: wait for a PR's checks on <sha>; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, no check runs or an expected workflow that never started within 5 minutes, a head that is still not <sha> by then, or the timeout. Without `--head` it waits on the head GitHub reports first, and right after a push that can still be the old one. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
@@ -82,7 +82,7 @@ Useful while it runs:
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file, and queues it for a busy one until its turn ends; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
-- `swarm.sh merge [--board|--release [--upgrade]] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR, and for swarm-dev's own release moves the running agents onto it only with `--upgrade` or a yes typed at a terminal. When the base gained more than board files since the PR's CI ran, a story PR's merge merges the base into the PR's branch and waits for CI on that head; it holds a PR that costs money or changes a protected path for the user, and a story or `--board` PR whose own merge of the base dropped a line of the base, or whose merges it cannot check ([reference-merging.md § Merging](docs/reference-merging.md#merging)). After a story merge it sends the story's running conductor a note that the PR merged, naming the stories it made ready. After a `--board` merge it pulls the board and sends each running conductor a note naming the stories that merge made ready. When reconcile fails, either note still goes, naming the failure. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
+- `swarm.sh merge [--board|--release [--upgrade]] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR, and for swarm-dev's own release moves the running agents onto it only with `--upgrade` or a yes typed at a terminal. When the base gained more than board files since the PR's CI ran, a story PR's merge merges the base into the PR's branch and waits for CI on that head; it holds a PR that costs money or changes a protected path for the user, and a story or `--board` PR whose own merge of the base dropped a line of the base that its head has not put back, or whose merges it cannot check ([reference-merging.md § Merging](docs/reference-merging.md#merging)). After a story merge it sends the story's running conductor a note that the PR merged, naming the stories it made ready. After a `--board` merge it pulls the board and sends each running conductor a note naming the stories that merge made ready. When reconcile fails, either note still goes, naming the failure. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
 - `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`. `step-up --resume <slug>` starts a rung whose start failed.
 - `swarm.sh intervene lead-hand|user-caught <cause> "<one line>"`: log a time a person had to step in, and why (a cause from `INTERVENE_CAUSES` in bin/swarm.sh; an unknown one fails and lists them); `flow` and `dash` count them.
 - `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
@@ -162,7 +162,8 @@ shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commi
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
-                                            # a changed file the map does not know runs the full suite
+                                            # it never runs the full suite: it names each changed file that would select every test,
+                                            # which CI's full run covers, and runs the tests for the rest
 # make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
@@ -170,9 +171,9 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
 claude plugin validate .
 ```
 
-Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
-required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
-want the whole suite locally.
+Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
+map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
+14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
 Development rules for anyone, agent or person, working in this repository:
 
@@ -230,7 +231,9 @@ never `[[wikilinks]]`.
 
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
-the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 12 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
+through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag), the lead cuts a
 release through `/swarm-dev:swarm`'s release arm and `swarm.sh merge --release`: a PR that bumps `version` in
 `.claude-plugin/plugin.json` and nothing else. `claude plugin update` fetches nothing while the version is

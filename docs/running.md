@@ -56,6 +56,7 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
+| a retro before a minor release (`retro v<x.y.z>`) | do the `retro-v<x-y-z>` lead story's **You:** steps with the lead: pick the version, decide what becomes of each item `swarm.sh retro` lists, and land `retros/v<version>.md` by board PR. Then `next` offers `release v<version>` |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
@@ -117,8 +118,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the head. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand. So does a
-  PR whose own merge of the base dropped a line of the base, or whose merges `swarm.sh merge` cannot
-  check.
+  PR whose own merge of the base dropped a line of the base that its head has not put back, or whose
+  merges `swarm.sh merge` cannot check.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
   `active` with no ticket in the same way ([reference-merging.md § Merging](reference-merging.md#merging)).
@@ -163,7 +164,8 @@ each running agent's own session and sends it no new brief, so a resumed agent k
 started with.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
-`next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
+`next` prints a `release-held:` line and offers at most a patch.
+Then it prints `retro v<x.y.z>` until the stage's retro file is done, and `release v<x.y.z>` after that.
 
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
@@ -193,7 +195,10 @@ starts on one of those epics, `next` stops offering it.
   function, one of its callers up to `bin/swarm.sh`'s dispatch arms, or the command of an arm on that
   path, plus the tests that name the changed file or read all of `bin/`'s code as text. When it cannot follow the calls (a change
   outside any function, a call by a name built at run time, or a test that runs `swarm.sh` with no
-  command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time.
+  command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time,
+  and never runs every test file. When a changed file would put every test file on the list, `--run` prints a line
+  naming that file and saying CI's full run covers it. It still runs the tests that file's own row lists, and the
+  tests for the other changed files. When none of them has a test, it runs nothing and exits 0. `--known` prints the list `--run` runs. To run every test file locally, run `make test`.
   `--functions` prints, instead, the functions the branch changed in `bin/swarm.sh` and `bin/lib/*.sh`:
   `<file>:<function>`, or `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py`
   it prints the functions that run it. It prints `full` when a changed line in those files is outside

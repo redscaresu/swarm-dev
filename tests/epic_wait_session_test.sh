@@ -327,11 +327,15 @@ printf '%s\n' '╭────────╮' '│ Welcome │' '╰───�
 check "a box above the API error (a banner) is read past: tell delivers" "told a|1" "${got}|$(prompts)"
 # A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
 # stuck: no output (exit 4), naming the pane, and nothing sent. Not while its transcript shows a
-# background task it has not been told the end of. The earlier waits' pane record (pane_check) saw
-# another screen, so it goes: this pane is first seen when the wait began.
+# background task it has not been told the end of, launched less than 3 times stall_minutes ago (one
+# older than that, as a shell hung for good, is no life: #891). The earlier waits' pane record
+# (pane_check) saw another screen, so it goes: this pane is first seen when the wait began.
 echo working > "${ROOT}/hstatus"; rm -f "${p}/.swarm/panes/a"; printf '%s\n' '⏺ Waiting on CI.' > "${ROOT}/screen"
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
-started() { printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":%s}\n' "$1" >> "${tr}"; }
+started() { # <toolUseResult> [<minutes ago>] — a background task's launch, logged that long ago (default now)
+  printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":%s}\n' \
+    "$(python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60 * int(sys.argv[1]))))' "${2:-0}")" "$1" >> "${tr}"
+}
 told() { # <task id> [status] — a task-notification for it; with no status, a check-in on a running task
   printf '{"type":"user","message":{"content":"<task-notification>\\n<task-id>%s</task-id>\\n%s</task-notification>"}}\n' "$1" "${2:+<status>$2</status>\\n}" >> "${tr}"
 }
@@ -343,11 +347,16 @@ check "a check-in on the running shell (no status) ends nothing: wait still time
 told bx-1 completed
 check "a pane unchanged past stall_minutes, its background task (a hyphenated id) done: wait returns stuck: no output naming the pane, and sends nothing" \
   "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+started '{"backgroundTaskId":"bx-2"}' 180
+check "a background shell launched 3 hours ago (past 3 times stall_minutes) with no end hides no stuck pane" \
+  "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+told bx-2 completed
 started '{"status":"async_launched","agentId":"a-7"}'
 check "a quiet pane whose session waits on an async subagent is no stop" "busy|exit 1|0" "$(quiet)"
-call() { # <tool name> <tool_use id> <toolUseResult> — a tool call and its result
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":{}}]}}\n' "$2" "$1" >> "${tr}"
-  printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"%s","content":"ok"}]},"toolUseResult":%s}\n' "$2" "$3" >> "${tr}"
+call() { # <tool name> <tool_use id> <toolUseResult> — a tool call and its result, logged now
+  local at; at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"type":"assistant","timestamp":"%s","message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":{}}]}}\n' "${at}" "$2" "$1" >> "${tr}"
+  printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","tool_use_id":"%s","content":"ok"}]},"toolUseResult":%s}\n' "${at}" "$2" "$3" >> "${tr}"
 }
 told a-7 completed; call TaskUpdate tu-t '{"success":true,"taskId":"7"}'
 check "a task-list tool's taskId is no background task: the quiet pane is stuck" "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
