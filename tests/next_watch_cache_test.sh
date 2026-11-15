@@ -30,7 +30,8 @@ A1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; A2=cccccccccccccccccccccccccccccccc
 
 # gh: the project's repo; PR #3 on story/s1 at the head in ROOT/head, open and mergeable, in next's
 # list (gh pr list, its -q applied) and in the watch's (the pulls list, its -q applied); and that head's
-# check runs, all passed 40 and a half minutes before gh is asked, so ci_gate counts 40.
+# check runs, all passed 40 minutes to the second before gh is asked. ci_gate counts whole minutes, so
+# it counts 40 on a fresh read and on a kept one, which is under 59 s old when next takes it.
 printf '#!/bin/sh\nF="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'EOF'
 echo "${WATCHER:--} $*" >> "$F/gh.log"
@@ -41,7 +42,7 @@ case "$*" in
   "api --paginate repos/o/svc/pulls?"*) echo "3 ${head} story/s1 0" ;;
   "api repos/o/svc/pulls/3 "*) echo MERGEABLE ;;
   "api --paginate repos/o/svc/commits/${head}/check-runs"*)
-    DONE="$(perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 40 * 60 - 30))')"
+    DONE="$(perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 40 * 60))')"
     echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","completed_at":"'"$DONE"'"}]}' ;;
   "api --paginate repos/o/svc/commits/${head}/status"*) echo '{"statuses":[],"total_count":0}' ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
