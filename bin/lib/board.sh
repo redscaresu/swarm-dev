@@ -479,8 +479,9 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (retro_done), else `retro v<x.y+1.0>` below. With epics that
 #                     carry stage: (release_stage), `release v<S>` once no epic of the next stage S
 #                     is left on the board and retros/v<S>.md is done, else `retro v<S>`; while one
-#                     is, `release v<x.y.z+1> (patch)` when no
-#                     staged epic's story merged since the tag, else no release step. A held stage
+#                     is, `release v<x.y.z+1> (patch)` when no staged epic's story merged since the
+#                     tag and every change since it is a fix (non_fix_change), else no release step.
+#                     A held stage
 #                     sets RELEASE_HELD, its release-held: line, which next_lines and next_report
 #                     print after the step's lines
 #   retro v<x.y.z>    a minor (a stage's release, or a release with a change that is no fix) is due
@@ -637,7 +638,7 @@ next_step() {
       "patch "*)
         stage="${stage%%$'\n'*}"
         echo "release v${stage#patch } (patch)"
-        echo "${since}, and no story of a staged epic has merged since it, while the next stage is held: cut v${stage#patch }, a patch"; return ;;
+        echo "${since}, and no story of a staged epic has merged since it and every change is a fix, while the next stage is held: cut v${stage#patch }, a patch"; return ;;
     esac
   fi
   epic="$(unblocked_epic)"
@@ -750,8 +751,9 @@ release_memo() {
 # release_fixes <tag> <base> — non_fix_change's lines for refs/tags/<tag>..origin/<base> in the repo
 # origin_nwo names, for release_bare and release_stage: nothing when every change is a fix, else one
 # line per change. When either read fails (a board outside the repo among them) it exits 1 and the
-# last line is `failed: <why>`. Its gh calls are made only while the caches have no answer (see
-# release_bare), so dash, which runs next every frame, asks gh at most every NON_FIX_RETRY seconds.
+# last line is `failed: <why>`. An answer is kept (see release_bare), so dash, which runs next every
+# frame, asks gh at most every NON_FIX_RETRY seconds. A failure is not kept: gh is asked again on the
+# next call, so offline, or with gh logged out, every frame asks it.
 release_fixes() {
   local tag="$1" base="$2" repo="" out rc=0
   if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then echo "failed: ${repo}"; return 1; fi

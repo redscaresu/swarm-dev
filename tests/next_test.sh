@@ -1058,7 +1058,17 @@ out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}
 if [[ "${out%%$'\n'*}" == "gate" ]]; then echo "ok   a held stage with gh failing: no release step"
 else echo "FAIL a held stage with gh failing: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
 has_line "gh failing: the release-held: line names the failure" \
-  "${HELD}; no patch: non_fix_change cannot tell the fixes (gh repo view named no GitHub repo for $(grep -o "[^ ]*origin.git" <<< "${out}" | head -1) (or gave no answer in time))"
+  "${HELD}; no patch: non_fix_change cannot tell the fixes (gh repo view named no GitHub repo for ${rdir}/origin.git (or gave no answer in time))"
+# The repo resolves but non_fix_change's own gh pr list fails: the same hold, naming that failure.
+REL_PRFAIL="${STUB_BIN}/rel-prfail"; mkdir -p "${REL_PRFAIL}"
+# shellcheck disable=SC2016 # the stub script is written as it stands
+printf '#!/bin/sh\ncase "$1 $2" in "repo view") echo %s; exit 0 ;; esac\nexit 1\n' "'{\"nameWithOwner\":\"o/r\"}'" > "${REL_PRFAIL}/gh"; chmod +x "${REL_PRFAIL}/gh"
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_PRFAIL}:${PATH}" bash "${SWARM}" next)"; record_step "${out}"; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "gate" ]]; then echo "ok   a held stage, gh pr list failing: no release step"
+else echo "FAIL a held stage, gh pr list failing: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "gh pr list failing: the release-held: line names non_fix_change's failure" \
+  "${HELD}; no patch: non_fix_change cannot tell the fixes (non_fix_change: gh pr list --repo o/r --state merged failed)"
 # A non-fix story merged before the tag, still on the board at done, is not a change since it.
 expect_release "a held stage, a non-fix story merged before the tag, a fix story after it: the patch" "release v1.2.1 (patch)" 0 \
   "echo y > bin/y" "merged_as s2" "item stories/s2.md 'status: done' 'kind: code' 'epic: e1'" "${STAGE}" "${REVIEW}" "${COMMIT}" \
@@ -1143,7 +1153,7 @@ GIT_LOG="${STUB_BIN}/git-log"; GIT_CALLS="${STUB_BIN}/git-calls"; mkdir -p "${GI
 printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "${GIT_CALLS}" "$(command -v git)" > "${GIT_LOG}/git"; chmod +x "${GIT_LOG}/git"
 step_git_logs() { # <setup>... — how many git log calls `swarm.sh _step` (next_step alone) makes on release_repo's fixture
   release_repo "$@"; rm -f "${GIT_CALLS}"
-  (cd "${rdir}" && env -u HERDR_ENV PATH="${GIT_LOG}:${PATH}" bash "${SWARM}" _step > /dev/null)
+  (cd "${rdir}" && env -u HERDR_ENV PATH="${GIT_LOG}:${REL_GH}:${PATH}" bash "${SWARM}" _step > /dev/null)
   grep -cE '(^| )log( |$)' "${GIT_CALLS}" || true
   rm -rf "${rdir}"
 }
