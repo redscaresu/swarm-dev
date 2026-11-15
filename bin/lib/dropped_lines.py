@@ -31,12 +31,13 @@ from collections import Counter
 # (the ones its parents' merge base has beyond the PR side's), which keeps a drop that a copy the base
 # added since hides. The two are never summed: a stacked build's parent's own copies reach the base by
 # its squash merge, and a sum would owe them twice. The merge that owes the most counts, and L prints
-# once per copy the head is short of that, the newest merges' lines first, since a commit that puts a
-# line back comes after the merge that dropped it. So a later commit that restores the line clears it,
-# and one that restores one of two dropped copies leaves one. A count cannot tell copies apart: a copy
-# the PR adds after the merge for its own sake counts as one put back, and so does one the base adds
-# after it where the PR side holds a copy the base does not. Where that merge base has no such file
-# under any name git finds, every L prints. Each side's F is read
+# once per copy the head is short of that. The lines kept are the newest merges', since a commit that
+# puts a line back comes after the merge that dropped it, and they print in merge order, oldest first.
+# So a later commit that restores the line clears it, and one that restores one of two dropped copies
+# leaves one. A count cannot tell copies apart: a copy the PR adds after the merge for its own sake
+# counts as one put back, and so does one the base adds after it where the PR side holds a copy the
+# base does not. Where that merge base has no such file under any name git finds, every L prints.
+# Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
 # part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
@@ -264,7 +265,8 @@ def scan(m, pr, base_side, ours):
 
 def missing(found):
     """the lines of found, (head key, copies owed, copies held, line) per printed copy, that the head has not
-    put back: per key, as many as the head holds fewer copies than the most any merge owes, newest first"""
+    put back: per key, as many as the head holds fewer copies than the most any merge owes, the newest
+    merges' lines kept, in merge order (oldest first)"""
     owe = {}
     for key, need, _, _ in found:
         owe[key] = max(owe.get(key, need), need)

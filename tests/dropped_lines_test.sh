@@ -346,8 +346,9 @@ check "the same once a PR commit puts it back in the renamed file: nothing" "exi
 
 # Two merges drop the same line, and the one that owes the most counts. main's f holds main-added twice:
 # pr's first merge drops both, a pr commit puts one back, main changes three-main, and pr's second merge
-# drops that one again. The head holds neither of main's two, so two lines print, not three, the newest
-# first: the second merge's, then one of the first's.
+# drops that one again. The head holds neither of main's two, so two lines print, not three. The two kept
+# are the newest, the second merge's and one of the first's, and they print in merge order, the first
+# merge's line first.
 R="$(new_repo twice)"; lines three-main main-added main-added | put "${R}" f; on "${R}" pr; lines three-pr | put "${R}" f
 M1="$(lines three-pr three-main | merge "${R}" main -)"
 lines three-pr three-main main-added | put "${R}" f
