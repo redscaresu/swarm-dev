@@ -44,7 +44,11 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   epic keeps its `# ` heading, so renaming an `active` epic needs no ticket. git pairs a rename by
   content, uncommitted moves included, and pairs a deleted epic with a new one that is half alike
   too, so the heading decides: an epic moved and given another heading needs a ticket, its old
-  `agreed:` still counted, and one more than half rewritten reads as new.
+  `agreed:` still counted, and one more than half rewritten reads as new. An `agreed:` date that an
+  epic the PR deletes or renames away had on the base is no ticket for any epic the PR sets
+  `active`, so a new epic cannot carry that date across. The refusal names the deleted epic, and a
+  failed read of it refuses too. If two epics were agreed the same day, delete the old one in one
+  PR and add the new one in another, or give the new one a `parent:` or `hld:` ticket.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
   days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
