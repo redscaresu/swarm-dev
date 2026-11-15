@@ -22,7 +22,22 @@ from collections import Counter
 # <base> <head>`, has no copy of L, L does not print, so a merge a stacked build's parent made, still in
 # the build's history once the parent's squash merge is on <base>, stops counting a line that squash took
 # off. Those two commits' F is read as the other sides' is, and one with no such file under any name git
-# finds still counts L. Each side's F is read
+# finds still counts L. A line the PR's head holds again is no drop either: once every merge is read,
+# L of F prints only while <head>'s F, read under the head's own name for it, holds fewer copies of L
+# than a merge that printed L owes it. A merge owes the larger of two counts. One is the copies its F
+# kept plus the ones it printed, which keeps a drop the PR's own copies hide: a head with as many copies
+# as the base, one of them the PR's, still lacks the base's. The other is the copies the F of
+# `git merge-base <base> <head>` holds, less those the PR's own commits had removed before the merge
+# (the ones its parents' merge base has beyond the PR side's), which keeps a drop that a copy the base
+# added since hides. The two are never summed: a stacked build's parent's own copies reach the base by
+# its squash merge, and a sum would owe them twice. The merge that owes the most counts, and L prints
+# once per copy the head is short of that. The lines kept are the newest merges', since a commit that
+# puts a line back comes after the merge that dropped it, and they print in merge order, oldest first.
+# So a later commit that restores the line clears it, and one that restores one of two dropped copies
+# leaves one. A count cannot tell copies apart: a copy the PR adds after the merge for its own sake
+# counts as one put back, and so does one the base adds after it where the PR side holds a copy the
+# base does not. Where that merge base has no such file under any name git finds, every L prints.
+# Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
 # part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
@@ -152,7 +167,8 @@ def owed(base, side, root):
     return base + side - root   # with L in the merge base, a new copy on each side can be two additions
 
 def scan(m, pr, base_side, ours):
-    """the `<sha7> <file>: <text>` line of each base line merge m's resolution dropped"""
+    """(head key, copies the head owes, copies it holds, `<sha7> <file>: <text>`) per base line merge m's
+    resolution dropped (owing)"""
     rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
                        "--src-prefix=a/", "--dst-prefix=b/", "--end-of-options", m)
     if rc != 0:
@@ -189,15 +205,20 @@ def scan(m, pr, base_side, ours):
                     i += 2
         return renames[rev]
 
-    def copies(rev, path, after):
-        """the file's lines at rev, read under rev's own name for it: after (its name in m) or what rev
-        renamed to after, else path; None where rev has none of them"""
-        if rev is None:
-            return Counter()
-        got = read(rev, after or path)
+    def named(rev, path, after):
+        """(rev's own name for the file, its lines): after (its name in m) or what rev renamed to after,
+        else path; (None, None) where rev has none of them"""
+        name = after or path
+        got = read(rev, name)
         if got is None and after is not None and after in renamed(rev):
-            got = read(rev, renamed(rev)[after])
-        return got
+            name = renamed(rev)[after]
+            got = read(rev, name)
+        return (name, got) if got is not None else (None, None)
+
+    def copies(rev, path, after):
+        """the file's lines at rev, read under rev's own name for it (named); None where rev has none of
+        them, and no lines where there is no rev"""
+        return Counter() if rev is None else named(rev, path, after)[1]
 
     def gone(path, after, text):
         """whether the base itself no longer has text in this file: at <base> or at the PR's merge base
@@ -209,7 +230,18 @@ def scan(m, pr, base_side, ours):
                 return True
         return False
 
+    def owing(path, text, printed):
+        """(the head's file and text, the copies of text the head owes merge m, the copies it holds): the
+        larger of the merge's copies plus the ones it printed, and those the merge base of <base> and <head>
+        holds less the ones the PR side had removed; no bound where that merge base has no such file"""
+        after, kept, cut = counts[path, text]
+        name, now = named(HEAD, path, after)
+        since = copies(MERGE_BASE, path, after) if MERGE_BASE else None
+        need = max(kept + printed, since[text] - cut) if since is not None else float("inf")
+        return (name, text) if name is not None else (None, path, text), need, (now or Counter())[text]
+
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
+    counts = {}  # (file, text): its name in the merge, the merge's copies of text, those the PR side had removed
     for path, after, section, text in removed(out):
         if not text.strip() or section not in (OUTSIDE, ours):
             continue
@@ -224,10 +256,27 @@ def scan(m, pr, base_side, ours):
         if (path, text) not in short:
             short[path, text] = (owed(base[text], side[text], root[text]) - kept[text]
                                  if base[text] and not gone(path, after, text) else 0)
+            counts[path, text] = after, kept[text], max(0, root[text] - side[text])
         if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
             short[path, text] -= 1
-            found.append("%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
-    return found
+            found.append((path, text, "%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS])))
+    printed = Counter((path, text) for path, text, _ in found)
+    return [owing(path, text, printed[path, text]) + (line,) for path, text, line in found]
+
+def missing(found):
+    """the lines of found, (head key, copies owed, copies held, line) per printed copy, that the head has not
+    put back: per key, as many as the head holds fewer copies than the most any merge owes, the newest
+    merges' lines kept, in merge order (oldest first)"""
+    owe = {}
+    for key, need, _, _ in found:
+        owe[key] = max(owe.get(key, need), need)
+    short = {key: owe[key] - held for key, _, held, _ in found}
+    left = []
+    for key, _, _, line in reversed(found):
+        if short[key] > 0:
+            short[key] -= 1
+            left.append(line)
+    return left[::-1]
 
 if len(sys.argv) < 4:
     stop("usage: dropped_lines.py <repo-dir> <base> <head> [<merge sha>...]")
@@ -238,13 +287,14 @@ if rc != 0:
     stop("cannot list the merges in %s..%s: %s" % (BASE, HEAD, err))
 merges = [m for m in out.decode().split() if not sys.argv[4:] or m in wanted]
 checks = [(m,) + sides(m, BASE) for m in merges]   # every merge is checkable before any line prints
-LATER = [BASE]   # where the base must still have a line for its drop to count (gone)
+MERGE_BASE = None   # git merge-base <base> <head>: None with no common ancestor
 if checks:
     rc, out, err = git("merge-base", "--end-of-options", BASE, HEAD)
     if rc not in (0, 1):
         stop("cannot find the merge base of %s and %s: %s" % (BASE, HEAD, err))
-    LATER += out.decode().split()   # none on rc 1: no common ancestor
-dropped = [line for c in checks for line in scan(*c)]   # every remerge read before any line prints
+    MERGE_BASE = out.decode().strip() or None
+LATER = [BASE] + ([MERGE_BASE] if MERGE_BASE else [])   # where the base must still have a line (gone)
+dropped = missing([f for c in checks for f in scan(*c)])   # every remerge read before any line prints
 for line in dropped:
     say(line)
 sys.exit(1 if dropped else 0)
