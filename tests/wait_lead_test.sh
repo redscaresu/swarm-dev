@@ -927,8 +927,9 @@ STUB
   check "a story gone at the poll's first ${t} read of it: no sed: or awk: line" test -z "$(grep -E '(sed|awk):' "${ROOT}/out")"
   check "a story gone at the poll's first ${t} read of it: its other lines as before" test "$(out)|$(rc)" == "held: y (paused)|0"
 done
-# A story made unreadable at that first awk read (stories_fm) is not gone: that poll names it, as
-# stories_fm's check of the board names a file there but unreadable.
+# A story made unreadable at that first awk read (lead_queue's held_for read) is not gone: that poll names it in
+# awk's error, whose wording differs between awks, and ends the run with that read's status, as any failed read
+# inside lead_queue does, leaving seen as the last good read left it.
 rm -f "${ROOT}/gone"/*
 printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v awk)" "${B}/v.md" > "${ROOT}/gone/awk"
 cat >> "${ROOT}/gone/awk" <<'STUB'
@@ -936,9 +937,11 @@ for a in "$@"; do [ "${a}" != "${V}" ] || chmod 000 "${V}"; done
 exec "${REAL}" "$@"
 STUB
 chmod +x "${ROOT}/gone/awk"
-fresh; lead 0; again; held y paused; item v "kind: code" "status: ready"
+fresh; lead 0; cp "${P}/.swarm/lead/seen" "${ROOT}/seen.before"; again; held y paused; item v "kind: code" "status: ready"
 lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
-check "a story made unreadable during a poll: that poll names it" grep -qxF "swarm: cannot read ${B}/v.md" "${ROOT}/out"
+check "a story made unreadable during a poll: that poll names it" grep -qF "${B}/v.md" "${ROOT}/out"
+check "a story made unreadable during a poll: one wait-failed: line for its non-zero exit" failed_nonzero
+check "a story made unreadable during a poll: seen stays as the last good read left it" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
 chmod 644 "${B}/v.md"
 rm -rf "${ROOT}/gone"
 
