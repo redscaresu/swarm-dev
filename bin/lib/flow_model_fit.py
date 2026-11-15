@@ -6,8 +6,10 @@
 # top-level directory most of its touches name, both read through story_text (flow_sections), so a
 # merged story keeps its class. Rework is outcomes' rework column, which outcomes alone computes (report.py's
 # rework_of over every merged PR of the rows' repos), so every flow section counts the same. A cell under
-# MIN_STORIES stories prints its count alone. After a blank line, a subagent row per model and effort
-# of the builds whose subagents cost more than zero: their cost and its share of build cost (own and theirs).
+# MIN_STORIES stories prints its count alone. After a blank line, a by_risk row per model, effort, kind and
+# risk over every size and area, built by the same cell(), so a few stories of one risk spread over sizes
+# and areas still reach MIN_STORIES. After another, a subagent row per model and effort of the builds
+# whose subagents cost more than zero: their cost and its share of build cost (own and theirs).
 import collections, datetime, os
 from report import *
 from touches_rows import entries as touches_entries
@@ -85,10 +87,17 @@ def cell(entries):
                   str(reworked), str(sum(escaped[k] for k in keys)),
                   f"{sum(waits) / len(waits):.0f}" if waits else "-"]
 
-print("model\teffort\tkind\trisk\tsize\tarea\tstories\tcost_per_merged_usd\tfirst_attempt_merge_rate\tmean_attempts"
-      "\tfindings_per_pr\trework\tescaped\tstart_to_merge_min")
+MEASURES = "stories\tcost_per_merged_usd\tfirst_attempt_merge_rate\tmean_attempts\tfindings_per_pr\trework\tescaped\tstart_to_merge_min"
+print("model\teffort\tkind\trisk\tsize\tarea\t" + MEASURES)
 for key in sorted(cells):
     print("\t".join(list(key) + cell(cells[key])))
+
+by_risk = collections.defaultdict(list)   # (model, effort, kind, risk): the cells' stories over every size and area
+for key, entries in cells.items():
+    by_risk[key[:4]] += entries
+print("\nby_risk\teffort\tkind\trisk\t" + MEASURES)
+for key in sorted(by_risk):
+    print("\t".join(list(key) + cell(by_risk[key])))
 
 subs = collections.defaultdict(lambda: [0.0, 0.0])
 for _, rs in counted.values():
@@ -100,6 +109,6 @@ for _, rs in counted.values():
 print("\nsubagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share")
 for (model, effort), (sub, total) in sorted(subs.items()):
     print("\t".join([model, effort, f"{sub:.2f}", f"{total:.2f}", f"{100 * sub / total:.0f}%" if total else "-"]))
-print(f"\nA cell with fewer than {MIN_STORIES} stories prints its count alone: too few to judge.")
+print(f"\nA cell or by_risk row with fewer than {MIN_STORIES} stories prints its count alone: too few to judge.")
 if rework_unknown(rows, since):
     print("rework: outcomes could not list every merged PR with gh (it failed or hit its limit), so some rework is unknown and counts as none.")

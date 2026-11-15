@@ -64,12 +64,14 @@ outside() { local p="${P}" l="${LOG}" rc=0; P="${ROOT}/nogit"; LOG="${P}/.swarm/
 lines() { if [[ -f "${LOG}" ]]; then wc -l < "${LOG}" | tr -d ' '; else echo 0; fi; }
 
 # appends <name> <n> <command> <target> <outcome-prefix> <swarm args...> — run it; exactly <n> new
-# lines, each five tab-separated fields: ISO UTC time, command, target, actor, outcome.
+# lines, each five tab-separated fields: ISO UTC time, command, target, actor, outcome. A pane-closed
+# line (close_pane's, one per pane the command closed) is the pane's, not the command's: left out
+# here, and checked on its own below.
 appends() {
   local name="$1" n="$2" cmd="$3" target="$4" outcome="$5" was new; shift 5
   was="$(lines)"; run "$@" || true
-  new="$(tail -n +"$((was + 1))" "${LOG}" 2>/dev/null || true)"
-  check "${name}: ${n} line(s)" test "$(( $(lines) - was ))" -eq "${n}"
+  new="$(tail -n +"$((was + 1))" "${LOG}" 2>/dev/null | awk -F'\t' '$2 != "pane-closed"' || true)"
+  check "${name}: ${n} line(s)" test "$(grep -c . <<< "${new}" || true)" -eq "${n}"
   [[ ${n} -gt 0 ]] || return 0
   # shellcheck disable=SC2016 # an awk program
   check "${name}: well-formed" awk -F'\t' -v c="${cmd}" -v t="${target}" -v o="${outcome}" \
@@ -93,7 +95,10 @@ appends "a tell with no kind" 1 tell s1 "tell: the kind must be findings, nudge 
 appends "a tell with an unknown kind" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 bogus findings.md
 appends "the old form, tell <slug> <file>" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 /tmp/f.md
 check "tell never logs the file's contents" bash -c "! grep -q SECRET-CONTENT '${LOG}'"
+was_close="$(lines)"
 appends "close" 1 close s1 ok close s1
+check "close s1, its pane w:1 recorded, also writes one pane-closed line for it" \
+  test "$(tail -n +"$((was_close + 1))" "${LOG}" | awk -F'\t' '$2 == "pane-closed" { print $3 "|" $5 }' | no_version)" = "s1|ok ~~ pane=w:1 slug=s1"
 # A close's cause goes with its command too (close:<cause>), and the target stays the slug.
 appends "close with a cause" 1 close:bound s1 ok close s1 bound
 appends "tidy --yes" 1 tidy - ok tidy --yes
@@ -130,31 +135,48 @@ check "a DIE_FILE from the environment is never written" test ! -e "${ROOT}/plan
 # Signals, sent to swarm.sh's pid alone (no process group), must stop it at once. A logged command
 # (tell, its stubbed prompt hanging) is logged as interrupted, leaves no temp file, and keeps the
 # exit status 128+N. A read-only one (wait, its stubbed wait hanging) just stops.
-# shellcheck disable=SC2016 # the stub's own shell expands these
 # The prompt's sleep carries this run's pid, so the pgrep below never sees a second copy of this test running beside it (live_logs_test.sh runs one).
-printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") exec sleep 37.%s ;; "agent wait") exec sleep 38 ;; esac\nexec "%s" "$@"\n' "$$" "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
+# Each hang first leaves ${UNDER_WAY}: the command got that far. For tell, a logged command, that is past
+# its temp files and its TERM trap; wait, a read-only one, makes neither.
+UNDER_WAY="${ROOT}/under-way"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") : > "%s"; exec sleep 37.%s ;; "agent wait") : > "%s"; exec sleep 38 ;; esac\nexec "%s" "$@"\n' \
+  "${UNDER_WAY}" "$$" "${UNDER_WAY}" "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
 chmod +x "${ROOT}/slow/herdr"; mkdir -p "${ROOT}/sigtmp"; echo "w:1 s1" > "${P}/.swarm/state/t1"
-# term_pid <swarm args...> — start it, TERM its pid once it is under way, and print "<exit> <seconds>".
+# until_ok <seconds> <test...> — wait until <test> succeeds, <seconds> at most by the clock.
+until_ok() { local end=$((SECONDS + $1)); shift; until "$@"; do (( SECONDS < end )) || return 1; sleep 0.1; done; }
+# AT_ONCE: the most seconds from the TERM to the exit that still count as at once. A trapped TERM
+# runs main_signal first, which took 3 to 6 s on a loaded machine; a command that ran its hang out
+# takes 37 s or more.
+AT_ONCE=10
+# term_pid <swarm args...> — start it, TERM its pid once it is under way (its stubbed herdr hangs), and
+# print "<exit> <seconds>".
 term_pid() {
   local pid code=0 t0
+  rm -f "${UNDER_WAY}"
   (cd "${P}" || exit 1; HERDR_ENV=1 HERDR_PANE_ID=w:me TMPDIR="${ROOT}/sigtmp" PATH="${ROOT}/slow:${ROOT}/bin:${PATH}" exec bash "${SWARM}" "$@" >/dev/null 2>&1) &
   pid=$!
-  sleep 2; t0=${SECONDS}; kill -TERM "${pid}" || true
+  until_ok 30 test -e "${UNDER_WAY}" || true
+  t0=${SECONDS}; kill -TERM "${pid}" || true
   { wait "${pid}"; } 2>/dev/null || code=$?
   echo "${code} $((SECONDS - t0))"
 }
 was="$(lines)"
 read -r code took <<< "$(term_pid tell s1 findings findings.md)"
-check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
+check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le "${AT_ONCE}"
 check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -qE \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
-sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37[.]$$\$' >/dev/null"
+gone() { ! pgrep -f "sleep 37[.]$$\$" >/dev/null; }
+# 3 s, far under the 37 s the hang lasts: a sleep the TERM left running is still there, never one that
+# ended by itself.
+until_ok 3 gone || true
+check "a TERM leaves nothing of the command running" gone
 read -r code took <<< "$(term_pid wait s1)"
-check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
+check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le "${AT_ONCE}"
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
-RO_EXPECTED="base cost config dash dataset dropped-lines flow features findings grants review-yield lessons next outcomes policy status where swarms wait wait-pr watch _base _brief _name _conductor _board-rel _role _pane _target _trusted _mtime _step-up _step _review-red-scan _tell-queue-check _fix-main"
+RO_EXPECTED="base cost config dash dataset dropped-lines flow retro features findings grants review-yield lessons next outcomes policy status where swarms wait wait-pr watch _base _brief _name _conductor _board-rel _role _pane _target _trusted _mtime _step-up _step _review-red-scan _tell-queue-check _fix-main _close-when-idle"
 ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"

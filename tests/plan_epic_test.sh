@@ -88,7 +88,7 @@ has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board P
 has log-declined 'log-finding --declined <reason>'
 has cap-step-2 'capped at one new command or one changed behaviour and about 300 lines' "$step2"
 has cap-step-3 'over the cap of one new command or one changed behaviour and about 300 lines' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
-has output-shape 'depends_on, estimate_lines, easy\}\]' "$flat"
+has output-shape 'depends_on, estimate_lines, easy, fix\}\]' "$flat"
 has front-matter 'front matter .*`estimate_lines`, `easy`' "$approval"
 has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
 has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
@@ -115,6 +115,17 @@ m=$(awk 'FNR==1{on=0} /^## Scoping an epic/{on=1;next} /^## /{on=0} on' "${M[@]}
 if [ -z "$m" ]; then echo "FAIL method-section"; fails=$((fails + 1)); fi
 hasnt method-three-surveys 'three surveys' "$m"
 hasnt method-then-critic 'then a critic' "$m"
+mflat=$(tr '\n' ' ' <<< "$m" | tr -s ' ')
+# Each planning agent's pane closes once its answer is read, never on a lone .partial (that agent may
+# be started again from it), and a pane still working stays open and is named in the report.
+has close-once-read 'Once you have read an agent.s `\.swarm/\$1/<name>\.json`, run `swarm\.sh close <name>` for it' "$flat"
+has close-never-partial 'Never close an agent while only its `\.partial` exists: that run is unfinished, and the agent may be started again from it' "$flat"
+has close-working-named 'A pane still working is left open, and your report names it' "$flat"
+# The restart route in /swarm-dev:swarm closes an agent stuck on an error, often with only a .partial.
+has close-error-exception 'The one exception is an agent stuck on an error, which you restart as /swarm-dev:swarm says: `swarm\.sh close <name>`, then start it again' "$flat"
+# With every pane closed and no board PR yet, next's idle line for this epic is the run waiting for approval.
+has close-idle-waiting 'Once every pane is closed and before the board PR opens, `swarm\.sh next` offers `plan-epic \$1`, either as its step or as the line `idle: epic \$1 has no plan running, exit: /swarm-dev:plan-epic \$1`, and `swarm\.sh wait --lead` can print that line\. Either one is this run waiting for the user.s approval, not a plan to start again' "$flat"
+has method-close-once-read 'Each agent.s pane closes \(`swarm\.sh close <name>`\) once its answer has been read, never while only its `\.partial` exists, except to restart one stuck on an error; a pane still working is left open, and the report names it' "$mflat"
 
 # /epic writes a draft epic on the board with its four sections, and only the user's agreement makes it active.
 e=$(cat "$EPIC")

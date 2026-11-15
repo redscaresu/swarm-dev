@@ -219,7 +219,7 @@ Repeat until a step below says stop:
      stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
      read. When the wait returns with no review file and printed `busy`, it ran its 60 minutes while
      the agent works: wait again. When it returns with no review file any other way (the agent waits
-     on a prompt, is gone, or a merge's reconcile retired it), check the board first: a story in
+     on a prompt, is gone, or a merge's reconcile, or the `swarm.sh review` that handed its PR to the user, retired it), check the board first: a story in
      review with no `kept:` line, or one that has left the board, was passed and handed over or
      merged. Otherwise start the review again with `swarm.sh review-agent <slug> <PR URL>`. Once the
      file is there, read it before the board. If it has a `head moved:` line, the PR has a head
@@ -369,7 +369,7 @@ Repeat until a step below says stop:
      `stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`
      line names a builder with an open PR and a pending item: findings it was told, or a conflict with
      the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
-     otherwise), with no background task and no test run. It is not `wait`'s `stuck: api error` or
+     otherwise), with no background task and no test run. It is not `wait`'s `stuck: api error`, `stuck: model error` or
      `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
      quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
      asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
@@ -384,6 +384,14 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` line means every agent
+     open in that plan's tab has written its output, so the step they ran is over. Run the exit
+     (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
+     plan's next step. The line comes again at the end of each later step, since its names change. A
+     `plan-missing: <epic> <name> ended without its output, exit: /swarm-dev:plan-epic <epic> (it starts that agent again)`
+     line means that agent of the plan's attempt has ended, or never started, and left no output
+     that counts. Run the exit (`/swarm-dev:plan-hld <hld>` for an HLD's plan): its resume rule
+     starts the agent again and reuses the outputs that count. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
      next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
@@ -410,8 +418,8 @@ Repeat until a step below says stop:
      the conductor and deletes its report, so the collect would never run. Then read the report.
      `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
      `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
-     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
-     does not count. Handle all of these first: a build that died as
+     The report may also list a PR closed unmerged or a story in review with several PRs, kept or
+     not, which `<n>` does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
      report says for each (docs/reference-merging.md § Merging lists them). Clear any other cause the report
@@ -426,12 +434,24 @@ Repeat until a step below says stop:
      builder its key is unlocked and to commit and carry on, and send it to each builder the line names
      with `swarm.sh tell <slug> resume <file>`. The line comes from the conductors' `wait --stall`, so
      it can come up to `stall_minutes` late. A builder leaves it once its next probe reads `clear`, it
-     commits, its worktree is clean or gone, or it stops running.
+     commits, its worktree is clean or gone, or it stops running. A
+     `usage: estimate <N>% of the week from <YYYY-MM-DD> and <M>% of Fable's own limit, ...` line (with `usage_warn_percent`
+     set, once a usage week) says the estimate has reached the key. Tell the user, and ask them to check
+     `/usage`, the only truth: the estimate counts Fable low until they give it a reading. Change nothing
+     on it: it is a warning, never a gate, so no build stops or slows.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference-lead.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
-     `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
-     time: a new one stops the earlier one, which then ends with nothing printed; that needs
-     nothing from you. A new run first reports anything that landed while none was running.
+     `wait --lead` ends on a `timeout:` or `wait-failed:` line, start it again. Neither is a queue
+     item. `timeout: nothing new in <N> min, exit: swarm.sh wait --lead` (exit 1) means its timeout
+     passed with nothing new. `wait-failed: exit <rc>, exit: swarm.sh wait --lead` means it stopped on
+     an error before anything new came in: a bad argument, a lock it could not take, a failed read
+     of the queue, or a TERM (exit 143), INT (exit 130) or HUP (exit 129) from outside it. Read its stderr for the cause and fix it if it is yours before you start it again.
+     Only one runs at a time: a new one stops the earlier one, which then prints
+     `replaced: a newer wait --lead watches now` (exit 143), or, when it was still in a slow read 5 s
+     later, exits 137 with nothing printed. After a newer run took over, either needs nothing from you,
+     since the newer one watches. Any other exit with nothing printed failed before it started (exit 1,
+     the cause on stderr, which you fix if it is yours) or was stopped by a KILL from outside (exit 137,
+     nothing on stderr): start it again. A new run first reports anything that landed while none was running.
 
      Once both waits are running, send each
      `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
@@ -457,7 +477,9 @@ Repeat until a step below says stop:
 
      If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
      API error three times in a row, and `wait` already told it to carry on each time), restart the
-     agent as the restart rule under "Three more rules for the lead" says. If it prints `stuck: no output for <N>m
+     agent as the restart rule under "Three more rules for the lead" says. Do the same for
+     `stuck: model error (<line>)` (exit 4: the provider refused the model the session asks for, so
+     `wait` sent no resume). If it prints `stuck: no output for <N>m
      (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it shows, and stop
      for them.
 
@@ -760,14 +782,17 @@ Three more rules for the lead:
   PR with `swarm.sh board-pr`, as for every board edit of yours.
 - Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
   clear. `wait` telling it to carry on counts as its retries, so a `stuck: api error` line is
-  that stop. With `goal` on, a builder is never restarted: its conductor closes it
+  that stop. So is a `stuck: model error (<line>)` line, which `wait` prints at once with no resume:
+  the same session would send the same model ID again, and only a fresh one picks up corrected settings. With `goal` on, a builder is never restarted: its conductor closes it
   `cleared-on-error`, which holds the story for you. The route depends on the agent:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
   - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
     it a file asking it to carry on, with `swarm.sh tell <slug> resume <file>`. Its turn ended on the
     API error, which `tell` reads as idle, so the resume goes at once. A wait first would only return
-    `stuck: api error` again.
+    `stuck: api error` again. On `stuck: model error` send it nothing, since a resume in that session
+    sends the refused model again, and no command starts a fresh builder for a story in review. List
+    it for the user with the line `wait` printed.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.

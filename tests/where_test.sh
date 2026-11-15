@@ -5,7 +5,8 @@
 # a's s1 b's labels. An agent herdr lists only in the other project's panes, or not at all, exits 1,
 # having read no list but the agent list. A workspace label herdr gives none of, or a workspace list it
 # cannot give, prints -; a tab with no label, or no tab list, prints the name swarm-dev gave the tab (its
-# record's), as status and dash do; both still with the pane.
+# record's) with the tab's id, `t1 (w1:t2)`, as status and dash do, so it never reads as herdr's label;
+# with no tab id from herdr, the record's name alone; all still with the pane.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -47,7 +48,8 @@ cat > "${ROOT}/herdr.json" <<'EOF'
             {"name": "s2", "pane_id": "w2:p2", "tab_id": "w2:t1", "workspace_id": "w2"},
             {"name": "s1", "pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1"},
             {"name": "conduct-e1", "pane_id": "w1:p2", "tab_id": "w1:t1", "workspace_id": "w1"},
-            {"name": "s3", "pane_id": "w1:p3", "tab_id": "w1:t2", "workspace_id": "w1"}]}
+            {"name": "s3", "pane_id": "w1:p3", "tab_id": "w1:t2", "workspace_id": "w1"},
+            {"name": "s4", "pane_id": "w1:p4", "workspace_id": "w1"}]}
 EOF
 
 # project <dir> <tab-record lines> — a swarm project whose tab record names the panes it opened.
@@ -57,7 +59,7 @@ project() {
   printf '%s\n' "$2" > "$1/.swarm/state/t1"
 }
 A="${ROOT}/a"; B="${ROOT}/b"
-project "${A}" $'w1:p1 s1\nw1:p2 conduct-e1\nw1:p3 s3'
+project "${A}" $'w1:p1 s1\nw1:p2 conduct-e1\nw1:p3 s3\nw1:p4 s4'
 project "${B}" $'w2:p1 s1\nw2:p2 s2'
 
 # where_in <project> <agent> — where's stdout, then its exit code on the last line.
@@ -72,11 +74,12 @@ check "an agent herdr does not list exits 1" \
   $'swarm: where: herdr lists no agent called s9 in this project\'s panes\n1' "$(where_in "${B}" s9)"
 : > "${ROOT}/herdr.log"; where_in "${B}" s9 > /dev/null
 check "an unknown agent reads only herdr's agent list" "agent list" "$(cat "${ROOT}/herdr.log")"
-check "a tab with no label prints the name swarm-dev gave it (its record's), with the pane" $'s3: pane w1:p3, workspace a · e1, tab t1\n0' "$(where_in "${A}" s3)"
+check "a tab with no label prints the name swarm-dev gave it (its record's) with its id, with the pane" $'s3: pane w1:p3, workspace a · e1, tab t1 (w1:t2)\n0' "$(where_in "${A}" s3)"
+check "a tab herdr gives no id for prints its record's name alone, with the pane" $'s4: pane w1:p4, workspace a · e1, tab t1\n0' "$(where_in "${A}" s4)"
 touch "${ROOT}/fail-workspace"
 check "a workspace list herdr cannot give prints -, with the pane" $'s1: pane w1:p1, workspace -, tab e1\n0' "$(where_in "${A}" s1)"
 rm "${ROOT}/fail-workspace"; touch "${ROOT}/fail-tab"
-check "a tab list herdr cannot give prints the tab's record name, with the pane" $'s1: pane w1:p1, workspace a · e1, tab t1\n0' "$(where_in "${A}" s1)"
+check "a tab list herdr cannot give prints the tab's record name with its id, with the pane" $'s1: pane w1:p1, workspace a · e1, tab t1 (w1:t1)\n0' "$(where_in "${A}" s1)"
 rm "${ROOT}/fail-tab"
 check "where logs nothing (read-only)" "no log" "$([[ -s "${A}/.swarm/events.tsv" ]] && echo logged || echo "no log")"
 

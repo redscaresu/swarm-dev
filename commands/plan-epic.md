@@ -18,6 +18,16 @@ and replies with that path. Put each prompt below in `.swarm/briefs/<name>.md`, 
     swarm.sh agent scope-$1 <name> "$PWD" <role> .swarm/briefs/<name>.md
     swarm.sh wait <name>        # run in the background, one per agent
 
+**Closing.** Once you have read an agent's `.swarm/$1/<name>.json`, run `swarm.sh close <name>` for
+it (each survey, the lead, each skeptic, codex, the critic and the split critic): its work is done,
+and an open pane sits idle for hours. Never close an agent while only its `.partial` exists: that
+run is unfinished, and the agent may be started again from it. The one exception is an agent stuck
+on an error, which you restart as /swarm-dev:swarm says: `swarm.sh close <name>`, then start it
+again. A pane still working is left open, and your report names it. Once every pane is closed and
+before the board PR opens, `swarm.sh next` offers `plan-epic $1`, either as its step or as the line
+`idle: epic $1 has no plan running, exit: /swarm-dev:plan-epic $1`, and `swarm.sh wait --lead` can
+print that line. Either one is this run waiting for the user's approval, not a plan to start again.
+
 **An expired login.** If a `wait` prints `auth`, that agent stopped on "Login expired · Please run
 /login". No agent can fix that, and only the user's `/login` clears it. Stop, and tell the user to
 run `/login` and nothing else. Once they say it is done, write a file that says "Your login is
@@ -57,7 +67,7 @@ the lead that survey and any earlier plan too. One survey is enough for a
 one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
-`{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy}], waves, contradictions}`.
+`{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy, fix}], waves, contradictions}`.
 `needs` names each `depends_on` story with what the story uses from it (the file, the function, or a `kind: lead` story's **You:** step), empty when it has none; the scope's opening line is written from it, so the two agree.
 `touches` entries are `file:part`, the part starting with the function or section name the story changes. Write a bare file only when the story changes the whole file: a bare file clashes only with the same bare file, so a bare file hides a clash with a story that names a part.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
@@ -102,7 +112,7 @@ write the stories and open the board PR without asking, and the report says the 
 did that. Without it, ask. (The small path has already written and committed the stories and run codex: it asks before
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
-when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no `touches` part, `touches`, `estimate_lines`, `easy`, `risk` when
+when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no `touches` part, `touches`, `estimate_lines`, `easy`, `fix: true` only on a story that fixes shipped behaviour, `risk` when
 high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open the board PR `scope-$1` with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and

@@ -395,6 +395,10 @@ check "the stall rule's sign_time skips the first-green line" test "$(SWARM_LIB=
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from stall import sign_time
 print(sign_time(sys.argv[1].split("\t")))' "$(tail -1 "${EV}")")" == None
+check "the stall rule's sign_time skips a pane-closed line (close_pane's, tidy's)" test "$(SWARM_LIB="${SWARM%/*}/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from stall import sign_time
+print(sign_time(sys.argv[1].split("\t")))' $'2026-10-22T10:05:00Z\tpane-closed\ts1\tw:1\tok ~~ pane=w:9 slug=s1')" == None
 fresh; echo story/s1 > "${FX}/ref"; wait_pr
 is "a second green wait on that PR: exits 0" 0 "${rc}"
 is "a second green wait on that PR: logs no second first-green" "s1|ok|${H}" "$(greens)"
