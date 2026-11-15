@@ -13,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt|unmerged|conflict|planned"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt|unmerged|conflict|planned|plan-missing"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -101,6 +101,11 @@ board() {
     planned) mkdir -p "${P}/docs/epics" "${P}/.swarm/s"; printf -- '---\nstatus: active\n---\n\n# s\n' > "${P}/docs/epics/s.md"
              perl -e 'my $t = time - 3600; utime $t, $t, shift' "${P}/docs/epics/s.md"
              echo "w:p1 survey-s" > "${P}/.swarm/state/scope-s"; echo '{"summary":"s","facts":[]}' > "${P}/.swarm/s/survey.json" ;;
+    # The same plan swarm, its critic started half an hour ago (its mark), not running and with no output.
+    plan-missing) mkdir -p "${P}/docs/epics" "${P}/.swarm/s/started"; printf -- '---\nstatus: active\n---\n\n# s\n' > "${P}/docs/epics/s.md"
+                  perl -e 'my $t = time - 3600; utime $t, $t, shift' "${P}/docs/epics/s.md"
+                  echo "w:p1 survey-s" > "${P}/.swarm/state/scope-s"; echo '{"summary":"s","facts":[]}' > "${P}/.swarm/s/survey.json"
+                  touch "${P}/.swarm/s/started/critic"; perl -e 'my $t = time - 1800; utime $t, $t, shift' "${P}/.swarm/s/started/critic" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }

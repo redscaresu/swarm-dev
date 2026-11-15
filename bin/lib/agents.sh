@@ -392,6 +392,8 @@ ENV_READY="swarm: agent environment ready"
 # when measured (#688); what saves a start whose shell never prints it is start_agent's one retry in a
 # fresh pane, not a longer wait.
 ENV_READY_MS=60000
+# HERDR_START_MS: how long each of start_agent's two herdr agent start tries waits for the agent.
+HERDR_START_MS=60000
 # OUTER_START_RETRY: set by a caller that starts the agent again itself when a start runs nothing
 # (build_story and review_agent, up to STARTS_PER_REVIEW starts, each in a fresh pane), so
 # start_agent's own fresh-pane retry stays off and the two never nest. Never from the environment.
@@ -704,6 +706,9 @@ start_agent() {
   rm -f "${PANE_DIR:?}/${name}"   # the last holder's pane record (pane_check), which a retired one took along
   # Once the name is free, so a start refused there leaves no resume files behind.
   [[ "${kind}" != claude ]] || resume_file "${name}" "${session}" "${names}" "${resume[@]}"
+  # Before the pane opens, so an agent whose start fails, or whose pane next_pane later prunes from the
+  # tab record, is still one its plan's attempt expects (plan_lines).
+  plan_mark "${tab}" "${pane_name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   if [[ -n "${OUTER_START_RETRY}" ]]; then
     clean_env "${pane}" "${name}" "${names}"
@@ -764,10 +769,10 @@ start_agent() {
       if [[ -n "${root}" && "${root}" != *[\"\\[:cntrl:]]* ]] && ! codex_distrusts "${root}"; then
         sandbox+=(-c "projects={\"${root}\"={trust_level=\"trusted\"}}")
       fi
-      out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
+      out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout "${HERDR_START_MS}" -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
+      out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout "${HERDR_START_MS}" -- \
         --session-id "${session}" "${flags[@]}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
@@ -808,6 +813,19 @@ start_agent() {
     || SETTLE_READS=$(((SLOW_PROMPT_TIMEOUT_MS / 2 - PROMPT_TIMEOUT_MS) / 5000))
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
+}
+
+# plan_mark <tab> <name> — for a planning tab (codex_out_dir), touch .swarm/<epic>/started/<name>, <name> as
+# the tab record holds it: the attempt's own record of the agents it starts, which plan_lines reads beside
+# the tab record, since next_pane prunes failed and closed panes from that. Its time is the start's, so a
+# mark older than the planner's resume reference is an earlier attempt's. Any other tab, or a <name> that is
+# no file name, marks nothing; a mark that cannot be written is said on stderr and stops no start.
+plan_mark() {
+  local dir
+  dir="$(codex_out_dir "$1")"
+  [[ -n "${dir}" && -n "$2" && "$2" != */* && "$2" != .* ]] || return 0
+  mkdir -p "${dir}/started" 2>/dev/null && touch "${dir}/started/$2" 2>/dev/null \
+    || echo "swarm: could not write ${dir}/started/$2, so wait --lead will not say if $2 ends without its output" >&2
 }
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
