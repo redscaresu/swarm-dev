@@ -3,66 +3,56 @@ kind: lead
 status: later
 epic: review-yield
 after: review-yield
-depends_on: [review-yield-baseline]
-touches: [board/stories/review-yield-tuning.md, board/stories/<tuning story>.md (new, filed by the lead)]
+depends_on: [demote-kinds-key, reviewers-deferred-column]
+needs: [demote-kinds-key (the demote_kinds key, a comma-separated kind list, deferred on rounds 1 and 2), reviewers-deferred-column (the deferred column the after reading uses)]
+touches: []
 ---
 
-# After one epic's findings with reviewers, the lead tunes the reviewer or kind that gets declined most and checks the decline rate fell
+# Lead: switch demote_kinds on for the four declined kinds, then read whether the decline rate fell
 
-**Parked (2026-10-25):** tuning reviewers from findings is the 0.28 retro's job; the retro takes this over.
+Re-filed by review-yield-before (2026-11-15). The user agreed the narrowing: this story carries the
+review-yield epic's tuning PR, its after reading and the 4+ round bar.
 
-After one epic built wholly on v0.19.0 or later (which carries the reviewer column and review-yield) has merged, run `swarm.sh flow --since <that epic's first merge date>` (its reviewer section) and post it here beside the Baseline. Pick the change it shows. (a) For a (reviewer, kind) declined most, a line naming that kind in finding_rule or the conductor rules, or in the /code-review call: codex takes no prompt (board/stories/codex-bump-not-a-finding.md:12), so the line steers whoever reads its output. (b) Skipping /code-review on docs, chore and board-only PRs: review_rule (bin/swarm.sh:1509) and epic mode (:2062) already say so, so choose (b) only if code-review rows land on such PRs. File each change as its own story (kind code, no epic, so it bumps plugin.json itself) whose body carries the before numbers. After it ships and one more epic merges, run `swarm.sh flow --since` its merge date (reviewer section) and record whether the tuned row's rate fell; if not, file a revert story and say so here. No the lead step.
+## Before (v0.30.0 build)
 
-**Done when:**
-- The posted report covers every PR of the measured epic with no `unknown` reviewer row for them; if one is unknown, briefs-name-the-reviewer is not being followed, and that is recorded here instead of tuning.
-- At least one tuning story is filed, naming the reviewer, the kind(s) and the before raised/declined/rate.
-- A later report is recorded here showing the tuned row's decline rate lower than the before number, or a merged revert PR is linked with the numbers that failed.
-
-**From review (binding; overrides the scope above where they differ):**
-- The lead runs `claude plugin update` before the measured epic; nothing here waits on the user.
-- Done only when the tuning PR has merged (linked), and the before and after reports are `swarm.sh flow --epic <e>` (reviewer section) for the epic run before and the one run after it, each listing its PR URLs with no `unknown` reviewer rows; the after rate for the tuned reviewer or kind is lower, or the lead reverts the change and says so. It notes that outcomes-every-attempt changed the rounds join between baseline and after.
-
-## Baseline
-
-Cut: 2026-10-16 ~01:00, every row in swarm-dev's `.swarm/findings.tsv` (2026-10-13 to the cut), from `swarm.sh review-yield` with no `--since`. It counts what finding_rows keeps (fixed or declined). An awk count over the same file gives the same totals: 211 fixed, 364 declined.
-
-**Total:** 575 raised, 211 fixed, 364 declined, 63% declined. Reviewers: 487 rows predate finding-reviewer-column and read `unknown` (61% declined). Of the rest, code-review has 84 (75% declined) and codex 4 (3 of them the version bump). Review rounds: 85 over 70 PRs (1.2 per PR, at most 4). The epic's earlier count of 207 declined against 140 fixed (about 60%) was taken on 2026-10-15. infrafactory reads differently, with 68 of 487 declined (14%), so the 63% is swarm-dev's alone.
-
-Every kind with 5 or more findings, across all reviewers:
+Source: `.swarm/findings.tsv`, rows dated 2026-10-28 to 2026-10-31 (the v0.30.0 build: v0.29.0 was
+tagged 2026-10-28T21:38Z, v0.30.0 2026-10-31T17:48Z; the file's dates are whole days, so the window
+holds a few rows from either side of the tags). Counted with a one-off script over the file, not a
+live `flow` run (AGENTS.md keeps live reports to today). Only fixed and declined rows count. 92 PRs.
 
 | kind | raised | fixed | declined | declined % |
 |---|---|---|---|---|
-| unhandled-state | 96 | 28 | 68 | 71% |
-| loose-match | 63 | 22 | 41 | 65% |
-| redundant-work | 53 | 4 | 49 | 92% |
-| docs-misstate-code | 46 | 27 | 19 | 41% |
-| condition-drift | 43 | 20 | 23 | 53% |
-| fails-open | 32 | 20 | 12 | 38% |
-| fails-silent | 21 | 12 | 9 | 43% |
-| view-disagrees | 20 | 7 | 13 | 65% |
-| misleading-error | 19 | 9 | 10 | 53% |
-| vacuous-test | 19 | 11 | 8 | 42% |
-| wiring | 19 | 9 | 10 | 53% |
-| stale-read | 15 | 6 | 9 | 60% |
-| unhandled-error | 14 | 8 | 6 | 43% |
-| release-bump | 12 | 1 | 11 | 92% |
-| docs | 12 | 5 | 7 | 58% |
-| version-bump | 11 | 0 | 11 | 100% |
-| duplicated-source-of-truth | 10 | 2 | 8 | 80% |
-| test-leak | 10 | 3 | 7 | 70% |
-| scope-creep | 8 | 1 | 7 | 88% |
-| lost-coverage | 8 | 2 | 6 | 75% |
-| layout-overflow | 6 | 3 | 3 | 50% |
-| missing-version-bump | 5 | 0 | 5 | 100% |
-| unsanitized-input | 5 | 1 | 4 | 80% |
+| duplicate-code | 58 | 2 | 56 | 97% |
+| missing-case | 44 | 7 | 37 | 84% |
+| efficiency | 22 | 1 | 21 | 95% |
+| hot-path-cost | 22 | 1 | 21 | 95% |
+| all kinds | 1,417 | 467 | 950 | 67% |
 
-What it shows before tuning: the three bump kinds (release-bump, version-bump, missing-version-bump: 28 raised, 1 fixed) are already covered by codex-bump-not-a-finding (#171). Of the rest, redundant-work (92% declined), scope-creep (88%) and duplicated-source-of-truth (80%) are the noisiest. unhandled-state is the largest declined count, at 68. The kinds that mostly get fixed are fails-open, docs-misstate-code, vacuous-test and fails-silent, all under 45% declined.
+The epic quoted missing-case 30 of 32 and hot-path-cost 17 of 18 from an earlier read of the same
+build. The table above is the whole window.
 
-## Codex budget (added 2026-10-16)
+review_loops' 4+ round share, from the same rows' round column: 13 of 85 PRs with a numbered review
+round reached round 4 or later (15%), against the HLD's 15% bar.
 
-Codex hit its usage limit at about 16:00 on 2026-10-16, and every review after that ran without it.
-Part of the day's budget went on board PRs; story-adding board passes found real gaps (two on
-infrafactory #587, four on a draft sync story), but tidy-ups (deletions, status flips) found
-nothing. The user agreed: code PRs come first. Among the tuning stories, file one that runs codex on
-a board PR only when it adds or rewrites a story, and never on a PR that only deletes stories or
-changes front matter.
+## Steps
+
+1. Once `swarm.sh version` shows a release carrying demote-kinds-key, open a PR adding
+   `demote_kinds = duplicate-code,missing-case,efficiency,hot-path-cost` to .claude/swarm/config,
+   with the Before table in its body. **You:** merge it: .claude/ is a protected path.
+2. After one epic built wholly after that merge, run `gh api rate_limit`, then
+   `swarm.sh flow --epic <e>` once. Per kind, record the non-deferred decline rate,
+   (declined - deferred) / (raised - deferred), and escaped-of-deferred from the rounds totals. Match
+   deferred and escaped rows by PR and exact finding text, filtered to the four kinds:
+   review_loops' totals span every kind (flow_review_loops.py:218). Record the 4+ round share against
+   the 15% bar.
+3. Keep the line if the sent decline rate fell for the four kinds and no deferred finding of those
+   kinds proved real. Otherwise open a revert PR. **You:** merge it.
+
+Board PRs that only edit, hold or finish stories get no codex review (commands/swarm.md).
+
+**Done when:**
+- The config PR adding `demote_kinds` has merged, linked here.
+- The after reading is recorded here, with its epic, window, the per-kind non-deferred decline rate,
+  escaped-of-deferred and the 4+ round share, beside the Before table.
+- The line is kept, with the reading that justified it, or a merged revert PR is linked with the
+  numbers that failed.
