@@ -9,7 +9,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `grants`,
-`cost`, `outcomes`, `flow`, `dataset`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
+`cost`, `outcomes`, `flow`, `dataset`, `retro`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, `swarms`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`,
@@ -186,9 +186,19 @@ The outcome field can end in a tail of `key=value` fields, for example
 `EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
 `version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
-Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `pane-closed` passes `pane=`, `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
-`url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
-`verdict=`. For a command `main` logs, the fields come from two places, in
+Callers can pass fields of their own, which come before `version=`:
+
+- `decline-only` passes `round=` and `verdict=`.
+- `first-green` passes `sha=`.
+- The incident lines above pass `slug=` and `role=`.
+- `intervene` passes `cause=`.
+- `merge` passes `hold=` on its held lines.
+- `pane-closed` passes `pane=`, `slug=` and `role=`.
+- `pr-opened` passes `url=`.
+- The reap lines above pass `slug=` and `role=`.
+- `review-finished` passes `round=` and `verdict=`.
+
+For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a

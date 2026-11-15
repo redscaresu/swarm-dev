@@ -106,6 +106,7 @@ It stops only for decisions that are yours. The common ones:
 ## Cost and safety
 
 Every agent is a full Claude Code session on your own logins, so a run spends real tokens.
+Agents run on the same provider as your session. On a Claude subscription nothing extra is passed: the login lives in your Claude config folder. On Azure Foundry, with `CLAUDE_CODE_USE_FOUNDRY` on, swarm.sh passes `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` to every agent. On AWS Bedrock, with `CLAUDE_CODE_USE_BEDROCK` on, it passes `AWS_BEARER_TOKEN_BEDROCK` and `ANTHROPIC_DEFAULT_*_MODEL`.
 `swarm.sh flow` shows where they went.
 With `usage_warn_percent` set, `wait --lead` warns once a week when its usage estimate passes it.
 It is only an estimate, and it counts Fable low until you give it a `/usage` reading. `/usage` is the only truth.
