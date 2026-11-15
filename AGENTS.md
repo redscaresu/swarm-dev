@@ -82,7 +82,7 @@ Useful while it runs:
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file, and queues it for a busy one until its turn ends; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
-- `swarm.sh merge [--board|--release [--upgrade]] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR, and for swarm-dev's own release moves the running agents onto it only with `--upgrade` or a yes typed at a terminal. When the base gained more than board files since the PR's CI ran, a story PR's merge merges the base into the PR's branch and waits for CI on that head; it holds a PR that costs money or changes a protected path for the user, and a story or `--board` PR whose own merge of the base dropped a line of the base, or whose merges it cannot check ([reference-merging.md § Merging](docs/reference-merging.md#merging)). After a story merge it sends the story's running conductor a note that the PR merged, naming the stories it made ready. After a `--board` merge it pulls the board and sends each running conductor a note naming the stories that merge made ready. When reconcile fails, either note still goes, naming the failure. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
+- `swarm.sh merge [--board|--release [--upgrade]] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR, and for swarm-dev's own release moves the running agents onto it only with `--upgrade` or a yes typed at a terminal. When the base gained more than board files since the PR's CI ran, a story PR's merge merges the base into the PR's branch and waits for CI on that head; it holds a PR that costs money or changes a protected path for the user, and a story or `--board` PR whose own merge of the base dropped a line of the base that its head has not put back, or whose merges it cannot check ([reference-merging.md § Merging](docs/reference-merging.md#merging)). After a story merge it sends the story's running conductor a note that the PR merged, naming the stories it made ready. After a `--board` merge it pulls the board and sends each running conductor a note naming the stories that merge made ready. When reconcile fails, either note still goes, naming the failure. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
 - `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`. `step-up --resume <slug>` starts a rung whose start failed.
 - `swarm.sh intervene lead-hand|user-caught <cause> "<one line>"`: log a time a person had to step in, and why (a cause from `INTERVENE_CAUSES` in bin/swarm.sh; an unknown one fails and lists them); `flow` and `dash` count them.
 - `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
@@ -162,7 +162,8 @@ shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commi
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
-                                            # a changed file the map does not know runs the full suite
+                                            # it never runs the full suite: it names each changed file that would select every test,
+                                            # which CI's full run covers, and runs the tests for the rest
 # make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
@@ -170,9 +171,9 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
 claude plugin validate .
 ```
 
-Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
-required check, and it passes when its 14 `test-shard` jobs do. The full `make test` is for when you
-want the whole suite locally.
+Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
+map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
+14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
 Development rules for anyone, agent or person, working in this repository:
 
