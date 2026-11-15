@@ -255,10 +255,12 @@ board() {
   git -C "${P}" -c user.name=t -c user.email=t@t commit -qm init
 }
 # runs <n> — the basename, sed, awk and head runs of one status on board <n>; its output goes to ${ROOT}/out<n>.
+# Its deadline is an hour (SWARM_REPORT_SECONDS): on a loaded host status's own work on 60 stories can
+# pass the default 30 s, and Waiting on you, due past it, would be skipped with no rows to count.
 runs() {
   : > "${ROOT}/count$1"
   # shellcheck disable=SC2031 # PATH is the test's own here
-  (cd "${ROOT}/p$1" && env -u HERDR_ENV -u HERDR_PANE_ID COUNT_LOG="${ROOT}/count$1" \
+  (cd "${ROOT}/p$1" && env -u HERDR_ENV -u HERDR_PANE_ID COUNT_LOG="${ROOT}/count$1" SWARM_REPORT_SECONDS=3600 \
     PATH="${ROOT}/count:${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out$1" 2>&1) || echo "status on $1 stories failed: $(cat "${ROOT}/out$1")" >&2
   grep -cxE 'basename|sed|awk|head' "${ROOT}/count$1" || true
 }

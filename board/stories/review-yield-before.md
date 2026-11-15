@@ -19,3 +19,7 @@ Needs from demote-kinds-key: the key's name (demote_kinds), its value form and t
 - swarm.sh next run once after the merge prints no line naming review-yield-baseline.
 - The user's answer on the narrowed Done when is recorded, and board/epics/review-yield.md matches it.
 - review-yield-tuning on main says nothing of 'nothing here waits on the user', and its Done when is the new switch-on and measurement procedure.
+
+## The user's answer (2026-11-15)
+
+The user agreed the narrowing as written: items 3 and 5 move to review-yield-tuning, and the review-yield command and the codex-time-limit and codex-bump-not-a-finding stories are not built.

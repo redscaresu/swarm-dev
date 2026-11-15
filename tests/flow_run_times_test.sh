@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # flow_run_times_test.sh — flow's run_times section, on a fixture run-times.tsv: per command, its
 # runs, median and p90 (nearest rank) seconds and the share over 60 s in the window, torn rows and
-# rows outside it left out; a line with no row in the window, and one with no log. Then status, next
+# rows outside it left out; a line with no row in the window, and one with no log. After it, the
+# by-load block: per command and 1-minute load band (<10, 10-20, 20+, -), its runs and median, with
+# loads just below, at and just above 10 and 20 each in its band. Then status, next
 # and dash each append one row to .swarm/run-times.tsv (start, command, seconds, load) and no
 # events.tsv line, in a small fixture project A (one active epic, one ready story; herdr and gh
 # stubbed to fail). _step and wait --lead 0 append none. dash --project B, run from A, runs swarm.sh
@@ -57,11 +59,37 @@ check "with no log it says so" "$(section)" "no run times logged: no ${P}/.swarm
   printf 'yesterday\tdash\t1.000\t2.00\n'
   printf '2026-10-02T12:00:00Z\tdash\t2.000\t2.00'
 } > "${P}/.swarm/run-times.tsv"
-check "per command: runs, median and p90 seconds, the share over 60 s" "$(section --since 2026-10-02)" \
-  "$(printf 'command\truns\tmedian_s\tp90_s\tover_60s\nnext\t10\t5.50\t9.00\t0%%\nstatus\t3\t61.00\t90.00\t67%%')"
-check "a row the day before the window counts once the window holds it" "$(section --since 2026-10-01 | grep '^dash')" \
+check "per command: runs, median and p90 seconds, the share over 60 s; then the by-load block" "$(section --since 2026-10-02)" \
+  "$(printf 'command\truns\tmedian_s\tp90_s\tover_60s\nnext\t10\t5.50\t9.00\t0%%\nstatus\t3\t61.00\t90.00\t67%%\n\ncommand\tload\truns\tmedian_s\nnext\t<10\t10\t5.50\nstatus\t-\t3\t61.00')"
+check "a row the day before the window counts once the window holds it" "$(section --since 2026-10-01 | sed '/^$/,$d' | grep '^dash')" \
   "$(printf 'dash\t1\t500.00\t500.00\t100%%')"
 check "with no row in the window it says so" "$(section --since 2026-10-03)" "no run times logged in the window (2026-10-03 to 9999-12-30)"
+
+# The by-load block, on status runs at loads 4, 12, 25 and -, two per band, and a dash row: the first
+# table is as it was before the block, then one row per command and band, in band order.
+{
+  printf '2026-10-02T09:00:00Z\tstatus\t%s\t4.00\n' 100.000 106.000
+  printf '2026-10-02T09:00:00Z\tstatus\t%s\t12.00\n' 270.000 288.000
+  printf '2026-10-02T09:00:00Z\tstatus\t%s\t25.00\n' 1100.000 1146.000
+  printf '2026-10-02T09:00:00Z\tstatus\t%s\t-\n' 40.000 50.000
+  printf '2026-10-02T09:00:00Z\tdash\t3.000\t25.00\n'
+} > "${P}/.swarm/run-times.tsv"
+out="$(section)"
+check "the first table is unchanged by the block" "$(sed '/^$/,$d' <<< "${out}")" \
+  "$(printf 'command\truns\tmedian_s\tp90_s\tover_60s\ndash\t1\t3.00\t3.00\t0%%\nstatus\t8\t188.00\t1146.00\t75%%')"
+check "by load: per command and band, its runs and median" "$(sed '1,/^$/d' <<< "${out}")" \
+  "$(printf 'command\tload\truns\tmedian_s\ndash\t20+\t1\t3.00\nstatus\t<10\t2\t103.00\nstatus\t10-20\t2\t279.00\nstatus\t20+\t2\t1123.00\nstatus\t-\t2\t45.00')"
+# One row at <load>: the band its by-load row names.
+band_of() {
+  printf '2026-10-02T09:00:00Z\tstatus\t5.000\t%s\n' "$1" > "${P}/.swarm/run-times.tsv"
+  section | sed '1,/^$/d' | awk -F'\t' '$1 == "status" { print $2 }'
+}
+check "a load of 9.99 is <10" "$(band_of 9.99)" "<10"
+check "a load of 10.00 is 10-20" "$(band_of 10.00)" "10-20"
+check "a load of 10.01 is 10-20" "$(band_of 10.01)" "10-20"
+check "a load of 19.99 is 10-20" "$(band_of 19.99)" "10-20"
+check "a load of 20.00 is 20+" "$(band_of 20.00)" "20+"
+check "a load of 20.01 is 20+" "$(band_of 20.01)" "20+"
 
 project() { # <dir> — a swarm project: config, board, one active epic, one ready story, one event, a commit
   mkdir -p "$1/.claude/swarm" "$1/.swarm" "$1/board/stories" "$1/board/epics"

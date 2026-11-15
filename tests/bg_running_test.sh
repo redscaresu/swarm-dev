@@ -13,6 +13,11 @@
 #   - a swarm.sh wait (wait, watch, wait-pr, merge: each ends on its own) is life at any age, so a conductor on
 #     a long background watch is not stuck: no output; one that also runs anything else, as #891's line,
 #     is held to the bound, and so is a command that only names swarm.sh (grep swarm.sh watch)
+#   - a background task whose launch names its output file counts only while a process holds that file:
+#     its process gone (a PID killed and reaped) is no life inside the bound, a sleep the test starts on it
+#     is, and so is a test run (make test) whose process still runs. On 2026-11-15 three builders sat idle
+#     for 3 hours on background test runs that had ended without their notice. A file that is gone leaves
+#     the task counting, as one whose launch names no file does
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -20,7 +25,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'rm -rf "${ROOT}"' EXIT
+HOLDER=""   # the PID of the sleep holding a task's output file open, killed on the way out
+trap '[[ -z "${HOLDER}" ]] || kill -KILL "${HOLDER}" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 check() { # <name> <expected> <got>
@@ -34,16 +40,23 @@ NOW="$(date +%s)"
 
 # ago <minutes> — that long before NOW as a transcript timestamp (UTC, Z).
 ago() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(sys.argv[1]))))' $((NOW - $1 * 60)); }
-# launch <minutes ago> <command> — a Bash tool call run in the background and its launch result, task b1.
+# launch <minutes ago> <command> [<output file>] — a Bash tool call run in the background and its launch
+# result, task b1; with <output file>, the result names it as Claude Code's does.
 launch() {
   python3 -c 'import json, sys
-cmd, at = sys.argv[1], sys.argv[2]
+cmd, at, out = sys.argv[1], sys.argv[2], sys.argv[3]
+text = "Command running in background with ID: b1" + (". Output is being written to: %s. You will be notified when it completes" % out if out else "")
 print(json.dumps({"type": "assistant", "timestamp": at, "message": {"content": [
   {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": cmd, "run_in_background": True}}]}}))
 print(json.dumps({"type": "user", "timestamp": at, "message": {"content": [
-  {"type": "tool_result", "tool_use_id": "t1", "content": "Command running in background with ID: b1"}]},
-  "toolUseResult": {"stdout": "", "backgroundTaskId": "b1"}}))' "$2" "$(ago "$1")" > "${TR}"
+  {"type": "tool_result", "tool_use_id": "t1", "content": text}]},
+  "toolUseResult": {"stdout": "", "backgroundTaskId": "b1"}}))' "$2" "$(ago "$1")" "${3:-}" > "${TR}"
 }
+# hold — start a sleep that writes to OUT, as a background task's shell does, its PID in HOLDER. OUT is
+# opened here before the fork, so the sleep holds it from its first instant and the file exists.
+hold() { exec 9> "${OUT}"; sleep 300 >&9 2>&9 & HOLDER=$!; exec 9>&-; }
+# release — KILL HOLDER (the runner leaves TERM ignored in its tests) and reap it, so its PID is gone and nothing holds OUT.
+release() { kill -KILL "${HOLDER}" 2>/dev/null || true; wait "${HOLDER}" 2>/dev/null || true; HOLDER=""; }
 # ended — b1's end, a task-notification with a status.
 ended() { printf '{"type":"user","message":{"content":"<task-notification>\\n<task-id>b1</task-id>\\n<status>completed</status>\\n</task-notification>"}}\n' >> "${TR}"; }
 # alive <stall_minutes in the config> [<stall_minutes passed>] — yes when bg_running reads agent r's
@@ -88,6 +101,24 @@ launch 200 'grep swarm.sh watch'
 check "a command that only names swarm.sh watch, past the bound, is no life" no "$(alive 30)"
 launch 200 'swarm.sh tell s1 nudge /tmp/n.md'
 check "a swarm.sh tell alone (no wait) past the bound is no life" no "$(alive 30)"
+
+mkdir -p "${ROOT}/tasks"; OUT="${ROOT}/tasks/b1.output"
+hold; release
+launch 5 "${HUNG}" "${OUT}"
+check "a background task inside the bound whose process has exited (its PID gone) is no life" no "$(alive 30)"
+check "the same task with stall_minutes passed is no life" no "$(alive 30 30)"
+hold
+check "the same task with a live process holding its output file is life" yes "$(alive 30)"
+release
+launch 5 'make test JOBS=4' "${OUT}"
+hold
+check "a background test run whose process still runs is life" yes "$(alive 30 30)"
+release
+check "the same test run once its process has exited is no life" no "$(alive 30 30)"
+launch 5 "${HUNG}" "${ROOT}/missing/tasks/b1.output"
+check "a task whose output file is gone still counts, as one that names no file does" yes "$(alive 30)"
+launch 200 'swarm.sh watch --epic e1' "${OUT}"
+check "a background swarm.sh watch whose process has exited is no life, at any age" no "$(alive 30)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} check(s) failed"; exit 1; }
 echo "all bg_running checks passed"

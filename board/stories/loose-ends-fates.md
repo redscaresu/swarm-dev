@@ -18,3 +18,8 @@ easy: true
 - The PR body has the user's confirmation of each close reason, the codex-agent-name record, and the seven standing steps named as retro-v0.31.0's.
 - ppid-check-after-review's Done when on main says its result is recorded in the PR that finishes it, with no release-v0.29.0 reference left.
 - If the user closes sonnet-share-on, the config PR setting `sonnet_share = 0` has merged.
+
+## The user's answers (2026-11-15)
+
+- sonnet-share-on: close it. Its story is deleted in this board PR, and `sonnet_share = 0` goes in its own config PR, which the user merges (a protected path).
+- Confirmed all three close reasons: close unsent-resend-real-pane, finish reference-split-lead-steps, finish release-v0-29-0.

@@ -1010,9 +1010,13 @@ next_reads() {
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
-# which next_reads' gh never sees. In a subshell, so that ci_gate ends with it.
+# which next_reads' gh never sees. WATCH_SHARE set as watch sets it, so queued_line's ci_gate age reads
+# take a running watch's check-run and status reads from the poll cache, and keep their own for it. In a
+# subshell, so that ci_gate and WATCH_SHARE end with it.
 # shellcheck disable=SC2329 # queued_line calls it
 next_queued() (
+  # shellcheck disable=SC2034 # queued_line reads it
+  WATCH_SHARE="$(watch_share)"
   ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@" </dev/null; }
   conductors_queued
 )
