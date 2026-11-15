@@ -10,6 +10,9 @@
 #     it, life. A test suite still running in the pane is test_running's, at any age, and not read here
 #   - the bound follows the config: stall_minutes 10 puts a 60-minute-old task past it
 #   - a task whose end was logged is no life, whatever its age
+#   - a swarm.sh wait (wait, watch, wait-pr, merge: each ends on its own) is life at any age, so a conductor on
+#     a long background watch is not stuck: no output; one that also runs anything else, as #891's line,
+#     is held to the bound, and so is a command that only names swarm.sh (grep swarm.sh watch)
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -49,7 +52,7 @@ alive() (
   SWARM_HOME="${REPO}"; PROJECT_DIR="${ROOT}/proj"; CLAUDE_PROJECTS_DIR="${ROOT}/projects"; CFG_stall_minutes="$1"
   # shellcheck source=bin/lib/agents.sh
   source "${REPO}/bin/lib/agents.sh"   # its AGENTS_LOG and CLAUDE_PROJECTS come from the two above
-  if bg_running r ${2:+"$2"} "" "${NOW}"; then echo yes; else echo no; fi
+  if bg_running r "${2:-}" "${NOW}"; then echo yes; else echo no; fi
 )
 
 HUNG='x=1; $=x 2>/dev/null'   # #891's line: zsh runs NULLCMD (cat) on it, which waits for good
@@ -72,6 +75,19 @@ check "and with stall_minutes 30 the same task is life" yes "$(alive 30)"
 
 launch 5 "${HUNG}"; ended
 check "a task whose end was logged is no life" no "$(alive 30)"
+
+launch 200 'swarm.sh watch --epic e1'
+check "a background swarm.sh watch launched past the bound is life" yes "$(alive 30)"
+launch 200 'unset GITHUB_TOKEN; /x/bin/swarm.sh wait-pr --head abc https://github.com/o/r/pull/1 > /tmp/w.out 2>&1; echo "rc=$?" >> /tmp/w.out'
+check "a background swarm.sh wait-pr with its glue (unset, redirections, echo) past the bound is life" yes "$(alive 30)"
+launch 200 'swarm.sh wait --stall --idle s1 && swarm.sh tell s1 nudge /tmp/n.md'
+check "the conductor brief's wait then tell past the bound is life" yes "$(alive 30)"
+launch 200 'swarm.sh watch --epic e1; x=1; $=x 2>/dev/null'
+check "a swarm.sh watch with #891's line after it, past the bound, is no life" no "$(alive 30)"
+launch 200 'grep swarm.sh watch'
+check "a command that only names swarm.sh watch, past the bound, is no life" no "$(alive 30)"
+launch 200 'swarm.sh tell s1 nudge /tmp/n.md'
+check "a swarm.sh tell alone (no wait) past the bound is no life" no "$(alive 30)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} check(s) failed"; exit 1; }
 echo "all bg_running checks passed"

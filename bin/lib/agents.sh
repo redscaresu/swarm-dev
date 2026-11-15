@@ -34,7 +34,9 @@
 #     before <now> (epoch; default the clock) counts: a server left running in the background, or a
 #     shell hung on a read that never ends, is no work. A launch entry with no UTC timestamp is too
 #     old to count. The shell bg_running passes stall_minutes always, so every caller has the bound.
-#     A test suite still running in the pane has no such limit (test_running).
+#     A background Bash call that is only swarm.sh waits (panes.py's swarm_wait: wait, watch, wait-pr or
+#     merge, each with an end of its own, and shell glue) counts at any age, so a conductor on a long
+#     watch is not stuck. A test suite still running in the pane has no such limit (test_running).
 #   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
 #     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
 #     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
@@ -1395,7 +1397,8 @@ resume_agent() {
 # (panes.py's bg_running, over its transcript): it is waiting on it. Only one started less than
 # TEST_RUN_STALLS times <stall_minutes> (default the config's stall_minutes) before <now> (epoch;
 # default the clock) counts, so a task hung for good stops hiding a stall: a review agent's background
-# shell sat on a read for 17.5 hours, and nothing reported it (#891).
+# shell sat on a read for 17.5 hours, and nothing reported it (#891). A background swarm.sh wait
+# (panes.py's swarm_wait) counts at any age.
 bg_running() {
   # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
@@ -1450,7 +1453,7 @@ is_builder() {
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
 # old, the agent runs no background task (bg_running, one launched less than TEST_RUN_STALLS times
-# stall_minutes ago) and its pane runs no test suite (test_running, at any age), setting the caller's
+# stall_minutes ago, or a swarm.sh wait at any age) and its pane runs no test suite (test_running, at any age), setting the caller's
 # state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
   local min

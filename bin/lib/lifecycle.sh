@@ -3229,9 +3229,10 @@ STUCK_PRS=""
 # first seen on this head at least N minutes ago; a conflict wins over findings. A head counts from when a poll first saw it (LEAD_PR_HEADS, which drops a PR no longer open), so a
 # tell made before wait --lead first saw the head is not one. Checks, cheapest first: those file reads, the builder
 # live in the poll's herdr list (LEAD_AGENTS), its state idle (read_state's, over one claude agents read and that
-# list), no background task (bg_running, one launched less than TEST_RUN_STALLS times stall_minutes ago), no test
-# run in its pane (stuck_test_run). A PR of a repo the pass could not read, one whose mergeable is UNKNOWN on the
-# same head, and a poll with no herdr list or no state for the builder keep the stuck: line LEAD_SEEN has.
+# list), no background task (bg_running, one launched less than TEST_RUN_STALLS times stall_minutes ago, or a
+# swarm.sh wait at any age), no test run in its pane (stuck_test_run). A PR of a repo the pass could not read,
+# one whose mergeable is UNKNOWN on the same head, and a poll with no herdr list or no state for the builder keep
+# the stuck: line LEAD_SEEN has.
 stuck_lines() {
   local slug url head mg ck opened kept now rows old told rec="" oh of oc first conf kind name pane st claude="" read=""
   STUCK_PRS=""

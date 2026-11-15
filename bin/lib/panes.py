@@ -1,4 +1,4 @@
-import base64, calendar, glob, hashlib, json, os, re, shutil, signal, subprocess, time
+import base64, calendar, glob, hashlib, json, os, re, shlex, shutil, signal, subprocess, time
 WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
@@ -85,12 +85,40 @@ def logged_at(d):   # a transcript entry's UTC timestamp as epoch seconds; 0 (lo
         return calendar.timegm(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S")) if t.endswith("Z") else 0
     except (AttributeError, TypeError, ValueError):
         return 0
+# SWARM_WAITS: the swarm.sh commands that wait with an end of their own (a timeout, a verdict, a merge's
+# rounds); SWARM_AFTER: the swarm.sh commands a brief runs after one (`wait ... && swarm.sh tell ...`), which
+# end at once; SHELL_GLUE: the words a background command may hold beside them and still be only that wait.
+SWARM_WAITS = ("wait", "watch", "wait-pr", "merge")
+SWARM_AFTER = ("tell",)
+SHELL_GLUE = ("unset", "cd", "export", "echo", "printf", "true", "exit")
+# swarm_wait(cmd): True when a Bash command is only swarm.sh waits: each part (split on ;, &&, ||, |, & and
+# newlines, after 2>&1-style redirections go) is `[VAR=x ...] <path/>swarm.sh <a SWARM_WAITS or SWARM_AFTER
+# word> ...` or starts with a SHELL_GLUE word, and one part at least is the wait. Any other part (#891's `$=x 2>/dev/null`,
+# a script, a loop) or a command that does not parse is no swarm.sh wait.
+def swarm_wait(cmd):
+    if not isinstance(cmd, str):
+        return False
+    waits = 0
+    for part in re.split(r"&&|\|\||[;|&\n]", re.sub(r"\d*>&\d*|&>>?", " ", cmd)):
+        try:
+            words = shlex.split(part)
+        except ValueError:
+            return False
+        while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
+            words = words[1:]
+        if not words or words[0] in SHELL_GLUE:
+            continue
+        if os.path.basename(words[0]) != "swarm.sh" or len(words) < 2 or words[1] not in SWARM_WAITS + SWARM_AFTER:
+            return False
+        waits += words[1] in SWARM_WAITS
+    return waits > 0
 def bg_running(log, name, projects, stall_minutes="", now=""):
     sid, live, monitors = session_id(log, name), {}, set()   # live: task id -> when its launch was logged
+    bash, waits = {}, set()   # bash: a background Bash call's tool_use id -> its command; waits: swarm_wait tasks
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
         try:
             for l in open(path, encoding="utf-8", errors="replace"):
-                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>", '"Monitor"')):
+                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>", '"Monitor"', "run_in_background")):
                     continue
                 try:
                     d = json.loads(l)
@@ -100,13 +128,18 @@ def bg_running(log, name, projects, stall_minutes="", now=""):
                     continue
                 content = (d.get("message") or {}).get("content")
                 items = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
-                if d.get("type") == "assistant":   # which tool_use ids are Monitor calls
-                    monitors.update(c.get("id") for c in items if c.get("type") == "tool_use" and c.get("name") == "Monitor")
+                if d.get("type") == "assistant":   # which tool_use ids are Monitor calls, and background Bash's commands
+                    uses = [c for c in items if c.get("type") == "tool_use"]
+                    monitors.update(c.get("id") for c in uses if c.get("name") == "Monitor")
+                    bash.update((c.get("id"), (c.get("input") or {}).get("command")) for c in uses
+                                if c.get("name") == "Bash" and isinstance(c.get("input"), dict) and c["input"].get("run_in_background"))
                     continue
                 r = d.get("toolUseResult")
                 if isinstance(r, dict):
                     if isinstance(r.get("backgroundTaskId"), str):
                         live[r["backgroundTaskId"]] = logged_at(d)
+                        if any(swarm_wait(bash.get(c.get("tool_use_id"))) for c in items):
+                            waits.add(r["backgroundTaskId"])
                     if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
                         live[r["agentId"]] = logged_at(d)
                     # A Monitor's taskId only: a task-list tool's (TaskUpdate) gets no notification.
@@ -124,7 +157,7 @@ def bg_running(log, name, projects, stall_minutes="", now=""):
     if not stall_minutes:
         return bool(live)
     cap, t = TEST_RUN_STALLS * int(stall_minutes) * 60, float(now) if now else time.time()
-    return any(t - at < cap for at in live.values())
+    return any(k in waits or t - at < cap for k, at in live.items())
 # SIGN_SECONDS: how long each call sign_blocked makes (git, gpg, gpg-connect-agent, ssh-add, ssh-keygen) may
 # take; one past it is killed with its process group, and the probe says unknown.
 SIGN_SECONDS = 5
@@ -445,7 +478,7 @@ def session_state(log, name, listing):
 TEST_RUN = re.compile(r"(\S*/)?g?make(\s+\S+)*?\s+(test|check)(\s|$)"
                       r"|(\S*/)?(ba|z|da|k)?sh(\s+-\S+)*\s+(\S*/)?scripts/test\.sh(\s|$)"
                       r"|(\S*/)?scripts/test\.sh(\s|$)")
-# TEST_RUN_STALLS: how many stall_minutes a background task (bg_running) counts as work for, and how old a
+# TEST_RUN_STALLS: how many stall_minutes a background task (bg_running; a swarm.sh wait has no limit) counts as work for, and how old a
 # builder's own last sign of life may be for an unsignable worktree to hold its stall (agents.sh's sign_held).
 # A test run (test_running) has no such limit: it is work for as long as it runs.
 TEST_RUN_STALLS = 3
