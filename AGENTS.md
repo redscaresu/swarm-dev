@@ -162,7 +162,8 @@ shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commi
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
-                                            # a changed file the map does not know runs the full suite
+                                            # it never runs the full suite: it names each changed file that would select every test,
+                                            # which CI's full run covers, and runs the tests for the rest
 # make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
@@ -170,9 +171,9 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
 claude plugin validate .
 ```
 
-Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
-required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
-want the whole suite locally.
+Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
+map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
+12 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
 Development rules for anyone, agent or person, working in this repository:
 
