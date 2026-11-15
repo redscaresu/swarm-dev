@@ -380,8 +380,11 @@ check "the files are every tracked *.sh and sh or bash script under bin/ and hoo
 
 files=()
 while IFS= read -r f; do files+=("${REPO}/${f}"); done < <(shell_files "${REPO}")
+# grep reads a here-string, not a pipe from printf: grep -q exits on its first match, and printf, still
+# writing the rest of the list, then fails with a broken pipe, which pipefail turns into a miss.
+listed="$(printf '%s\n' "${files[@]}")"
 check "the shell files of bin/ and hooks/ are found" "bin/swarm.sh bin/lib bin/gh-shim hooks" \
-  "$(for d in bin/swarm.sh bin/lib bin/gh-shim hooks; do printf '%s\n' "${files[@]}" | grep -q "/${d}" && printf '%s ' "${d}"; done | sed 's/ $//')"
+  "$(for d in bin/swarm.sh bin/lib bin/gh-shim hooks; do grep -q "/${d}" <<< "${listed}" && printf '%s ' "${d}"; done | sed 's/ $//')"
 found="$(untimed "${files[@]}")" || { echo "FAIL the scan of bin/ and hooks/ failed"; fails=$((fails + 1)); }
 check "every curl, gh run download/view --log and herdr wait in the shell files of bin/ and hooks/ names its timeout" "" "${found}"
 

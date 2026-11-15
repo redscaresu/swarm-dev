@@ -72,6 +72,7 @@ rm -rf \"\$SP/\$m\"	none"
 # Each brief's own waits. The rule shows no merge command: each brief gives its own, or none.
 OWN_BUILDER="swarm.sh wait-pr --head <sha> <PR URL>	allow"
 OWN_REVIEW="swarm.sh wait --stall <slug>	allow
+swarm.sh wait --stall --past <sha> <slug>	allow
 swarm.sh wait-pr <PR URL>	allow
 swarm.sh wait-pr --head <sha> <PR URL>	allow"
 OWN_EPIC="swarm.sh watch --epic f	allow
@@ -128,6 +129,16 @@ brief_forms() {
 
 for m in human agent; do brief_forms "builder (merge = ${m})" "$(builder "${m}")" "${OWN_BUILDER}"; done
 brief_forms review "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")" "${OWN_REVIEW}"
+# The review brief's own waits for a fix (wait --stall --past), each as the brief writes it, with the
+# head filled in as a full sha: if the guard came to refuse one, the review agent could not wait for a push.
+rbrief="$(flat "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")")"
+past_waits="$(grep -o "\`[^\`]* wait --stall --past <[^>]*> s1\`" <<< "${rbrief}" | tr -d '\`' | sort -u || true)"
+check "the review brief has three wait --stall --past commands, each naming the project" "3|3" \
+  "$(grep -c . <<< "${past_waits}")|$(grep -c "^SWARM_PROJECT=${P} ${SWARM} wait --stall --past <" <<< "${past_waits}")"
+while IFS= read -r w; do
+  check "the review brief's ${w#* * } passes the guard, its head filled in" 0 \
+    "$(call "${w/<*>/0123456789abcdef0123456789abcdef01234567}")"
+done <<< "${past_waits}"
 brief_forms conductor "$(lib 'conduct_brief f')" "${OWN_EPIC}"
 brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${OWN_BACKLOG}"
 # The merge sentence, which names no command: a lone swarm.sh merge passes, one joined by && is refused.

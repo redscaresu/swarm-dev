@@ -109,7 +109,8 @@ is "with its epic listing it too, it reads PR 7's head once" 1 "$(gh_count '^pr 
 # The next run's later polls make no gh call, and the line it saw, as printed, is no news: no fresh re-read.
 : > "${ROOT}/gh.log"
 lead SWARM_LEAD_HEADS_EVERY=3600 3000
-is "a run that has seen the line times out with nothing" "1|" "${rc}|$(cat "${ROOT}/out")"
+is "a run that has seen the line times out with its timeout: line alone" \
+  "1|timeout: nothing new in 1 min, exit: swarm.sh wait --lead" "${rc}|$(cat "${ROOT}/out")"
 is "over its three polls it reads PR 7's head once, on its heads pass, and no check run" "1|0" \
   "$(gh_count '^pr view 7 ')|$(gh_count 'check-runs')"
 is "over its three polls its only gh calls are that heads pass's" "pr view 7|repo view|pr list|default branch" "$(gh_calls)"
