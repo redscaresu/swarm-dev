@@ -490,28 +490,11 @@ Repeat until a step below says stop:
      that says "Your login is renewed: resume where you stopped. Send the same to any builder whose
      wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
      `auth`, then go back to 1.
-   - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
-     `swarm.sh outcomes --since <the day 30 days ago, YYYY-MM-DD>` (the window keeps its gh calls to
-     recent builds; the `recurring` block counts its own last 30 days either way) and read its
-     `recurring` block. For each kind there with an empty `check` column, file one story with
-     `checks: <kind>` in its front matter that adds a test, lint rule, hook or review-prompt line
-     which catches that kind, like any board edit: through `swarm.sh board-pr` named `check-<kind>`
-     when the board is in the project's repo, or written where the board is when it is outside.
-     Skip the kind when a story on the board already has `checks: <kind>`, or, with the board in the
-     repo, when `gh pr list -R <owner/repo> --state all --head board/check-<kind> --json state,closedAt`
-     (the project's origin, as `git remote get-url origin` names it) shows one `OPEN` (pending),
-     one `MERGED` (its story is on the board, or about to be, since collect only fetches), or one
-     `CLOSED` (unmerged) in the last 90 days, which means the user declined it. A board outside the
-     repo has no PR to look up, and its merged story leaves no git deletion to fill `check`, so
-     after filing a story there append a line (the kind, a tab, today as YYYY-MM-DD) to
-     `.swarm/checks-filed.tsv` (the project's, a path relative to it), and skip
-     any kind already listed in that file.
-     A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
-     reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
-     `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
-     so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
-     (`.swarm/conduct-<epic>.report.md`), relay what merged, what
-     is left and what waits on the user, then `swarm.sh close <agent>`. The close refuses, closing
+   - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then
+     read its report (`.swarm/conduct-<epic>.report.md`), relay what merged, what is left and what
+     waits on the user, then `swarm.sh close <agent>`. Leave a finding kind that recurs with no
+     check to `swarm.sh retro`'s recurring list, which names it before a minor release for you and
+     the user to decide. The close refuses, closing
      nothing, while the conductor is in any state but idle or done (working, waiting on a prompt,
      or a state it cannot read), naming that state. With `merge = agent` it also refuses while the
      epic's Finish PR (`swarm.sh finish <epic>`) is open, or when gh cannot read that PR: closing the

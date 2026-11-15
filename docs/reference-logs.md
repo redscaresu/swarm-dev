@@ -948,15 +948,13 @@ PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, or one of the kinds `demote_kinds` lists held back before it, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
-and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
-`/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
-yet, in a board PR named `check-<kind>` (written in place when the board is outside the repo, and
-noted in `.swarm/checks-filed.tsv` so the kind is filed once). The
-story adds a test, lint rule, hook or review-prompt line that catches the kind, since a rule pasted
-into a prompt does not stop the mistake by itself. While that PR is open, once it has merged, or for
-90 days after you close it unmerged, the kind gets no new story. Once the
-check merges, `outcomes` shows whether the kind came back less often, and `/swarm-dev:swarm` tells
-you when its fixes after the merge reach 3 PRs. The log is `.swarm/findings.tsv`, local to
+and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it.
+Before a minor release, `swarm.sh retro` lists each recurring kind that has no check yet
+(§ swarm.sh retro, **recurring**), and you and the lead decide each.
+A check is a story with `checks: <kind>` that adds a test, lint rule, hook or review-prompt line
+that catches the kind, since a rule pasted into a prompt does not stop the mistake by itself.
+Once the check merges, `outcomes` shows whether the kind came back less often.
+The log is `.swarm/findings.tsv`, local to
 the machine: date, kind, PR, the line, its outcome (`fixed`, `declined` or `escaped`; rows written before the
 outcome column count as fixed) and the reviewer (`unknown` when a row was logged without `--reviewer`
 or before that column existed), then a declined row's reason and, with `--round`, the round (after an
