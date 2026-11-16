@@ -1,13 +1,18 @@
 import re, subprocess, sys
 from collections import Counter
 
-# dropped_lines.py <repo-dir> <base> <head> [<merge sha>...] — the base lines a PR's own merge
-# commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
+# dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...] — the base lines a PR's
+# own merge commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
 # <base>..<head>`, oldest first, and with merge SHAs given scans only those (full SHAs, matched
 # exactly). Each merge must have two parents, one an ancestor of <base> (the base side) and one not
-# (the PR side); the order of the two does not matter. Otherwise it scans nothing: an octopus is not
-# remerged this way, and a merge with neither parent on <base> (a stacked build's merge of its parent
-# branch) is unchecked, not clean. Of each merge's `git show --remerge-diff`, a removed line L of
+# (the PR side); the order of the two does not matter. A merge with neither parent on <base> whose
+# second parent is a --merged SHA (the caller's word that it is on the branch of a PR merged into
+# <base>, full SHAs matched exactly) is a stacked build's merge of its parent's branch once that parent
+# merged: its second parent is its base side, the parent's branch standing for the base, and every rule
+# below holds as for a merge of the base, the base's own reads (gone, owing) included. Otherwise it scans
+# nothing: an octopus is not remerged this way, and a merge with neither parent on <base> and no
+# --merged second parent (a stacked build's merge of a parent branch whose PR has not merged) is
+# unchecked, not clean. Of each merge's `git show --remerge-diff`, a removed line L of
 # file F prints when L is in the base side's F and the merge's F has fewer copies of L than a merge
 # of the two sides keeps (owed): the base side's copies, plus the PR side's, less the merge base's
 # (`git merge-base` of the two parents). A line the merge base's F lacks and both sides added, as when
@@ -106,6 +111,8 @@ def sides(m, base):
     if len(parents) != 2:
         stop("merge %s has %d parents: an octopus merge is not remerged, so it is not checked" % (m[:7], len(parents)))
     on = [p for p in parents if ancestor(p, base)]
+    if not on and parents[1] in MERGED:   # a merge of a merged parent PR's branch, which stands for the base
+        return parents[0], parents[1], SECOND
     if not on:
         stop("merge %s is unchecked: neither parent is on %s, so it is not a merge of %s"
              " (a stacked build's merge of its parent branch?)" % (m[:7], base, base))
@@ -336,14 +343,23 @@ def extended(left, found):
             pool[head] -= 1
     return lines
 
+USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...]"
 if len(sys.argv) < 4:
-    stop("usage: dropped_lines.py <repo-dir> <base> <head> [<merge sha>...]")
+    stop(USAGE)
 REPO, BASE, HEAD = sys.argv[1:4]
-wanted = {s.lower() for s in sys.argv[4:]}
+MERGED, wanted, rest = set(), set(), iter(sys.argv[4:])   # MERGED: second parents on a merged PR's branch
+for arg in rest:
+    if arg == "--merged":
+        sha = next(rest, None)
+        if sha is None:
+            stop(USAGE)
+        MERGED.add(sha.lower())
+    else:
+        wanted.add(arg.lower())
 rc, out, err = git("rev-list", "--first-parent", "--merges", "--reverse", "--end-of-options", BASE + ".." + HEAD, "--")
 if rc != 0:
     stop("cannot list the merges in %s..%s: %s" % (BASE, HEAD, err))
-merges = [m for m in out.decode().split() if not sys.argv[4:] or m in wanted]
+merges = [m for m in out.decode().split() if not wanted or m in wanted]
 checks = [(m,) + sides(m, BASE) for m in merges]   # every merge is checkable before any line prints
 MERGE_BASE = None   # git merge-base <base> <head>: None with no common ancestor
 if checks:
