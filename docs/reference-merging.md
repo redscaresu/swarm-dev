@@ -1042,6 +1042,7 @@ to the steps after it. An epic on the board whose `stage:` is not
 release only when `next` prints it. A board where no epic has `stage:`
 reads no stages, so its release is a patch or a minor, as above. So does a
 board outside the project's repo, since git can't list its deleted epics.
+Whatever `next` names, `merge --release` checks a patch again at the merge ([The retro gate](#the-retro-gate)).
 
 Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
 minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or

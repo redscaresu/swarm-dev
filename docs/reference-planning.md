@@ -196,7 +196,8 @@ There are three exceptions.
 `escalate_after` ships on, at `2`, by the user's decision of 2026-10-13.
 It changes nothing until a story has failed twice.
 `codex_minutes` ships on, at `10`, because without a limit a codex review can hang for good.
-The retro gate in `merge --release` ([reference-merging.md § The retro gate](reference-merging.md#the-retro-gate)) ships on, by the 0.28 HLD's Goal 1: every project with `.claude-plugin/plugin.json` and a `v<version>` tag gets it once it upgrades.
+The retro gate in `merge --release` ([reference-merging.md § The retro gate](reference-merging.md#the-retro-gate)) ships on, by the 0.28 HLD's Goal 1: every project with `.claude-plugin/plugin.json` gets it once it upgrades.
+A project with no `v<version>` tag gets it too: each minor needs its retro file, and each patch is refused for the missing tag, even with a `Docs: none` line.
 
 A story's **Done when** names what the builder's session can show (a test run, a command's output, a file), never something only the conductor or a merge can show, so a goal's judge can see it.
 

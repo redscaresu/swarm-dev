@@ -664,7 +664,7 @@ Repeat until a step below says stop:
      first: list the behaviour changes since the tag (`git log v<version>..origin/<base>`), and unless docs
      merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference*.md, docs/method.md and
      commands/*.md as they apply, its prose run through the humanizer skill. It reaches the
-     base the way a fix does, through a `kind: code` story or a lead PR; stop there, and
+     base the way a fix does, through a `kind: code` story or a lead PR (for a patch, a `fix: true` story: `merge --release` refuses a patch with a change from a lead PR or any other story); stop there, and
      go back to 1 once it is on the base. Then make a worktree
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
      `.claude-plugin/plugin.json`, to `<new>`: the version `next`
@@ -684,7 +684,7 @@ Repeat until a step below says stop:
      which right after your push can still be the old one. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
-     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
+     green commit. For a patch, the fix must come from a `fix: true` story or a fix-main build, or the retro gate refuses the patch. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
      one you named: tell the user
      what it printed and stop. For swarm-dev's own repo, first ask the user whether to move the running agents onto
      v<new> once it merges; merge runs in the background with no terminal, so it cannot ask
