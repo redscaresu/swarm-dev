@@ -91,6 +91,7 @@ The stall rule skips those lines, because none is a sign of life.
   `make test` writes one when a test file runs past `TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`; a nested run, whose runs log is set empty, writes none.
   Both take the incidents' tail.
   `codex-review`'s `slug=` is `SWARM_STORY`, absent when that is unset, and its `role=` that of the agent running it.
+  Its own `codex-review` line carries the same `slug=` and `role=`, and `codex=`, how the run ended: `reviewed` (codex reviewed), `fallback`, `skipped` or `failed` (codex exited non-zero with no limit, timeout or unreachable output); flow's `reviewers` section reads it.
   `make test` writes `slug=<slug> role=builder` when the run's branch is `story/<slug>`, and neither on any other branch.
   Its `version=` is the one in the checkout's `.claude-plugin/plugin.json`, left out when that cannot be read.
   A command that finishes in time writes no `reap` line.
@@ -159,6 +160,7 @@ The outcome field can end in a tail of `key=value` fields, for example
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
 Callers can pass fields of their own, which come before `version=`:
 
+- `codex-review` passes `slug=`, `role=` and `codex=` on its own line.
 - `decline-only` passes `round=` and `verdict=`.
 - `first-green` passes `sha=`.
 - The incident lines above pass `slug=` and `role=`.
@@ -789,6 +791,24 @@ read from all its rows, whatever their date. For a merged PR, `pass` means the s
 that it fixed something. A PR that has not merged shows `unmerged`, since its review may still be
 going. `--epic` narrows both blocks as it does the others.
 
+The last block, `merged without codex`, is the list to re-review once codex is back after an outage. It
+is TSV `merged_without_codex pr merged rounds`, one row per story PR merged in the window (by its merge's
+local day) whose every `codex-review` run on its story ended without codex reviewing. The runs counted
+are those from the start of the PR's first build up to its merge, so when a retry opened a PR of its own,
+the first PR's runs do not count for it.
+The first column is the story's slug and `merged` the merge's day. `rounds` lists how each run ended, in
+order and separated by commas: `fallback` (the fallback reviewer reviewed in codex's place), `skipped`
+(nobody reviewed, after a limit, an unreachable codex or the timeout) or `failed` (codex exited non-zero
+for none of those). A PR with any run that codex reviewed is left out. It reads `codex-review`'s own
+`events.tsv` line, which says how the run ended (`codex=`, with `slug=`). A line written before that
+field existed counts only after a `codex-<story>` line on the same pane: a `reap` line `timed out after
+<N> min`, or a `codex-limit:` or `codex-unreachable` incident. The run is then `fallback` when the
+`codex-review` line is `ok`, else `skipped`; one that codex's rate-limit retry got through also reads as
+`fallback`. Older runs that codex reviewed name no story, so for those lines a PR is listed on the runs
+that failed. A PR whose merge time `gh` did not give is left out. The block reads only `events.tsv` and the
+merged PRs `outcomes` already fetched, so it makes no `gh` call of its own. With no such PR it prints its
+heading and `none`. `--epic` keeps that epic's PRs.
+
 The `review_loops` section shows what each review round cost and what it bought, so the stop and
 escalation rules can be tuned. It reads `events.tsv`, `findings.tsv` and `agents.tsv`, and calls no
 `gh`. Each build of a story (an `ok` `story` line, an `ok` `agent` line for a builder a conductor
@@ -1070,7 +1090,7 @@ The project's numbers, a section each:
 - `panes` (per review pane, the minutes from its story's merge or handover to its pane's close, or `open` with the minutes so far, then `over_30`, the panes past 30 minutes)
 - `predictions` (per planner model, the precision and recall of `easy` against `was_easy`, and how many lines its size estimates were off by, from `.swarm/dataset.jsonl`)
 - `review_loops` (per story PR, each review round's builder model, minutes, findings fixed and declined and step-up, how its loop ended, and totals for tuning the stop and escalation rules, among them the deferred findings, how many of those later proved real, and the share of PRs with four or more rounds)
-- `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them)
+- `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in, then the story PRs merged with no codex review, to re-review once codex is back; `--epic` counts only that epic's PRs and lists them)
 - `run_times` (per command, how many `status`, `next` and `dash` runs, their median and p90 seconds and the share over 60 seconds, from `.swarm/run-times.tsv`, then a by-load block with each command's runs and median per load band)
 - `start_failures` (per day, the review agents that did not start, how many of them an ok start of the same story followed within 10 minutes and how many it did not, then each one not restarted; then per day the starts tried once more in a fresh pane and how many that saved)
 - `tell_refusals` (tells and refused tells per pane kind, agent or other, and the state each refusal read, then the `could not reach` refusals per target)
