@@ -22,3 +22,7 @@ Needs from risky-effort-key: the `risky_effort` key, the only way to run code-ri
 - The hang-guard issue is filed and linked here.
 - The recorded figures are cohort-only, reconciled against the named story slugs, not a date window.
 - Each cohort story's first build's model and effort from agents.tsv is recorded; stories that did not start on opus high are reported apart.
+
+## The user's answer (2026-11-15)
+
+Step (1): (b), run the trial in the first build after v0.31.0 ships.
