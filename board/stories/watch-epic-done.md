@@ -2,7 +2,7 @@
 kind: code
 status: ready
 depends_on: []
-touches: [bin/lib/merge.sh:watch_command epic-done exit, tests/watch_test.sh:epic-done cases, docs/reference-building.md:watch paragraph (§ Building) epic-done sentence]
+touches: [bin/lib/merge.sh:watch_command epic-done exit, tests/watch_opened_test.sh:epic-done cases, docs/reference-building.md:watch paragraph (§ Building) epic-done sentence]
 estimate_lines: 80
 easy: true
 ---
@@ -22,7 +22,7 @@ review (only `kind: lead` stories, or none), and no story PR of the epic is open
 and a bare `watch` behave as today.
 
 **Done when:**
-- tests/watch_test.sh: a fixture epic whose last code story has merged (only a kind: lead story left,
+- tests/watch_opened_test.sh: a fixture epic whose last code story has merged (only a kind: lead story left,
   no open story PR) makes `watch --epic <slug>` print the epic-done line and exit 0 within one poll; with
   the change removed it keeps polling until the test's timeout (shown on a worktree copy, quoted in the
   PR)
