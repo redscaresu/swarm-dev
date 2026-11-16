@@ -33,7 +33,7 @@ The stall rule skips those lines, because none is a sign of life.
   A `merge --board` that lands an epic's Finish PR starts the same waiter for the epic's conductor, which logs `close-when-idle conduct-<epic>` the same way; its `left open:` also says when the lead had not yet tried collect's close.
 - `codex-review`: When `codex-review` retries codex after a rate limit, it writes a `codex-retry` line, not a second incident: target `codex-<story>` (`codex-<base>` with no `SWARM_STORY`), outcome `rate limit: retrying in <N> s`, and the same tail as its `codex-limit` incident ([§ Building](reference-building.md#building)).
 - `incident`: Something that went wrong is an `incident` line, its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts.
-  An incident on an agent (`api-error`, `model-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`, `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail.
+  An incident on an agent (`api-error`, `model-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`, `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`, `codex-unreachable`) ends in a `slug=<slug> role=<role>` tail.
   `role=` is the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there.
   `slug=` is the story the command was working on.
   Where the command knows only the agent's name, the slug comes from the name.
@@ -42,7 +42,7 @@ The stall rule skips those lines, because none is a sign of life.
   An agent name gets an `s` in front when its slug starts with a digit, so a builder named `s<digit>…` gets `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`.
   A `-done<N>` name reads as the name before it when it is under 32 characters.
   A longer one may hold a cut name, so it gets neither `slug=` nor `role=`.
-  `codex-limit` takes its slug from `SWARM_STORY` and its role from the agent running `codex-review`.
+  `codex-limit` and `codex-unreachable` take their slug from `SWARM_STORY` and their role from the agent running `codex-review`.
   The stall rule skips incident lines as it skips nudges and resumes.
 - `intervene`: `swarm.sh intervene <kind> <cause> "<one line>"` writes an incident with target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand` when the lead did by hand what a command should have, `user-caught` when the user found a problem first.
   The cause says why they stepped in.
@@ -943,7 +943,7 @@ run that could not write `events.tsv`.
 
 Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
-(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage or rate limit), `code-review`, `ci` (a
+(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage or rate limit, an unreachable codex or a timeout), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. A finding declined as `deferred` that a later round or fix finds real, and fixes, is logged the same way, against the PR it was deferred on, with its line copied exactly from the deferred row's text, so the two rows match. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, or one of the kinds `demote_kinds` lists held back before it, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
