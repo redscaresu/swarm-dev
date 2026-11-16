@@ -1034,9 +1034,7 @@ patch of the tag's line is below S. Every change since the tag came from a `fix:
 fix-main build (the test a bare `release` uses). Then the step is `release v<x.y.z+1> (patch)`, and
 what merged under an unstaged epic, or under no epic, goes out in it. A change that is no fix, or a
 read that fails, gives no release step. The `release-held:` line then ends `; no patch: <that
-change, or the failure>`.
-`merge --release` checks the patch again at the merge ([The retro gate](#the-retro-gate)).
-A merged story is
+change, or the failure>`. A merged story is
 one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
 `status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
 to the steps after it. An epic on the board whose `stage:` is not
