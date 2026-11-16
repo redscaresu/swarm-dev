@@ -2723,8 +2723,9 @@ release_parent() {
 # release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
-# that version is MAJOR.MINOR.PATCH and greater than the base's, with merge = human release_grant
-# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
+# that version is MAJOR.MINOR.PATCH and greater than the base's, the retro gate (release_retro) passes
+# under either merge setting, with merge = human release_grant finds HLDs that cover the release since
+# origin's tag (release_tag), and release_docs passes. It
 # fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched, which every check
 # reads (gh at that SHA, git at it), so a base that moves after the fetch reads as moved (release_moved).
 # It reads plugin.json at RELEASE_BASE and <head> through pr_contents, and says which: absent, or unreadable.
@@ -2753,16 +2754,49 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     || why="cannot read .claude-plugin/plugin.json as JSON"
   [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
   RELEASE_VERSION="$(plugin_version <<< "${new}")"
+  was="$(plugin_version <<< "${old}")"
+  # Before the grant, so under merge = human its refusal cannot hide this one. A patch's gate reads
+  # origin's tag (RELEASE_TAG), which the gates below share, so all compare against the same commit.
+  release_retro "$1" "$2" "${was}" "${RELEASE_VERSION}"
+  tag="${RELEASE_TAG}"
   body="$(gh pr view "$4" --repo "$1" --json body | json "d.get('body') or ''")" \
     || merge_fail "--release: gh cannot read the body of ${MERGE_TARGET}"
-  was="$(plugin_version <<< "${old}")" tag=""
   if [[ "${CFG_merge}" == human ]]; then
-    # Read once, so both gates compare against the same commit.
-    tag="$(release_tag "$2" "${was}" "")" || merge_fail "--release: ${tag}"
+    [[ -n "${tag}" ]] || { tag="$(release_tag "$2" "${was}" "")" || merge_fail "--release: ${tag}"; }
     why="$(release_grant "$1" "$2" "${was}" "${tag}")" || why="cannot tell which HLDs the stories merged since v${was} are under"
     [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET} waits on the user's merge (merge = human, and ${why})"
   fi
   release_docs "${body}" "$2" "${was}" "${tag}"
+}
+
+# release_retro <owner/repo> <base> <was> <new> — the retro gate, under either merge setting, reading git
+# at RELEASE_BASE alone. A minor (<new>'s major.minor above <was>'s) passes when retro_done finds a done
+# <board>/retros/v<new>.md there covering it, and reads no tag. A patch passes when origin's tag v<was>
+# (release_tag, by its SHA, never the local tag) is on the base and every change from it to RELEASE_BASE
+# is a fix (non_fix_change, through release_changes, read fresh, not from its cache). RELEASE_TAG is set
+# to that tag's commit for a patch, else empty. On a pass it prints one line, which merge's output keeps;
+# otherwise it refuses, naming the retro file, the change that is no fix or the read that failed. Every
+# refusal on a board outside the repo, where neither read can pass, says to merge the PR by hand.
+release_retro() {
+  local a b c d out err rc=0 hand=""
+  RELEASE_TAG=""
+  [[ ${BOARD_IN_REPO} == 1 ]] || hand="; merge it yourself if it may ship without a retro"
+  [[ "$3" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$4" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || merge_fail "--release: cannot tell whether v$4 is a minor or a patch of v$3, as they are not both digits x.y.z"
+  IFS=. read -r a b _ <<< "$3"; IFS=. read -r c d _ <<< "$4"
+  if (( 10#${a} != 10#${c} || 10#${b} != 10#${d} )); then
+    out="$(retro_done "${RELEASE_BASE}" "$4" "$3")" \
+      || merge_fail "--release: v$4 is a minor, and ${out}: run its retro first (swarm.sh next prints retro v$4)${hand}"
+    echo "retro gate: v$4 is a minor; $(board_rel)retros/v$4.md ${out}"
+    return 0
+  fi
+  RELEASE_TAG="$(release_tag "$2" "$3" "")" || merge_fail "--release: v$4 is a patch, but ${RELEASE_TAG}${hand}"
+  out="$(SWARM_GH_FRESH=1 release_changes "$1" "${RELEASE_TAG}" "${RELEASE_BASE}")" || rc=$?
+  err="${out##*$'\n'}"
+  [[ ${rc} == 0 ]] \
+    || merge_fail "--release: v$4 is a patch, but the fixes since v$3 cannot be read (${err#failed: })${hand}"
+  [[ -z "${out}" ]] || merge_fail "--release: v$4 is a patch, but ${out%%$'\n'*}: cut a minor after its retro${hand}"
+  echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true story or a fix-main build"
 }
 
 # release_grant <owner/repo> <base> <version> <tag> — why HLDs do not cover the release, or nothing

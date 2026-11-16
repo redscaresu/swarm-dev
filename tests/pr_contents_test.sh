@@ -162,9 +162,7 @@ rm -rf "${P}/docs/hld" "${P}/docs/epics"
 
 # --- release_check, through merge --release on a PR that bumps .claude-plugin/plugin.json from
 # 1.2.0 to 1.3.0: read at origin's main (${MAIN}) and at the head (${H1}).
-# The tag is a plain ref, so no tag.gpgSign in the machine's git config turns it into one that needs a message.
-git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; git -C "${P}" update-ref refs/tags/v1.2.0 HEAD
-git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+release_origin
 MAIN="$(git -C "${ROOT}/origin.git" rev-parse main)"
 J=.claude-plugin/plugin.json
 # bump [head version] — release_pr, plugin.json at main 1.2.0 and at the head [head version] (1.3.0).

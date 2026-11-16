@@ -14,9 +14,9 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
 
-# origin's default branch is main, tagged v1.2.0 (as merge_rules_test.sh sets it up for --release).
-git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; git -C "${P}" tag v1.2.0
-git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+# origin's default branch is main, tagged v1.2.0, with the retro file a 1.3.0 release needs (as
+# merge_rules_test.sh sets it up for --release).
+release_origin
 
 # --- merge_admin = on: --admin on the pinned merge, only once every check has passed.
 fresh "merge_admin = on"; merge "${URL}"

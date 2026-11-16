@@ -8,6 +8,10 @@
 # shellcheck disable=SC2034,SC2120 # the cases that source it use these variables, and pass fresh its config lines
 set -euo pipefail
 
+# The cases' tags are plain, or annotated and unsigned: a machine's tag.gpgSign or tag.forceSignAnnotated
+# would make `git tag` ask for a message, or run gpg.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=tag.gpgSign GIT_CONFIG_VALUE_0=false \
+  GIT_CONFIG_KEY_1=tag.forceSignAnnotated GIT_CONFIG_VALUE_1=false
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 REPO="$(dirname "${SWARM}")/.."
 P="${ROOT}/proj"; FX="${ROOT}/fx"; S="${P}/docs/stories/s.md"
@@ -88,9 +92,11 @@ case "$1 $2" in
                  *) cat "${FX}/repo" ;;
                esac ;;
   # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
-  "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
-             [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
-             cat "${FX}/prlist.${h}" 2>/dev/null || echo '[]' ;;
+  # With no --head (non_fix_change's one read of every merged PR): ${FX}/prlist, else none; with
+  # ${FX}/prlist.fail, a 5xx.
+  "pr list") f="${FX}/prlist"; prev=""; for a in "$@"; do [ "${prev}" != --head ] || f="${FX}/prlist.${a##*/}"; prev="${a}"; done
+             [ ! -e "${f}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+             cat "${f}" 2>/dev/null || echo '[]' ;;
   # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
   # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
   "run view") case "$*" in
@@ -313,6 +319,17 @@ refused() {
   is "$1: one merge line" 1 "$(merge_lines)"
 }
 
+# release_origin — origin's first commit, on main and tagged v1.2.0, holds a done docs/retros/v1.3.0.md
+# (covers v1.2.0..v1.3.0), so a 1.2.0 to 1.3.0 release passes merge --release's retro gate. origin's
+# default branch is main. The tag is a plain ref, so no tag.gpgSign in the machine's git config turns it
+# into one that needs a message.
+release_origin() {
+  mkdir -p "${P}/docs/retros"
+  printf -- '---\ncovers: v1.2.0..v1.3.0\ndone: 2026-11-01\n---\n\n# Retro: v1.3.0\n' > "${P}/docs/retros/v1.3.0.md"
+  git -C "${P}" add -f docs/retros/v1.3.0.md
+  git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m init; git -C "${P}" update-ref refs/tags/v1.2.0 HEAD
+  git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+}
 # release_pr — fresh, with no story s: a PR that changes only .claude-plugin/plugin.json's version, 1.2.0 to
 # 1.3.0, its merge commit's first parent origin's main.
 release_pr() {
