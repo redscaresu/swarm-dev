@@ -19,3 +19,5 @@ lead merges. **You:** none.
 **Done when:**
 - `swarm.sh config merge_admin` in infrafactory prints `on`.
 - The next infrafactory conductor run merges a PR itself (its report is quoted here), which also completes merge-agent-for-infrafactory's last item.
+
+**Re-dated at the v0.31.0 retro (2026-11-17, the user's decision):** stays `later` until infrafactory's swarm resumes; start it again then.
