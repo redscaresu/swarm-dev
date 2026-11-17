@@ -594,6 +594,18 @@ story's new PR has a new head, so it is reported. Watches that run at once share
 lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
 be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
 The lead's bare `watch` never prints it.
+A conductor's `watch --epic <slug>`, with no repos named, also returns `epic-done: <slug> has no agent work left`, exit 0, on a poll where the epic has no agent work left and no PR of the epic's stories is open.
+No agent work left is the rule the `finish:` line on a merge or handover note uses ([reference-merging.md § Merging](reference-merging.md#merging)), so a `kind: lead` story left does not hold it.
+A poll whose PR list failed for any repo cannot tell, so the watch polls on.
+Before it prints the line, it lists each repo again past the poll cache, since a shared list can be a poll old and no later poll would see a PR opened since.
+That second list also takes in the repos the epic's stories name at that moment, so a story added in another repo after the watch started is checked too.
+It reads those repos from the story files alone, since the epic's last story PR deletes the epic file.
+Each such repo is resolved once per watch, with one `gh repo view`.
+When that resolve or the second list fails, the watch says so once on stderr, until the read next succeeds, and polls on.
+A watch given repos sees only those, so it never prints the line.
+The conductor then writes its report.
+Without it, two conductors sat busy for hours on 2026-11-16 after their epic's last PR merged (15h28m after #968, 13h36m after #974), and `next` printed `wait conduct-<epic>` ahead of every later step until the lead killed each watch.
+`watch --backlog` and the bare `watch` never print it.
 It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued.
 A poll that reports one PR reads nothing past it.
 A failed read counts as `UNKNOWN` for that poll and is said on stderr.
