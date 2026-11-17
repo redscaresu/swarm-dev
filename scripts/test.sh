@@ -86,20 +86,27 @@ if [[ "${1:-}" == --one ]]; then
   pid=$!
   set +m
   echo "${pid}" > "${run}/jobs/$$"
-  # The watchdog sleeps the limit; it signals and writes the marker only if this job (a KILLed job
-  # would leave a PGID that may be reused) and the group are still there then.
+  # The watchdog sleeps the limit a second at a time; it signals and writes the marker only if this
+  # job (a KILLed job would leave a PGID that may be reused) and the group are still there then. The
+  # job TERMs it once the test ends, but bash drops a TERM that reaches a subshell before its trap is
+  # set, and a quick test ends that soon: so each second it also stops once <log>.ended, which the job
+  # writes first, is there, or the job has gone.
   (
-    sp=""
+    sp="" i=0
     trap '[[ -z "${sp}" ]] || kill "${sp}" 2>/dev/null; exit 0' TERM
-    sleep "${limit}" & sp=$!
-    wait "${sp}"; sp=""
-    kill -0 "$$" 2>/dev/null && kill -0 -- "-${pid}" 2>/dev/null || exit 0
+    for ((i = limit; i > 0; i--)); do
+      sleep 1 & sp=$!
+      wait "${sp}"; sp=""
+      kill -0 "$$" 2>/dev/null && [[ ! -e "${log}.ended" ]] || exit 0
+    done
+    kill -0 -- "-${pid}" 2>/dev/null || exit 0
     : > "${log}.timeout"
     stop_group "${pid}" 2
   ) > /dev/null 2>&1 &
   wd=$!
   wait "${pid}" || rc=$?
   elapsed=$((SECONDS - t0))
+  : > "${log}.ended"
   kill "${wd}" 2>/dev/null; wait "${wd}" 2>/dev/null; wd=""   # reaped, so no later kill can hit a recycled PID
   stop_group "${pid}" 2
   # What the test left in the pane's project: anything but the config it started with.

@@ -6,7 +6,8 @@
 # beside the run's test-runs.tsv (TEST_RUNS_LOG here), and a file that finishes, or a run with
 # TEST_RUNS_LOG set empty, adds none. A run on branch story/<slug> ends the reap line's outcome in
 # slug=<slug> role=builder; a run on any other branch has neither. Both end in version=, the checkout's
-# .claude-plugin/plugin.json version.
+# .claude-plugin/plugin.json version. A quick file's job ends at once even when its watchdog never
+# gets the TERM the job sends it.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -126,6 +127,14 @@ out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/quick_test.sh
 check "a file inside the limit passes" "${rc}" 0
 check "a file inside the limit wrote no reap line" "$(wc -l < "${EVENTS}" | tr -d ' ')" "${before}"
 check "it says ok, not TIMEOUT" "$(grep -c '^ok ' <<< "${out}")/$(grep -c TIMEOUT <<< "${out}" || true)" "1/0"
+
+# Bash drops a TERM that reaches a subshell before its trap is set, and a quick file's job TERMs its
+# watchdog that soon. A run with TERM ignored from its start, which no trap can take back, is that
+# case every time: the job still ends at once, not when the watchdog's limit runs out.
+t0=${SECONDS}
+out="$(trap '' TERM; TEST_FILE_TIMEOUT=30 bash "${REPO}/scripts/test.sh" "${ROOT}/quick_test.sh" 2>&1)" && rc=0 || rc=$?
+check "a quick file whose watchdog misses the job's TERM passes within 10 seconds, not at the 30 s limit" \
+  "${rc}/$([[ $((SECONDS - t0)) -lt 10 ]] && echo yes)" "0/yes"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
