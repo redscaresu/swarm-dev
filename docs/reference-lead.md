@@ -172,6 +172,7 @@ The PR heads are read with gh only on a run's first read and then at most once e
 `.swarm/lead/heads`, the open story PRs to `.swarm/lead/prs` and each base's CI to `.swarm/lead/bases` (both below). The polls in between read only those files and make no gh call. A PR in review
 therefore wakes the lead up to 5 minutes after its head turns green.
 Green there is what `swarm.sh wait-pr` waits for: every check is green, and so is each workflow that a `pull_request` into the base runs for the PR's files, so a head where such a workflow has no run yet is not green and wakes no one.
+Reading one head's CI there, with all its gh reads, is cut off after 30 seconds (`SWARM_LEAD_PRS_WAIT`), so a read that hangs cannot stall the poll; a head whose read was cut off or failed counts as unread, never red.
 A story that enters review
 waits for the next read of the heads. So does one that leaves review and comes back: a poll that
 finds a story out of review drops its result from that file.

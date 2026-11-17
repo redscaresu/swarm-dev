@@ -637,8 +637,8 @@ merge_base_update() {
 # head, base, url and lock: while base_moved finds code on the base that head lacks, merge_base_update
 # has GitHub merge the base in, head becomes the new head, and base_wait waits for its green. Then
 # base_pr_now reads the PR again and base_moved runs again, right before gh pr merge. A head an earlier
-# merge run made this way (base_merged) gets the same wait first, not only merge_pr's plain head check,
-# which reads no expected workflow. A base that has moved again after MERGE_BASE_ROUNDS rounds refuses,
+# merge run made this way (base_merged) gets the same wait first, after merge_pr's own check on the head,
+# which has read its expected workflows as wait-pr does. A base that has moved again after MERGE_BASE_ROUNDS rounds refuses,
 # naming them. It returns with head the one to merge, or with BASE_LANDED set when the PR merged
 # elsewhere meanwhile.
 base_rounds() {

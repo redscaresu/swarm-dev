@@ -2735,7 +2735,9 @@ lead_label() {
 # skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
 # goes to LEAD_GREEN.new. ci_gate head gets the PR's base, number and changed file count, as wait-pr
 # passes them, so a workflow its pull_request runs with no run on the head yet is pending, not green; a
-# PR whose base or count gh did not give is unread. A red or pending head is read again each time: a
+# PR whose base or count gh did not give is unread. ci_gate head runs within LEAD_PRS_WAIT seconds, all its
+# gh reads together, so a read that hangs cannot stall the poll; one cut short there is unread, never red,
+# as is one whose read failed (3). A red or pending head is read again each time: a
 # re-run can turn it green with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it
 # stopped at, else empty. A head LEAD_KNOWN holds is taken from it, with its base and count, not read again.
 heads_green() {
@@ -2753,8 +2755,10 @@ heads_green() {
       LEAD_CACHED=1
     else
       [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] || { rc=2; continue; }
-      g=0; ci_gate head "${repo}" "${head}" "${base}" "${n}" "${changed}" >/dev/null 2>&1 || g=$?
-      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || { LEAD_RED="${url} ${head}"; return 1; }; rc=2; continue; }
+      g=0; within "${LEAD_PRS_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" "${base}" "${n}" "${changed}" \
+        </dev/null >/dev/null 2>&1 || g=$?
+      # A read that failed (3) or was cut off (within's 142) is no answer: unread, never red.
+      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 || ${g} -eq 142 ]] || { LEAD_RED="${url} ${head}"; return 1; }; rc=2; continue; }
     fi
     echo "${url} ${head}" >> "${LEAD_GREEN}.new"
   done
@@ -2985,7 +2989,7 @@ lead_heads() {
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
 LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
-LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of the heads pass (open_story_prs, pr_head) may take before it counts as failed
+LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of the heads pass (open_story_prs, pr_head), or heads_green's ci_gate head with all its reads, may take before it counts as failed
 LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's or a base's read fails before wait --lead warns
 LEAD_REPOS=""                         # "<name> <owner/repo>" per repo this run resolved, so each costs one gh repo view a run
 LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row that could not read the repo's open PRs

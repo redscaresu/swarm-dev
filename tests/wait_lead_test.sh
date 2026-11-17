@@ -42,7 +42,8 @@ git -C "${P}" init -q
 # pr view's --jq filter (the heads pass's read) runs over the head, state OPEN, base main and 1 file changed.
 # For the workflows a pull_request runs (ci_gate head with those): no merge ref yet (a 422), so they are
 # read at the head, where .github/workflows lists the files in ${FX}/wf (a 404 without that folder), none
-# disabled, and the PR changes bin/x. A commit's workflow runs are ${FX}/runs, else none.
+# disabled, and the PR changes bin/x. A commit's workflow runs are ${FX}/runs, else none. With
+# ${FX}/wf.hang, each read of a workflow file first sleeps two minutes.
 printf '#!/bin/sh\nFX="%s"; LOG="%s"\n' "${FX}" "${ROOT}/gh.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
@@ -76,7 +77,7 @@ case "$1 $2" in
                                                printf '['; s=""
                                                for f in "${FX}"/wf/*; do printf '%s{"type":"file","name":"%s","path":".github/workflows/%s"}' "${s}" "${f##*/}" "${f##*/}"; s=,; done
                                                echo ']' ;;
-          */contents/.github/workflows/*) f="${path##*/}"; cat "${FX}/wf/${f%%\?*}" ;;
+          */contents/.github/workflows/*) [ ! -e "${FX}/wf.hang" ] || sleep 120; f="${path##*/}"; cat "${FX}/wf/${f%%\?*}" ;;
           *"actions/workflows?"*) echo '{"total_count":0,"workflows":[]}' ;;
           */commits/*) echo '{"files":[{"filename":"bin/x"}],"parents":[]}' ;;
           */compare/main...*) echo '{"files":[{"filename":"bin/x","status":"modified"}]}' ;;
@@ -152,7 +153,7 @@ fix_stop() {
 # fresh [config line]... — a board with one held story, h, and nothing else; no events, no earlier run.
 fresh() {
   stop; fix_stop; rm -f "${FX:?}/ps"
-  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks "${FX}/runs"; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log "${FX}/wf"
+  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks "${FX}/runs" "${FX}/wf.hang"; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log "${FX}/wf"
   again
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo "${H}" > "${FX}/head"; checks success
@@ -394,6 +395,20 @@ check "the heads pass does not count that head green" grep -qxF "red merge: r ${
 printf '{"total_count":1,"workflow_runs":[{"id":1,"name":"pr","path":".github/workflows/pr.yml","event":"pull_request","head_sha":"%s","status":"completed","conclusion":"success"}]}\n' "${H}" > "${FX}/runs"
 check "once that workflow's pull_request run on the head is green, it wakes" returned 25
 check "it prints merge: <slug> <PR URL>, once that run is green" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+
+# A workflow read that hangs: heads_green's ci_gate head runs within SWARM_LEAD_PRS_WAIT, as pr_head's
+# read does, and a read cut off there is unread, never red, so it wakes no one and the next poll comes.
+# The limit is 10 s, so pr_head's own read gets its answer, and the hang 120 s. If the call loses its
+# bound, the first heads pass waits out the hang: start gives up on it after 60 s, and no verdict is written.
+fresh "merge = human"; mkdir -p "${FX}/wf"; printf 'name: pr\non: pull_request\n' > "${FX}/wf/pr.yml"; touch "${FX}/wf.hang"
+item r "kind: code" "status: review" "prs: ${URL}"
+t0=${SECONDS}; start SWARM_LEAD_PRS_WAIT=10 120000
+check "a workflow read that hangs: the first heads pass ends at the limit, not after the hang" test $((SECONDS - t0)) -lt 50
+check "a workflow read that hangs: ci_gate reached the workflow file's read" grep -q 'contents/.github/workflows/pr.yml' "${ROOT}/gh.log"
+check "a workflow read that hangs: the heads verdict is unread, not red" grep -qxF "unread merge: r ${URL}" "${P}/.swarm/lead/heads"
+check "a workflow read that hangs: the next poll reads the head again" polls 2
+check "a workflow read that hangs: it does not wake it" nothing_yet
+stop
 
 # Each gh pr view takes 1.3 s, longer than the 1 s between polls: the cases below wait for reads (start,
 # polls), not for time.
