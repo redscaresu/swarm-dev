@@ -132,6 +132,7 @@ Useful while it runs:
   (in any session, the lead's too), and, for an agent, `git checkout`, `switch`, `restore`,
   `reset --hard`, `stash` or `clean` in the main checkout, `pkill`, `killall` and `gh pr checks`
   loops (reference-merging.md § Merging).
+  It also refuses an agent's `make test` with no `TESTS=` where the checkout has `scripts/select-tests.sh`.
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
 - One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
@@ -192,6 +193,7 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
                                             # it never runs the full suite: it names each changed file that would select every test,
                                             # which CI's full run covers, and runs the tests for the rest
 # make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
+                                            # the guard refuses it in an agent's session; an agent names TESTS= or runs select-tests.sh --run
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
                                             # if its swarm.sh reaches it; an unpinned swarm.sh call stops there; dash starts no detached refresh

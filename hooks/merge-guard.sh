@@ -17,6 +17,8 @@
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
 # process, or a group): either can hit another session's process. So is its gh pr checks --watch, or a
 # gh pr checks in a while/until loop's condition or body (not a while read loop): swarm.sh wait-pr exits on red, a conflict and a deadline.
+# So is its make test (or make -C <dir> test) with no TESTS=, where make runs in a checkout with
+# scripts/select-tests.sh: select-tests.sh --run runs the tests a change maps to, and CI's sharded run is the full suite.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv, with slug= and role= for an agent's call and version= the plugin's, unless the
 # project is the checkout the tests run from (SWARM_FORBID_PROJECT). Outside a swarm project it allows all.
@@ -28,17 +30,18 @@ input="$(cat)"
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 [[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"   # loose-match: ok re is a fixed regex
-# Fast path: a command that never says merge, nor git, cd or a kill as a word, nor both gh and checks, not even through quotes and
+# Fast path: a command that never says merge, nor git, cd or a kill as a word, nor both gh and checks or make and test, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
 word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
 gh='(^|[^[:alnum:]_])gh([^[:alnum:]_]|$)'; checks='(^|[^[:alnum:]_])checks([^[:alnum:]_]|$)'
+make='(^|[^[:alnum:]_])g?make([^[:alnum:]_]|$)'; test='(^|[^[:alnum:]_])test([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
-elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]]; then says=other   # loose-match: ok word, gh and checks are fixed regexes
+elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]] || [[ ${plain} =~ ${make} && ${plain} =~ ${test} ]]; then says=other   # loose-match: ok word, gh, checks, make and test are fixed regexes
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
-# only says git, cd, a kill or gh and checks fails open, since those rules save work rather than enforce the merge route.
+# only says git, cd, a kill, gh and checks or make and test fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -63,6 +66,14 @@ LOOPS = {"while", "until"}  # loops that poll their condition; for and select op
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
 PATTERN_KILLS = {"pkill", "killall"}
 BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs found by a pattern
+MAKES = {"make", "gmake"}
+WRAPPERS = {"env", "exec", "nohup", "time", "timeout"}  # commands that run the command after their options
+WRAPPER_VALUES = {"-a", "-u", "--unset", "-S", "--split-string", "-k", "--kill-after", "-s", "--signal"}  # options with a value
+WRAPPER_DIRS = {"-C", "--chdir"}  # env's options whose value is the folder the command runs in
+DURATION = re.compile(r"\d+(\.\d+)?[smhd]?")  # timeout's duration, before its command
+MAKE_DIRS = {"-C", "--directory"}  # make options whose value is the folder it runs in
+MAKE_VALUES = MAKE_DIRS | {"-f", "--file", "--makefile", "-I", "--include-dir", "-o", "--old-file", "-W", "--what-if"}
+SELECT_TESTS = os.path.join("scripts", "select-tests.sh")  # a checkout that has it runs a change's tests with --run
 UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}  # git status codes of a conflict, which --ours/--theirs resolves
 DROPS = {"restore", "clean"}  # git subcommands that, with reset --hard, can drop work in the main checkout
 SHOWN = 5  # paths a refusal names before "and N more"
@@ -306,8 +317,8 @@ def check_code(b, rest, fed):
 def guard(code, cwd):
     """Raise Unsafe on a command that can lose work: a cd before ;, git checkout over a file with
     uncommitted changes, git reset --hard, restore or clean dropping work in a swarm project's main
-    checkout and, in a swarm agent's session, git moving or resetting the main checkout and a kill
-    by pattern or a CI wait of its own."""
+    checkout and, in a swarm agent's session, git moving or resetting the main checkout, a kill
+    by pattern, a CI wait of its own and a make test of the whole suite."""
     home = cwd if os.environ.get("SWARM_AGENT") else None
     sh = Shell(code.strip())
     sh.parse()
@@ -336,6 +347,50 @@ def guard(code, cwd):
             raise Unsafe("pattern-kill", "A kill by name, of PID 0 or of a negative PID can hit another session's process: kill the PID you started ($!)")
         elif home and inner and os.path.basename(inner[0]) == "gh" and gh_words(inner[1:])[:2] == ["pr", "checks"] and (LOOPS & set(loops) or any(w.startswith("--watch") for w in inner)):
             raise Unsafe("gh pr checks loop", "Wait on CI with `swarm.sh wait-pr <PR URL>` in the background: it exits on red, on a conflict and at a deadline")
+        elif home and runs_suite(d, cmd["words"]):
+            raise Unsafe("make test with no TESTS", "It runs the whole suite, for an hour or more: run `scripts/select-tests.sh --run` for the tests your change maps to, or `make test TESTS=<files>`. CI's sharded run is the full suite")
+
+
+def runs_suite(d, words):
+    """Whether words, one simple command run from d, run make's test target with no TESTS= (or an
+    empty one; the last one counts) where make runs in a checkout with SELECT_TESTS. It reads past
+    assignments before make, and past WRAPPERS with their options and values (env -u X, timeout -k
+    10 600) to the command they run. It follows env's -C and --chdir, and make's -C and --directory.
+    False when that folder cannot be told."""
+    k = next((j for j, w in enumerate(words) if not (ASSIGNMENT.match(w) or w in LEADS)), len(words))
+    while k < len(words) and os.path.basename(words[k]) in WRAPPERS:
+        b, k = os.path.basename(words[k]), k + 1
+        while k < len(words):
+            w, name, eq, value = words[k], *words[k].partition("=")
+            if w in WRAPPER_DIRS and k + 1 < len(words):
+                d, k = at(d, words[k + 1]), k + 2
+            elif name in WRAPPER_DIRS and eq:
+                d, k = at(d, value), k + 1
+            elif w in WRAPPER_VALUES:
+                k += 2
+            elif w.startswith("-") or ASSIGNMENT.match(w) or (b == "timeout" and DURATION.fullmatch(w)):
+                k += 1
+            else:
+                break
+    if k >= len(words) or os.path.basename(words[k]) not in MAKES:
+        return False
+    value, targets, k = "", [], k + 1
+    for w in words[:k - 1]:
+        value = w[len("TESTS="):] if w.startswith("TESTS=") else value
+    while k < len(words):
+        w, k = words[k], k + 1
+        name, eq, attached = w.partition("=")
+        if w.startswith("TESTS="):
+            value = attached
+        elif w in MAKE_VALUES and k < len(words):
+            d, k = (at(d, words[k]) if w in MAKE_DIRS else d), k + 1
+        elif w.startswith("--") and eq and name in MAKE_DIRS:
+            d = at(d, attached)
+        elif w.startswith("-C") and len(w) > 2:
+            d = at(d, w[2:])
+        elif not (w.startswith("-") or ASSIGNMENT.match(w)):
+            targets.append(w)
+    return "test" in targets and not value and d is not None and os.path.isfile(os.path.join(d, SELECT_TESTS))
 
 
 def kills_others(words):
