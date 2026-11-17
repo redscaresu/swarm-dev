@@ -29,7 +29,7 @@ case "$1 $2" in
   "repo view") echo o/svc; exit 0 ;;
 esac
 case "$2 $3" in
-  "--paginate repos/o/svc/pulls?"*) out="$(jq -r "$q" "$F/prlist.json")"; printf '%s\n' "${out}"; exit 0 ;;
+  "--paginate repos/o/svc/pulls?"*) out="$(jq -r "$q" "$F/prlist.json")" || exit 1; printf '%s\n' "${out}"; exit 0 ;;
 esac
 case "$2" in
   repos/o/svc/pulls/*) echo MERGEABLE ;;
@@ -159,6 +159,45 @@ check "the bare watch logs no pr-opened line" "${logged}" "$(opened_events)"
 mv "${EV}" "${ROOT}/events.keep"; mkdir "${EV}"
 check "watch --epic with events.tsv unwritable says the PR opened and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
 rmdir "${EV}"; mv "${ROOT}/events.keep" "${EV}"
+
+# An epic with no agent work left: its code story y is done, and only a lead story, x, is left, with no
+# PR of the epic open. Its watch says so on its first poll and exits 0, so its conductor reports (two
+# conductors sat busy for hours on 2026-11-16 because their watch never returned after the last merge).
+printf -- '---\nstatus: active\n---\n' > "${p}/docs/epics/fin.md"
+printf -- '---\nstatus: done\nkind: code\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/y.md"
+printf -- '---\nstatus: ready\nkind: lead\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/x.md"
+prs
+check "watch --epic of an epic with only a lead story left says epic-done and exits 0" \
+  "epic-done: fin has no agent work left|0" "$(watch_for --epic fin)"
+# One cached list for the poll, then one past the cache before the line: two lists, one poll.
+check "watch --epic says epic-done on its first poll, after listing again" "2" "$(grep -c 'pulls?state=open' "${ROOT}/calls" || true)"
+# A watch given repos sees only those, so it cannot tell the epic has no PR open elsewhere.
+check "watch --epic given a repo never says epic-done" "|polling" "$(watch_for --epic fin svc)"
+# A code story of the epic still ready, blocked on an agent's story, or in review with its PR open is
+# agent work: the watch polls on. z's PR (#4) is recorded opened, so the watch has nothing to say of it.
+for st in ready blocked; do
+  printf -- '---\nstatus: %s\nkind: code\nepic: fin\nrepo: svc\ndepends_on: [a]\n---\n' "${st}" > "${p}/docs/stories/z.md"
+  check "watch --epic polls on while a code story of the epic is ${st}" "|polling" "$(watch_for --epic fin)"
+done
+printf -- '---\nstatus: review\nkind: code\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/z.md"
+prs story/z; echo "opened o/svc#4" >> "${seen}"
+check "watch --epic polls on while a code story of the epic is in review with its PR open" "|polling" "$(watch_for --epic fin)"
+# The open PR alone holds it: z left in review with no PR open is the user's, and the epic is done.
+prs
+check "watch --epic says epic-done once the review story's PR is no longer open" \
+  "epic-done: fin has no agent work left|0" "$(watch_for --epic fin)"
+# A list that fails cannot tell whether a PR of the epic is open: the watch polls on, saying the failure.
+mv "${ROOT}/prlist.json" "${ROOT}/prlist.keep"
+got="$(watch_for --epic fin)"
+check "watch --epic polls on when the PR list fails" "polling" "${got##*|}"
+mv "${ROOT}/prlist.keep" "${ROOT}/prlist.json"
+rm -f "${p}/docs/stories/z.md"
+# Only an epic's watch says it: with the backlog's and the lead's watches nothing is left of their own
+# that would hold them, yet they poll on. c's PR (#3) is recorded opened, so the backlog's watch has
+# nothing to say of it (the bare watch's check above dropped watch-seen).
+echo "opened o/svc#3" >> "${seen}"
+check "watch --backlog never says epic-done" "|polling" "$(watch_for --backlog)"
+check "the bare watch never says epic-done" "|polling" "$(watch_for)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} check(s) failed"; exit 1; fi
 echo "all passed"

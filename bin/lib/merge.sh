@@ -3064,8 +3064,16 @@ queued_sent() {
 # shared read can be up to that old, so a change can take a poll longer to be seen. The mergeable read
 # (watch_mergeable) is never shared: it is keyed by PR number, not head, and a kept MERGEABLE would hide
 # a new conflict.
+# A conductor's `watch --epic <slug>`, with no repos named, prints `epic-done: <slug> has no agent work
+# left` and exits 0 on a poll that lists every repo, finds no open PR of the epic's stories
+# (epic_pr) and no agent work left in the epic (agent_work_left, the rule of conductor_note's finish:
+# line), and finds no such PR again on an uncached list (epic_unlisted), so the conductor writes its
+# report: a watch that outlived its epic's last merge kept the conductor busy, and next waiting on it,
+# for hours. A poll whose list failed for any repo cannot tell, so it polls on; a watch given repos
+# sees only those, so it never says it.
 watch_prs() {
-  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE epic="" listed epic_open
+  [[ "${1:-}" != --epic || $# -ne 2 ]] || epic="$2"
   watch_scope "$@"; watch_repos die
   WATCH_SHARE="$(watch_share)"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
@@ -3084,9 +3092,10 @@ watch_prs() {
   # failed, said once until it next succeeds. unread: the PRs whose check-runs read failed, likewise.
   local warned unlisted=" " rows runs why unread=" "
   while :; do
-    warned=""
+    warned=""; listed=1; epic_open=""
     for repo in "${repos[@]}"; do
       if ! rows="$(watch_rows "${repo}")"; then
+        listed=""
         if [[ "${unlisted}" != *" ${repo} "* ]]; then
           echo "swarm: watch: gh cannot list ${repo}'s open PRs: ${rows##*$'\n'}" >&2; unlisted+="${repo} "
         fi
@@ -3095,6 +3104,7 @@ watch_prs() {
       unlisted="${unlisted// ${repo} / }"
       while read -r n sha br age; do
         [[ -n "${n}" ]] || continue
+        [[ -z "${epic}" ]] || ! epic_pr "${epic}" "${heads}" "${br}" || epic_open=1
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
         # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
         # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
@@ -3183,7 +3193,42 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
+    if [[ -n "${epic}" && -n "${listed}" && -z "${epic_open}" ]] && ! agent_work_left "${epic}" \
+      && epic_unlisted "${epic}" "${heads}" "${repos[@]}"; then
+      echo "epic-done: ${epic} has no agent work left"; return 0
+    fi
     nap "${WATCH_POLL}"
+  done
+}
+
+# epic_pr <epic> <heads> <branch> — true when <branch> is a PR of <epic>'s stories: story/<slug> for a
+# story in watch's heads, or one whose story file names <epic> now (a story added after the watch
+# started). A fix-main story's PR is in every conductor's scope but is no epic's.
+epic_pr() {
+  [[ "$3" != story/fix-main-* ]] || return 1
+  [[ " $2 " == *" $3 "* ]] || [[ "$(fm "${BOARD}/stories/${3#story/}.md" epic)" == "$1" ]]
+}
+
+# epic_unlisted <epic> <heads> <owner/repo>... — true when an uncached list of each repo (watch_rows with
+# WATCH_SHARE off) succeeds and shows no open PR of <epic>'s stories (epic_pr): a shared list can be up
+# to a poll old, and epic-done ends the watch, so no later poll would see a PR opened since. The repos
+# are the given ones and those the epic's stories name now (watch_scope), so a story added in another
+# repo since the watch started is listed too; a repo that cannot be resolved fails it. watch_scope runs
+# in a subshell, as it dies when the epic's stories name no repo: the given repos are then all there is.
+epic_unlisted() {
+  local e="$1" h="$2" r rows n sha br age name names
+  shift 2
+  local listing=("$@")
+  names="$(watch_scope --epic "${e}" 2>/dev/null && echo "${WATCH_NAMES[*]}")" || names=""
+  for name in ${names}; do
+    r="$(repo_slug "${name}" 2>/dev/null)" || return 1
+    [[ " ${listing[*]} " == *" ${r} "* ]] || listing+=("${r}")
+  done
+  for r in "${listing[@]}"; do
+    rows="$(WATCH_SHARE=0 watch_rows "${r}")" || return 1
+    while read -r n sha br age; do
+      [[ -z "${n}" ]] || ! epic_pr "${e}" "${h}" "${br}" || return 1
+    done <<< "${rows}"
   done
 }
 
