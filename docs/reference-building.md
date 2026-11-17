@@ -823,7 +823,7 @@ is doing.
 
 **Review before closing.** A PR that changes only board files (no code) gets one
 `swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed
-codex and, on its first round when it changes code, the `/code-review` skill. When `watch` says a
+codex. When `watch` says a
 story's PR opened (`<repo> #<n> story/<slug> opened`), the conductor starts a review agent for it,
 once, with `swarm.sh review-agent <slug> <PR URL>`. It starts one for every PR that opens, without
 waiting for other PRs or reviews, so PRs that land together are reviewed together. It starts one the
@@ -878,8 +878,7 @@ check) is run once more, since a GitHub or fetch error can clear. On a second, t
 builder with the line and stops with no pass: its review file holds `head:`,
 `dropped-lines unchecked: <the line>` and a `stopped:` line, and the stop note goes to the conductor. It
 runs `codex-review` with `SWARM_STORY=<slug>` and `SWARM_PR=<PR URL>`, so codex also sees the
-findings declined on this PR in earlier rounds, and, on the story's first round when the PR changes
-code, `/code-review <PR URL>`. From round 2 on it runs codex alone. It runs no tests of its own
+findings declined on this PR in earlier rounds. It runs codex alone on every round, with no `/code-review`. It runs no tests of its own
 and trusts CI, unless `review_verify = full`: then round 1 may also run the project's tests for the
 changed files and check the builder's mutation proofs, and later rounds still trust CI (reference-models.md
 § Settings). `review-agent` counts the round
@@ -1200,7 +1199,7 @@ fallback's review. When it ends on codex's usage or rate limit or on `codex skip
 builder carries on, a story's review agent or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. When codex could not
 reach its provider, it says `codex skipped: unreachable`. A review agent says `codex skipped: <why>` in
-its reply and on its review file's second line, and in a round with no `/code-review` it reads the
+its reply and on its review file's second line, and reads the
 diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
 700, so no other user can make or read it first), removed when it exits. Once codex exits,

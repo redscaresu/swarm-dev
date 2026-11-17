@@ -177,9 +177,9 @@ check "review-agent s1 starts review-s1 in s1's worktree, with review's model an
   "$(has "tab create --workspace w --cwd ${ROOT}/svc-wt/s1 --label e" "$(cat "${ROOT}/herdr.log")")|$(has "agent start review-s1 " "$(cat "${ROOT}/herdr.log")")|$(has "review-s1 w:1 claude:opus:high" "${out}")"
 check "agents.tsv records review-s1 with role review" "review" "$(awk -F'\t' '$3 == "review-s1" { print $2 }' "${p}/.swarm/agents.tsv")"
 brief="$(cat "${p}/.swarm/briefs/review-s1.md")"
-check "the brief holds s1's touches, each Done when item, SWARM_STORY=s1, /code-review <PR>, not a finding and the absolute reviews file" \
-  "yes|yes|yes|yes|yes|yes|yes" \
-  "$(has "bin/s1.sh:fn_s1" "${brief}")|$(has "- s1 DONE-ONE holds" "${brief}")|$(has "- s1 DONE-TWO holds" "${brief}")|$(has "SWARM_STORY=s1 " "${brief}")|$(has "/code-review ${PR}" "${brief}")|$(has "not a finding" "${brief}")|$(has "${p}/.swarm/reviews/s1.md" "${brief}")"
+check "the brief holds s1's touches, each Done when item, SWARM_STORY=s1, no /code-review, not a finding and the absolute reviews file" \
+  "yes|yes|yes|yes|no|yes|yes" \
+  "$(has "bin/s1.sh:fn_s1" "${brief}")|$(has "- s1 DONE-ONE holds" "${brief}")|$(has "- s1 DONE-TWO holds" "${brief}")|$(has "SWARM_STORY=s1 " "${brief}")|$(grep -qF "/code-review" <<< "${brief}" && echo yes || echo no)|$(has "not a finding" "${brief}")|$(has "${p}/.swarm/reviews/s1.md" "${brief}")"
 check "the brief names the head it reviews, lists out-of-scope points apart, and carries the project's brief" "yes|yes|yes" \
   "$(has "at its head ${HEAD_SHA}" "${brief}")|$(has '## Out of scope' "${brief}")|$(has "A PROJECT RULE every agent reads." "${brief}")"
 check "the brief has the agent write the file, starting with the head reviewed and any codex skip, and the reviews directory exists" "yes|yes|yes" \
@@ -192,7 +192,7 @@ flat="$(tr -s '[:space:]' ' ' <<< "${brief}")"; sw="SWARM_PROJECT=${p} ${SWARM}"
 # The follow the brief gives at each place the PR's head moves under a round (follow_moved).
 FOLLOW="run the green step above on the new head, waiting with \`${sw} wait-pr --head <that head, from git rev-parse HEAD> ${PR}\`, then run \`${sw} review-agent --next s1 ${PR}\` and do the round it prints in this session, as following a moved head says above"
 # The sentence finding_rule gives every review agent: which --reviewer value names which reviewer.
-MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's own reading keeps the conductor's old value), and lead only for one from the lead's own reading."
+MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's own reading keeps the conductor's old value), and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
 # and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
 logs_findings() {
@@ -229,10 +229,10 @@ check "finding_rule's kinds command prints nothing, not an error, with no findin
 # nobody else to act on it: the conductor reads no review reply. If the handoff drops the agent's own
 # nudge, or names the conductor as the one that acts, the PR sits unmerged, and this goes red.
 # The conductor reads no review file, so a stop before a pass reaches it only as a note; and a round
-# whose codex was skipped, with no /code-review, would pass on no review at all. If the brief drops the
+# whose codex was skipped would pass on no review at all. If the brief drops the
 # note or the agent's own reading, this goes red.
-check "a stop tells the story's conductor in a note, the lead takes it when that fails, and a skipped codex with no /code-review is read in its place" "yes|yes|yes" \
-  "$(has "write ${p}/.swarm/reviews/s1.stop.md with the Write tool holding one line, \`review-s1 stopped on <that head>: <the stopped: line's why>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`." "${flat}")|$(has "When that tell fails (no conductor runs for the story), your reply's first line says so: the lead takes it." "${flat}")|$(has "in a round with no \`/code-review\`, you read the diff yourself in codex's place, so the round is never a pass on no review at all." "${flat}")"
+check "a stop tells the story's conductor in a note, the lead takes it when that fails, and a skipped codex is read in its place" "yes|yes|yes" \
+  "$(has "write ${p}/.swarm/reviews/s1.stop.md with the Write tool holding one line, \`review-s1 stopped on <that head>: <the stopped: line's why>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`." "${flat}")|$(has "When that tell fails (no conductor runs for the story), your reply's first line says so: the lead takes it." "${flat}")|$(has "when codex could not reach its provider, and you read the diff yourself in codex's place, so the round is never a pass on no review at all." "${flat}")"
 # A dequeue, an unconfirmed merge or a red base after the merge used to reach the conductor's wait on
 # the review; with no such wait, the stop note is their only way to an owner. If the handoff drops it,
 # the PR sits with nobody on it, and this goes red.
@@ -373,10 +373,11 @@ check "review-agent s2 to s4 each return within 10s while no review is done" "s2
 check "a stacked story's brief leaves its parents' code out; another's says nothing of stacking" "yes|yes|0" \
   "$(has "This story is stacked on s1: their branches (origin/story/s1) are in its diff against origin/main" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(has "it is neither a finding nor out of scope" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(grep -c stacked "${p}/.swarm/briefs/review-s3.md" || true)"
 r1="$(cat "${p}/.swarm/briefs/review-s1.md")"; r3="$(cat "${p}/.swarm/briefs/review-s3.md")"; r4="$(cat "${p}/.swarm/briefs/review-s4.md")"
-check "round 1's brief asks for codex and /code-review" "yes|yes|yes" \
-  "$(has " codex-review " "${r1}")|$(has "review round 1 of the story" "${r1}")|$(has "then run \`/code-review ${PR}\`" "${r1}")"
+# The review agent runs codex alone on every round. If round 1 asks for /code-review again, this goes red.
+check "round 1's brief, for a PR that changes code, asks for codex alone and never for /code-review" "yes|yes|no" \
+  "$(has " codex-review " "${r1}")|$(has "This is review round 1 of the story: run codex alone." "$(tr -s '[:space:]' ' ' <<< "${r1}")")|$(grep -qF "/code-review" <<< "${r1}" && echo yes || echo no)"
 check "a round after a step-up is still round 2, and asks for codex alone" "yes|yes|yes|no" \
-  "$(has " codex-review " "${r3}")|$(has "review round 2 of the story" "${r3}")|$(has "run codex alone, not \`/code-review\`" "${r3}")|$(grep -qF "/code-review ${PR}" <<< "${r3}" && echo yes || echo no)"
+  "$(has " codex-review " "${r3}")|$(has "review round 2 of the story" "${r3}")|$(has "review round 2 of the story: run codex alone." "${r3}")|$(grep -qF "/code-review" <<< "${r3}" && echo yes || echo no)"
 # A step-up from wait-pr leaves no head to review (stop with head moved:); one that failed after the
 # builder closed leaves no builder to nudge (stop with that line as the one finding, which tell refuses).
 check "with escalate_ladder set, the brief says a stepped-up build gets no nudge and ends the review, and a step-up failed partway ends it with that line as its finding" "yes|yes" \
@@ -384,7 +385,7 @@ check "with escalate_ladder set, the brief says a stepped-up build gets no nudge
 check "with escalate_ladder set, the brief's builder wait says a stalled build stepped up, or a step-up still running, is waited on again, and one stepped up after the findings were told gets the round file as a nudge, then a wait --past for its fix" "yes|yes" \
   "$(has "When it prints \`stepped up: s4\`, the stalled build went to the next model on the escalation ladder, and when it prints \`stepping up: s4\`, another step-up or a restart of it is running: in both cases, wait on it the same way." "$(tr -s '[:space:]' ' ' <<< "${r4}")")|$(has "A build stepped up after this round's findings were told has none of them in its handover brief (that brief pastes ${p}/.swarm/reviews/s4.md, which holds no findings to fix): once the new builder is idle, send it ${p}/.swarm/reviews/s4.round.md as a nudge, which is no round (write ${p}/.swarm/reviews/s4.nudge.md as below holding what ${p}/.swarm/reviews/s4.round.md holds, then \`${sw} tell s4 nudge ${p}/.swarm/reviews/s4.nudge.md\`), and wait for its fix with \`${sw} wait --stall --past <HEAD before the tell> s4\`, as below." "$(tr -s '[:space:]' ' ' <<< "${r4}")")"
 check "round 2 asks for codex only" "yes|yes|yes|no" \
-  "$(has " codex-review " "${r4}")|$(has "review round 2 of the story" "${r4}")|$(has "run codex alone, not \`/code-review\`" "${r4}")|$(grep -qF "/code-review ${PR}" <<< "${r4}" && echo yes || echo no)"
+  "$(has " codex-review " "${r4}")|$(has "review round 2 of the story" "${r4}")|$(has "review round 2 of the story: run codex alone." "${r4}")|$(grep -qF "/code-review" <<< "${r4}" && echo yes || echo no)"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"
 # done_review <slug> — the agent writes its findings file, then goes idle.
 done_review() { echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/$1.md"; done_agent "review-$1"; }
@@ -629,7 +630,7 @@ check "--next with uncommitted work refuses and changes no file under .swarm/rev
 rm "${ROOT}/svc-wt/n1/wip.txt"; echo STALE > "${p}/.swarm/reviews/n1.head"
 o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")" || echo "FAIL review-agent --next n1 exited non-zero: ${o}"
 check "after one ok findings tell, --next from review-n1's pane prints round 2 as a plain next round, not a follow, and the codex-alone instruction" "yes|yes" \
-  "$(has "Review round 2 of story n1: review ${PR} at its new head" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
+  "$(has "Review round 2 of story n1: review ${PR} at its new head" "${o}")|$(has "This is review round 2 of the story: run codex alone." "${o}")"
 check "and it writes the PR's head, moves n1.md to n1.md.prev, and starts no agent" "${HEAD_SHA}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
   "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
 check "events.tsv gets review-agent:next n1 ok (round 2), with round=2 to match, and no review-agent line for it" "review-agent:next	n1	ok (round 2) ~~ round=2|1" \
@@ -716,7 +717,7 @@ check "and f1's builder receives the round file" "yes" \
   "$(diff <(tail -n +3 "${ROOT}/prompted-w-900") "${p}/.swarm/reviews/f1.round.md" >/dev/null 2>&1 && echo yes || echo no)"
 o="$(in_review_pane "${next_cmd}")" || echo "FAIL the brief's --next for f1 exited non-zero: ${o}"
 check "the brief's --next then prints round 2, with codex alone, names the round file for findings to fix and the review file for a pass or a stop, and the tell and --next left no review file for f1 (no pass on record)" "yes|yes|yes|no" \
-  "$(has "Review round 2 of story f1" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")|$(has "write this round's findings to fix to ${p}/.swarm/reviews/f1.round.md, and ${p}/.swarm/reviews/f1.md only on a pass or a stop, each afresh with \`head: ${HEAD_SHA}\` as its first line" "${o}")|$([[ -e "${p}/.swarm/reviews/f1.md" ]] && echo yes || echo no)"
+  "$(has "Review round 2 of story f1" "${o}")|$(has "This is review round 2 of the story: run codex alone." "${o}")|$(has "write this round's findings to fix to ${p}/.swarm/reviews/f1.round.md, and ${p}/.swarm/reviews/f1.md only on a pass or a stop, each afresh with \`head: ${HEAD_SHA}\` as its first line" "${o}")|$([[ -e "${p}/.swarm/reviews/f1.md" ]] && echo yes || echo no)"
 settle
 # --- The brief's waits for a fix, each run from review-f1's pane with its head filled in while f1's
 # builder stays busy. Each must end with pushed <sha> once a commit in f1's worktree is gh's head, well

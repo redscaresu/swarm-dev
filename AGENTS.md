@@ -79,7 +79,7 @@ Useful while it runs:
 - `swarm.sh wait-pr --head <sha> <pr-url>`: wait for a PR's checks on <sha>; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, no check runs or an expected workflow that never started within 5 minutes, a head that is still not <sha> by then, or the timeout. Without `--head` it waits on the head GitHub reports first, and right after a push that can still be the old one. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
 - `swarm.sh review-agent <slug> <pr-url>`: a review agent for one PR, scoped to its story's `touches` and **Done when**.
   It never edits the PR's code.
-  It waits for green, runs codex every round and `/code-review` on round 1 only, and decides which findings to fix and which to decline.
+  It waits for green, runs codex alone every round, and decides which findings to fix and which to decline.
   It sends the ones to fix to the builder, then reviews the builder's next head in the same session.
   From round 3 (the round cap) it sends only a regression the PR introduces or a line now false about the code, and declines the rest as deferred.
   A round with nothing to fix, because the agent declines every finding as a nit, low value, out of scope, wrong or deferred, is a pass: the review agent merges the PR with `merge = agent` or an HLD `merge` grant, and otherwise hands it to the user.

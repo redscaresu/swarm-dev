@@ -488,8 +488,8 @@ check "11 review-agent --next's round 3 carries the cap line, exactly as review_
 # line that defers the listed kinds unless a regression or a now-false line, and the brief's fix rule and
 # deferred reason follow it; round 3 has the cap line alone.
 TESTS_CI='Tests (review_verify = ci): read the diff and trust CI for the tests; run no local test suite and no mutation run.'
-R1="This is review round 1 of the story. When the PR changes code (not only docs, board files or a dependency bump), state the touches and Done when above, then run \`/code-review ${URL}\`. ${TESTS_CI} "
-R2="This is review round 2 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only. ${TESTS_CI} "
+R1="This is review round 1 of the story: run codex alone. ${TESTS_CI} "
+R2="This is review round 2 of the story: run codex alone. ${TESTS_CI} "
 check "12 unset, round 1's line is exactly today's" "${R1}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 1 '"${URL}")")"
 check "12 unset, round 2's line is exactly today's" "${R2}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 2 '"${URL}")")"
 check "12 unset, round 3's line is exactly today's: round 2's form and the cap line" \
