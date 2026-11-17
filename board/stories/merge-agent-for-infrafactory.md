@@ -28,3 +28,5 @@ stories as before. **You:** none.
 - `swarm.sh config merge` in infrafactory prints `agent`.
 - The first infrafactory conductor run after it merges a PR itself, and any `costs: money` story it
   meets is left for the user (its report is quoted here).
+
+**Re-dated at the v0.31.0 retro (2026-11-17, the user's decision):** stays `later` until infrafactory's swarm resumes; start it again then.
