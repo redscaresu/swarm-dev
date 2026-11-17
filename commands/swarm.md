@@ -668,8 +668,8 @@ Repeat until a step below says stop:
      go back to 1 once it is on the base. Then make a worktree
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
      `.claude-plugin/plugin.json`, to `<new>`: the version `next`
-     named, either the stage's v<S> or the patch it named. Only when `next` printed a bare `release`,
-     bump to the next patch version: for a numeric `x.y.z` tag a bare `release` means every change since it is a fix, and `merge --release` refuses a minor that has no done retro file. Commit with the brief's trailers, push, and open the PR titled
+     named, either the stage's v<S> or the patch it named. Only when `next` printed a bare `release`, bump to the next minor version, or to the patch its why names when
+     it says every change since the tag is a fix (`cut v<x.y.z>, a patch`); `merge --release` refuses a minor that has no done retro file. Commit with the brief's trailers, push, and open the PR titled
      `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. For swarm-dev's own repo, the body also
      lists the behaviour changes every project gets on upgrade and names the infrafactory build they
      were tried on, or says none. When nothing
