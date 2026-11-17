@@ -18,7 +18,7 @@ plans it, and it counts as done once none of its children is left on the board.
 status: draft | active | later | review | split
 depends_on: [other-epic]
 parent: big-epic            # only on a child epic of a split one
-check: make test
+check: scripts/select-tests.sh --run
 agreed: <YYYY-MM-DD>      # set by /epic when the user agrees it
 stage: v<x.y.0>           # only on an epic in a staged HLD's Rollout: the release that ships it
 ---

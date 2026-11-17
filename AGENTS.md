@@ -263,7 +263,7 @@ Action to a commit SHA, with `persist-credentials: false` and read-only permissi
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
-When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag), the lead cuts a
+When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag and every one is a fix, a patch), the lead cuts a
 release through `/swarm-dev:swarm`'s release arm and `swarm.sh merge --release`: a PR that bumps `version` in
 `.claude-plugin/plugin.json` and nothing else. `claude plugin update` fetches nothing while the version is
 unchanged. No story PR bumps it, and a story PR without a bump is not a review finding. Merging a version

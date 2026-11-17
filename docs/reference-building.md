@@ -1197,7 +1197,7 @@ that PR before: each `.swarm/findings.tsv` declined row whose PR is the same PR 
 never one whose number only starts the same), with its round, its reason and its `--because`. A line
 over them says each reason is the builder's claim, not a fact, and that codex ignores none of them.
 With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
-unchanged. On a usage or rate limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
+unchanged. When codex hits a usage or rate limit, cannot reach its provider, or times out, the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
@@ -1249,7 +1249,7 @@ codex usage limit` (`codex rate limit` on a rate limit) and then the findings, a
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` (`rate limit` on a rate limit) and exits as codex did. It
+nothing in time, codex-review prints `codex skipped: <why>` (`usage limit`, `rate limit`, `unreachable` or `timed out after <N> min`, with its cause) and exits as codex did. It
 waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
 call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit

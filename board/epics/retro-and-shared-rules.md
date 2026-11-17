@@ -1,7 +1,7 @@
 ---
 status: split
 depends_on: []
-check: make test
+check: scripts/select-tests.sh --run
 ---
 
 # The HLD layer comes back: a design agreed with the user says what the lead may do alone, and no epic goes active without that grant or the user

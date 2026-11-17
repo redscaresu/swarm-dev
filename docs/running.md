@@ -119,7 +119,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   or SSO login reaches agents through `HOME` and `AWS_PROFILE`.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
   go through `swarm.sh merge`), a `git checkout` that would drop changes, a `git reset --hard`,
-  `restore` or `clean` that would drop uncommitted work in the main checkout, and an agent's `pkill`.
+  `restore` or `clean` that would drop uncommitted work in the main checkout, an agent's `pkill`, and an agent's
+  `make test` with no `TESTS=` (it points the agent at `scripts/select-tests.sh --run`).
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved
