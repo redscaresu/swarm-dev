@@ -425,8 +425,8 @@ running conductor that the PR merged, as after any merge, naming a reconcile tha
 also says this run did not wait for CI on the base, which after a merge by hand nothing does, so the
 conductor starts no story that waits on this one until CI on the base is green. A PR closed meanwhile
 refuses. A head an earlier `merge` run made by merging the base in (its `base-merged` line) gets the
-same wait before its base check, so a run of `merge --head` on it waits on the workflows too, which
-the plain check on the head does not read. A head that moved (a push during the wait) refuses as `base
+same wait before its base check. Merge's own check on the head comes first and reads its expected workflows,
+as on any head, so one with no run yet is refused as not green there. A head that moved (a push during the wait) refuses as `base
 merged, head moved:`, for a review of the new head. Otherwise it compares the head with the base
 again, right before `gh pr merge`. If the base gained more code during the wait, `merge` merges it in
 again and waits again, for 3 rounds at most (`MERGE_BASE_ROUNDS`). If the base has moved again after

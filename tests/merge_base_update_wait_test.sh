@@ -117,13 +117,13 @@ echo '{"ahead_by":1,"files":[{"filename":"bin/y.sh","status":"modified"}]}' > "$
 echo "merge conflict between base and head" > "${FX}/update.422.${H3}"; merge "${URL}"
 is "a head an earlier merge run made, and GitHub cannot merge main in again: says to pull the branch first, and merges nothing" "1|yes|no" \
   "${rc}|$(said "a conflict (HTTP 422: merge conflict between base and head), which only the builder can resolve: pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head" && echo yes)|$(merged && echo yes || echo no)"
-# A head an earlier merge run made gets the same wait as one this run makes: a run of merge on it
-# waits on the workflows a pull_request runs, which merge's plain check on the head does not read.
+# A head an earlier merge run made is read as any head: merge's own check on it reads the workflows a
+# pull_request runs, as wait-pr does, so one with no run refuses it as not green, naming the workflow.
 fresh; echo "${H3}" > "${FX}/head"; checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"
 printf '2026-10-28T00:00:00Z\tmerge\ts\t-\tbase-merged %s from %s\n' "${H3}" "${H1}" > "${P}/.swarm/events.tsv"
 wfruns "${FX}/${H3}.runs"; printf 'name: ci\non:\n  pull_request:\n    types: [opened, synchronize]\n' > "${FX}/wf.ci.yml.${H3}"; merge --head "${H3}" "${URL}"
-is "merge --head on a head an earlier merge run made waits on its pull_request workflows: one with no run refuses, no pr merge" "1|yes|no" \
-  "${rc}|$(said "base merged, no workflow run: ${WHO}: .github/workflows/ci.yml: a pull_request into main runs it" && echo yes)|$(merged && echo yes || echo no)"
+is "merge --head on a head an earlier merge run made waits on its pull_request workflows: one with no run refuses as not green, naming it, no pr merge" "1|yes|no" \
+  "${rc}|$(said "the head 3333333 is not green: .github/workflows/ci.yml (no run on 3333333)" && echo yes)|$(merged && echo yes || echo no)"
 fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; echo x > "${FX}/behind.${H3}"; touch "${FX}/behind.${H3}.fail"; merge "${URL}"
 refused_after "a base check that fails after the base merged in" "cannot tell whether main moved past 3333333's CI" \
   "cannot tell whether main moved past 3333333's CI: " "${PULL}"
