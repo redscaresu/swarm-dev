@@ -809,8 +809,14 @@ another session's process. `kill $!` and `kill <pid>` pass. It refuses an agent'
 any `while` or `until` loop around `gh pr checks` (a `while read` loop that checks each PR once
 passes), and names `swarm.sh wait-pr`, which stops on a red
 check, a conflict or a deadline. A single `gh pr checks` passes.
+It refuses an agent's `make test` with no `TESTS=`, or an empty one, where make runs in a checkout that has `scripts/select-tests.sh`.
+That covers `make test JOBS=4`, `make -C <dir> test` and a `make test` behind `timeout`, `env` or `nohup` with their usual options (`env -u <var>`, `timeout -k 10 600`), and it follows `env -C <dir>`.
+The refusal names `scripts/select-tests.sh --run` and says CI's sharded run is the full suite.
+`make test TESTS=<files>`, `TESTS=<files> make test` and `scripts/select-tests.sh --run` pass.
+So does an agent's `make test` in a project with no `scripts/select-tests.sh`.
+A `make test` that a test starts inside another run is no Bash call of a session, so the hook never sees it.
 Your own session has no `SWARM_AGENT`, so only the `cd`, `git checkout` and main checkout rules
-apply to it. These
+apply to it, and its bare `make test` passes. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
