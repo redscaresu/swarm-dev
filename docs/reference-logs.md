@@ -91,6 +91,7 @@ The stall rule skips those lines, because none is a sign of life.
   `make test` writes one when a test file runs past `TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`; a nested run, whose runs log is set empty, writes none.
   Both take the incidents' tail.
   `codex-review`'s `slug=` is `SWARM_STORY`, absent when that is unset, and its `role=` that of the agent running it.
+  Its own `codex-review` line carries the same `slug=` and `role=`, and `codex=`, how the run ended: `reviewed` (codex reviewed), `fallback`, `skipped` or `failed` (codex exited non-zero with no limit, timeout or unreachable output); flow's `reviewers` section reads it.
   `make test` writes `slug=<slug> role=builder` when the run's branch is `story/<slug>`, and neither on any other branch.
   Its `version=` is the one in the checkout's `.claude-plugin/plugin.json`, left out when that cannot be read.
   A command that finishes in time writes no `reap` line.
@@ -159,6 +160,7 @@ The outcome field can end in a tail of `key=value` fields, for example
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
 Callers can pass fields of their own, which come before `version=`:
 
+- `codex-review` passes `slug=`, `role=` and `codex=` on its own line.
 - `decline-only` passes `round=` and `verdict=`.
 - `first-green` passes `sha=`.
 - The incident lines above pass `slug=` and `role=`.
@@ -788,6 +790,21 @@ that is later. A PR is listed when the window has a row of it with a round, and 
 read from all its rows, whatever their date. For a merged PR, `pass` means the stop round fixed nothing and `merged-after-fixes`
 that it fixed something. A PR that has not merged shows `unmerged`, since its review may still be
 going. `--epic` narrows both blocks as it does the others.
+
+The last block, `merged without codex`, is the list to re-review once codex is back after an outage.
+It is TSV `merged_without_codex pr merged rounds`, one row per story PR merged in the window (by its merge's local day) whose every `codex-review` run on its story ended without codex reviewing.
+The runs counted are those from the start of the PR's first build up to its merge, so when a retry opened a PR of its own, the first PR's runs do not count for it.
+The first column is the story's slug and `merged` the merge's day.
+`rounds` lists how each run ended, in order and separated by commas: `fallback` (the fallback reviewer reviewed in codex's place), `skipped` (nobody reviewed, after a limit, an unreachable codex or the timeout) or `failed` (codex exited non-zero for none of those).
+A PR with any run that codex reviewed is left out.
+It reads `codex-review`'s own `events.tsv` line, which says how the run ended (`codex=`, with `slug=`).
+A line written before that field existed counts only after a `codex-<story>` line on the same pane: a `reap` line `timed out after <N> min`, or a `codex-limit:` or `codex-unreachable` incident.
+The run is then `fallback` when the `codex-review` line is `ok`, else `skipped`; one that codex's rate-limit retry got through also reads as `fallback`.
+Older runs that codex reviewed name no story, so for those lines a PR is listed on the runs that failed.
+A PR whose merge time `gh` did not give is left out.
+The block reads only `events.tsv` and the merged PRs `outcomes` already fetched, so it makes no `gh` call of its own.
+With no such PR it prints its heading and `none`.
+`--epic` keeps that epic's PRs.
 
 The `review_loops` section shows what each review round cost and what it bought, so the stop and
 escalation rules can be tuned. It reads `events.tsv`, `findings.tsv` and `agents.tsv`, and calls no
