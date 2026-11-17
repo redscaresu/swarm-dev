@@ -596,7 +596,7 @@ check "a moved head with uncommitted changes in the worktree is refused as revie
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "n1's worktree has uncommitted changes, so it is not the PR's head ${H2}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 rm "${NWT}/wip.txt"
 check "a moved head during round 1, with no findings tell since: --next exits 0 and prints round 1 again, naming both heads, the round-1 line and dropped-lines on the new head" "0|yes|yes|yes|yes" \
-  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 1 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(has "review ${PR} at its new head ${H2}" "${o}")|$(has "This is review round 1 of the story." "${o}")|$(has "dropped-lines o/svc 1 ${H2} main" "${o}")")"
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 1 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(has "review ${PR} at its new head ${H2}" "${o}")|$(has "This is review round 1 of the story: run codex alone." "${o}")|$(has "dropped-lines o/svc 1 ${H2} main" "${o}")")"
 check "and it leaves the new head in n1.head and the old findings at n1.md.prev, and starts no agent" "${H2}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
   "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
 check "events.tsv logs the follow as review-agent:next n1 ok (round 1), with round=1" "review-agent:next	n1	ok (round 1) ~~ round=1" \
@@ -1177,7 +1177,7 @@ SITE="When the builder pushed past ${HEAD_SHA} before any findings or wording nu
 check "m1's brief follows a push past its start head in the green step" "yes" "$(has "${SITE}" "${mbrief}")"
 nxt="$(follow m1 "${PRM}" "${mbrief}" "${SITE}")"
 check "the brief's --next from review-m1's pane prints round 1 at the new head, says to follow a worktree that moves again, and m1.head reads it" "yes|yes|yes|0|${M2}" \
-  "$(has "Review round 1 of story m1 again: ${PRM}'s head moved from ${HEAD_SHA} to ${M2}" "${nxt}")|$(has "This is review round 1 of the story." "${nxt}")|$(has "If the worktree moved, write neither: follow the new head as your brief says, with the green step on it, then review-agent --next again." "${nxt}")|$(grep -c "head moved:" <<< "${nxt}" || true)|$(cat "${p}/.swarm/reviews/m1.head")"
+  "$(has "Review round 1 of story m1 again: ${PRM}'s head moved from ${HEAD_SHA} to ${M2}" "${nxt}")|$(has "This is review round 1 of the story: run codex alone." "${nxt}")|$(has "If the worktree moved, write neither: follow the new head as your brief says, with the green step on it, then review-agent --next again." "${nxt}")|$(grep -c "head moved:" <<< "${nxt}" || true)|$(cat "${p}/.swarm/reviews/m1.head")"
 check "after the pass of the new head is written, the brief's review --head on it exits 0 and m1 is in review" "verdict pass ${M2}|review" \
   "$(grep '^verdict' "${FLOWLOG}" | tail -1)|$(fm_of m1 status)"
 check "site 1: the green step, the dropped-lines check and a review of the new head run, in that order, before the verdict, and nothing records a pass of the first head" \
