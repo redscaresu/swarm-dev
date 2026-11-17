@@ -2,7 +2,8 @@
 # merge_rules_test.sh — merge_test.sh's cases on what swarm.sh merge merges (the story or epic that
 # lists the PR) and --release (the version bump, its retro gate and docs gate, merge = human's release grant, the
 # plugin's own upgrade), who may run it, a story marked costs, merge = human's HLD grant, and
-# merge's epic guard, on a board PR and a story PR. On merge_fixture.sh, as merge_test.sh is.
+# merge's epic guard, on a board PR and a story PR, and the pull_request workflows merge waits on at
+# the head, as wait-pr does. On merge_fixture.sh, as merge_test.sh is.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -1302,5 +1303,36 @@ is "hold field: dropped base lines writes hold=dropped-lines" hold=dropped-lines
 fresh; item s "status: ready" "prs: ${URL}"; merge "${URL}"
 refused "hold field: a refusal that is no hold" "s is ready, not review"
 is "hold field: a refusal that is no hold has no field" "" "$(hold_fields)"
+
+# --- The head's expected workflows: merge reads the head as wait-pr does, with the PR's base, number and
+# changed file count, so a workflow that a pull_request into main runs, with no run on the head, is pending,
+# though every check run there is green. If merge_pr's ci_gate head call drops those three, the refusals
+# below go green and merge reaches pr merge.
+# pr_wf — at ${H1} .github/workflows lists pr.yml, which every pull_request into main runs, beside ci.yml
+# (types [opened] alone, so not waited on). pr_run <status> [conclusion] — pr.yml's pull_request run on ${H1}.
+pr_wf() {
+  echo '[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"},{"name":"pr.yml","path":".github/workflows/pr.yml","type":"file"}]' > "${FX}/workflows.${H1}"
+  printf 'name: pr\non:\n  pull_request:\n    branches: [main]\n' > "${FX}/wf.pr.yml"
+}
+pr_run() {
+  local c=null; [[ -z "${2:-}" ]] || c="\"$2\""
+  printf '{"id":1,"name":"pr","path":".github/workflows/pr.yml","event":"pull_request","head_sha":"%s","status":"%s","conclusion":%s,"html_url":"u"}' "${H1}" "$1" "${c}"
+}
+fresh; pr_wf; wfruns "${FX}/${H1}.runs"; merge "${URL}"
+refused "a green head with no run of a pull_request workflow" "the head 1111111 is not green: .github/workflows/pr.yml (no run on 1111111)"
+fresh; pr_wf; wfruns "${FX}/${H1}.runs" "$(pr_run in_progress)"; merge "${URL}"
+refused "a green head whose pull_request workflow is still running" "the head 1111111 is not green: .github/workflows/pr.yml (in_progress)"
+fresh; pr_wf; wfruns "${FX}/${H1}.runs" "$(pr_run completed success)"; merge "${URL}"
+is "a head whose every expected workflow ran green merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "a head whose every expected workflow ran green: merge read its workflow runs" grep -qF "actions/runs?head_sha=${H1}" "${ROOT}/gh.log"
+fresh; rm "${S}"; pr_wf; wfruns "${FX}/${H1}.runs"; merge --board "${URL}"
+refused "--board, a green head with no run of a pull_request workflow" "the head 1111111 is not green: .github/workflows/pr.yml (no run on 1111111)"
+# A workflow whose triggers ci_gate cannot read is not waited on: the merge goes ahead and prints wait-pr's
+# line for it. If merge drops ci_gate's second line, the check on it goes red.
+fresh; echo '[{"name":"bad.yml","path":".github/workflows/bad.yml","type":"file"}]' > "${FX}/workflows.${H1}"
+printf 'on: {pull_request: {branches: [main]}}\n' > "${FX}/wf.bad.yml"; merge "${URL}"
+is "a head workflow whose triggers are not read: it merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "a head workflow whose triggers are not read: merge prints wait-pr's not waited on: line" \
+  grep -q '^not waited on: .github/workflows/bad.yml (triggers not read: ' "${ROOT}/out"
 
 finish merge-rules

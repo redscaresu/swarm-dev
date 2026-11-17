@@ -1073,7 +1073,9 @@ short_shas() {
 # recording nothing; with --release: the PR is in the
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
-# under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path
+# under an agreed HLD granting release), and ci_gate head passes on the head with the PR's base, number
+# and changed file count, as wait-pr reads it: a workflow a pull_request runs there with no run on the
+# head, or one not finished, is pending, so the merge refuses it as not green. A story PR on the direct path
 # (it joins no merge queue: the base has none, or merge_admin = on, which never reads one) is refused
 # too when its base has commits the head lacks that change a path off the board (base_moved): the
 # head's CI never ran with them. Then merge_base_update has GitHub merge the base into the PR's branch,
@@ -1179,7 +1181,11 @@ merge_pr() {
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
-  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  # With the base, number and file count, as wait-pr passes them: a workflow the PR's pull_request should
+  # start, with no run on the head yet, is pending, not green. ci_gate's "not waited on:" line joins the
+  # first in a refusal, and is printed on its own on a green head, as wait-pr prints it.
+  why="$(ci_gate head "${repo}" "${head}" "${base}" "${n}" "${changed}")" || merge_fail "the head ${head:0:7} is not green: ${why//$'\n'/; }"
+  [[ "${why}" != *$'\n'* ]] || echo "${why#*$'\n'}"
   # An epic set active with no ticket is the user's under either merge mode: after the head's CI check,
   # so a red PR costs no reads; before the grant, so the grant's refusal cannot hide this one.
   [[ -n "${only}" ]] || story_files

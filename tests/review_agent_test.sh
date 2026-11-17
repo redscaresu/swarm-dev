@@ -101,13 +101,29 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json.new" && mv "${ROOT}/claude.json.new" "${ROOT}/claude.json"
 EOF
 # With ghhang its api reads hang for 300s, and with ghfail they fail. A PR head in headonce is read once,
-# in place of head's, then gone.
+# in place of head's, then gone. --recheck's read of the PR's base and file count gives main and 1. For
+# the workflows a pull_request runs (ci_gate head with those): no merge ref yet (a 422), so they are read
+# at the head, where .github/workflows lists the files in ${ROOT}/wf (a 404 without that folder), none
+# disabled; the PR changes doc.md, and the head's workflow runs are ${ROOT}/runs, else none.
 cat > "${STUB_BIN}/gh" <<EOF
 #!/bin/sh
 if [ "\$1" = api ]; then
   [ ! -e "${ROOT}/ghhang" ] || sleep 300
   [ ! -e "${ROOT}/ghfail" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
 fi
+for a in "\$@"; do last="\$a"; done
+case "\$*" in
+  *"--json baseRefName,changedFiles --jq"*) echo "main 1"; exit 0 ;;
+  *commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/1/merge (HTTP 422)" >&2; exit 1 ;;
+  *"contents/.github/workflows?ref="*) [ -d "${ROOT}/wf" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    printf '['; s=""
+    for f in "${ROOT}"/wf/*; do printf '%s{"type":"file","name":"%s","path":".github/workflows/%s"}' "\$s" "\${f##*/}" "\${f##*/}"; s=,; done
+    echo ']'; exit 0 ;;
+  *contents/.github/workflows/*) f="\${last##*/}"; cat "${ROOT}/wf/\${f%%\?*}"; exit 0 ;;
+  *"actions/workflows?"*) echo '{"total_count":0,"workflows":[]}'; exit 0 ;;
+  */compare/main...*) echo '{"files":[{"filename":"doc.md","status":"modified"}]}'; exit 0 ;;
+  *"actions/runs?head_sha="*) cat "${ROOT}/runs" 2>/dev/null || echo '{"total_count":0,"workflow_runs":[]}'; exit 0 ;;
+esac
 case "\$1 \$3" in
   "api "*/check-runs*) cat "${ROOT}/checks" ;;
   "api "*/status*) echo '{"total_count":0,"statuses":[]}' ;;
@@ -855,7 +871,16 @@ mv "${p}/.swarm/reviews/r1.round.md" "${ROOT}/r1.round.md.aside"; was="$(reviews
 check "--recheck before the old head's round wrote its findings refuses and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "holds no finished review of ${OLD}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 mv "${ROOT}/r1.round.md.aside" "${p}/.swarm/reviews/r1.round.md"
+# The head's one check is green, but pr.yml, which every pull_request runs, has no run on it: CI has not
+# finished, as wait-pr reads it. If --recheck's ci_gate head drops the PR's base, number and file count,
+# it passes this head.
+mkdir -p "${ROOT}/wf"; printf 'name: pr\non: pull_request\n' > "${ROOT}/wf/pr.yml"; was="$(reviews_now)"
+check "--recheck on a green head whose pull_request workflow has no run refuses as CI not finished, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "CI on ${NARROW:0:7} has not finished: .github/workflows/pr.yml (no run on ${NARROW:0:7})" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# With pr.yml's pull_request run green on the head, the pass below goes through.
+printf '{"total_count":1,"workflow_runs":[{"id":1,"name":"pr","path":".github/workflows/pr.yml","event":"pull_request","head_sha":"%s","status":"completed","conclusion":"success"}]}\n' "${NARROW}" > "${ROOT}/runs"
 o="$(recheck)" || echo "FAIL review-agent --recheck r1 exited non-zero: ${o}"
+rm -rf "${ROOT}/wf" "${ROOT}/runs"
 check "a green head whose diff changes only doc.md:3, named at the start of its finding, passes: the new head's findings file and .head, the round file kept" \
   "head: ${NARROW}|yes|yes|${NARROW}|head: ${OLD}" \
   "$(head -1 "${p}/.swarm/reviews/r1.md")|$(grep -qx '## Findings' "${p}/.swarm/reviews/r1.md" && echo yes || echo no)|$(has "the wording recheck passed" "$(cat "${p}/.swarm/reviews/r1.md")")|$(cat "${p}/.swarm/reviews/r1.head")|$(head -1 "${p}/.swarm/reviews/r1.round.md")"

@@ -236,10 +236,12 @@ from <old> to <new> since the release check, so it runs again`, runs every `--re
 on the new base, and refuses if one fails. A story that landed in between under no HLD granting
 `release` is refused like any other.
 The head must be green: at least one check run, every run
-completed as success, skipped or neutral, and every commit status a success. Merge does not check
-which workflows should have run, so a direct `swarm.sh merge` on a head with one fast green check
-still merges. `swarm.sh wait-pr` does, and the swarm's procedure (`commands/swarm.md`) runs it before
-each merge. In wait-pr, an expected workflow that has not started counts as pending. It reads every page,
+completed as success, skipped or neutral, and every commit status a success.
+Merge also checks the PR's expected workflows, as `swarm.sh wait-pr` does (§ Commands): each workflow that a `pull_request` into the base runs with the PR's files needs a `pull_request` run on the head that finished green.
+An expected workflow with no run on the head yet counts as pending, so a head with one fast green check is refused as not green, naming the workflow: `the head <sha> is not green: <path> (no run on <sha>)`.
+A workflow whose triggers cannot be read is not waited on, and merge prints wait-pr's `not waited on: <path> (triggers not read: <why>)` line for it.
+`review-agent --recheck` and the lead's queue (`wait --lead`) read a head the same way: the recheck refuses it as CI not finished, and the lead's queue does not count it green.
+The swarm's procedure (`commands/swarm.md`) still runs wait-pr before each merge. Merge reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
 after the check stops the merge. It never passes `--auto`, except to join a merge queue (below). It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).

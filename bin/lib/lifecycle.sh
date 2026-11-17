@@ -2620,7 +2620,7 @@ LEAD_EVENTS_AT="${LEAD_DIR}/events-at"   # "<byte offset> <inode>" of events.tsv
 LEAD_MERGES="${LEAD_DIR}/merges"      # build starts and merges, folded from events.tsv and the heads pass (lead_events, pr_head)
 # shellcheck disable=SC2034 # board.sh reads it
 LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protected hold names, read by the last heads pass (held_heads)
-LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
+LEAD_KNOWN=""                         # "<PR URL> <sha> <base> <changed>" lines this heads pass has read already, which heads_green takes
 LEAD_WORKSPACE="${LEAD_DIR}/workspace"   # "<herdr workspace id>\t<its label, refused or kept>[\t<note>]" per line (lead_rename)
 LEAD_HERDR_WAIT="${SWARM_LEAD_HERDR_WAIT:-5}"   # seconds each herdr call of lead_label may take (within)
 # usage_line's: the /usage reading the user copies in (bin/lib/usage_estimate.py says its form), the
@@ -2733,23 +2733,27 @@ lead_label() {
 # heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green, 1 when one is
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
 # skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
-# goes to LEAD_GREEN.new. A red or pending head is read again each time: a re-run can turn it green
-# with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it stopped at, else empty. A
-# head LEAD_KNOWN holds is taken from it, not read again.
+# goes to LEAD_GREEN.new. ci_gate head gets the PR's base, number and changed file count, as wait-pr
+# passes them, so a workflow its pull_request runs with no run on the head yet is pending, not green; a
+# PR whose base or count gh did not give is unread. A red or pending head is read again each time: a
+# re-run can turn it green with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it
+# stopped at, else empty. A head LEAD_KNOWN holds is taken from it, with its base and count, not read again.
 heads_green() {
-  local url repo head rc=0 g
+  local url repo n known head base changed rc=0 g
   LEAD_CACHED=""; LEAD_RED=""
   [[ $# -gt 0 ]] || return 1
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
-    repo="${BASH_REMATCH[1]}"
-    head="${LEAD_KNOWN#*$'\n'"${url} "}"   # loose-match: ok quoted, a whole "<url> " line start
-    if [[ "${head}" != "${LEAD_KNOWN}" ]]; then head="${head%%$'\n'*}"; else head="$(pr_head "${url}")"; fi
+    repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+    known="${LEAD_KNOWN#*$'\n'"${url} "}"   # loose-match: ok quoted, a whole "<url> " line start
+    if [[ "${known}" != "${LEAD_KNOWN}" ]]; then known="${known%%$'\n'*}"; else known="$(pr_head "${url}")"; fi
+    read -r head base changed <<< "${known}"
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || { rc=2; continue; }
     if [[ -z "${LEAD_FRESH:-}" ]] && grep -qxF "${url} ${head}" "${LEAD_GREEN}" 2>/dev/null; then
       LEAD_CACHED=1
     else
-      g=0; ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || g=$?
+      [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] || { rc=2; continue; }
+      g=0; ci_gate head "${repo}" "${head}" "${base}" "${n}" "${changed}" >/dev/null 2>&1 || g=$?
       [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || { LEAD_RED="${url} ${head}"; return 1; }; rc=2; continue; }
     fi
     echo "${url} ${head}" >> "${LEAD_GREEN}.new"
@@ -2757,18 +2761,19 @@ heads_green() {
   return "${rc}"
 }
 
-# pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot, or when the read runs
-# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll. The same read gives the PR's
-# state: one that reads MERGED gets a `G <time> <PR URL>` line in LEAD_MERGES (lead_merged), which covers
-# a merge made on GitHub, with no merge event.
+# pr_head <pr-url> — "<head SHA> <base branch> <changed file count>", the PR's as gh reads them, for
+# heads_green's ci_gate head; nothing (or less) when it cannot, or when the read runs over LEAD_PRS_WAIT
+# seconds (within): a hung gh must not stall the poll. The same read gives the PR's state: one that
+# reads MERGED gets a `G <time> <PR URL>` line in LEAD_MERGES (lead_merged), which covers a merge made
+# on GitHub, with no merge event.
 pr_head() {
-  local out head state
+  local out head state base changed
   [[ "$1" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 0
-  out="$(within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid,state \
-    --jq '.headRefOid + " " + .state' </dev/null 2>/dev/null)" || true
-  read -r head state <<< "${out}"
+  out="$(within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid,state,baseRefName,changedFiles \
+    --jq '[.headRefOid, .state, .baseRefName, (.changedFiles | tostring)] | join(" ")' </dev/null 2>/dev/null)" || true
+  read -r head state base changed <<< "${out}"
   [[ "${state}" != MERGED ]] || printf 'G\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${LEAD_MERGES}" 2>/dev/null || true
-  printf '%s\n' "${head}"
+  printf '%s\n' "${head}${base:+ ${base}}${changed:+ ${changed}}"
 }
 
 # lead_events — fold the lines events.tsv gained since the last call into LEAD_MERGES, and true when one of
@@ -2846,7 +2851,8 @@ lead_merged() {
 
 # held_heads — the heads pass's first read: the head of each PR a protected hold names (protected_holds
 # urls), story PR or not, to LEAD_HELD as `<PR URL> <head> <epoch>`, which protected_holds weighs a hold
-# against, and to LEAD_KNOWN, so heads_green reads none of them twice. <epoch> is the second the pass
+# against, and to LEAD_KNOWN with its base and changed file count (pr_head), so heads_green reads none of
+# them twice. <epoch> is the second the pass
 # began, before any read, so a read it stamps later than a hold came after that hold. A PR whose head
 # cannot be read is left out: its hold stands.
 held_heads() {
@@ -2854,8 +2860,8 @@ held_heads() {
   LEAD_KNOWN=""; t="$(date +%s)"
   while IFS= read -r u; do
     h="$(pr_head "${u}")"
-    [[ "${h}" =~ ^[0-9a-f]{40}$ ]] || continue
-    LEAD_KNOWN+=$'\n'"${u} ${h}"; held+="${u} ${h} ${t}"$'\n'
+    [[ "${h%% *}" =~ ^[0-9a-f]{40}$ ]] || continue
+    LEAD_KNOWN+=$'\n'"${u} ${h}"; held+="${u} ${h%% *} ${t}"$'\n'
   done < <(protected_holds urls)
   printf '%s' "${held}" > "${LEAD_HELD}.tmp" && mv "${LEAD_HELD}.tmp" "${LEAD_HELD}"
   LEAD_KNOWN+=$'\n'

@@ -39,6 +39,10 @@ git -C "${P}" init -q
 # does, and ci_gate fixed reads any commit as one that changes bin/x, any compare as one behind by nothing,
 # no workflow run, the base's rules as ${FX}/rules while that file does (else the read fails, so every check
 # counts) and no classic protection. run view reads any Actions run as completed, its failed log one FAIL line.
+# pr view's --jq filter (the heads pass's read) runs over the head, state OPEN, base main and 1 file changed.
+# For the workflows a pull_request runs (ci_gate head with those): no merge ref yet (a 422), so they are
+# read at the head, where .github/workflows lists the files in ${FX}/wf (a 404 without that folder), none
+# disabled, and the PR changes bin/x. A commit's workflow runs are ${FX}/runs, else none.
 printf '#!/bin/sh\nFX="%s"; LOG="%s"\n' "${FX}" "${ROOT}/gh.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
@@ -48,7 +52,10 @@ case "$1 $2" in
   "pr view") read -r _ || true
              sleep "$(cat "${FX}/view.slow" 2>/dev/null || echo 0)"
              [ ! -e "${FX}/view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
-             cat "${FX}/head.$3" 2>/dev/null || cat "${FX}/head" ;;
+             h="$(cat "${FX}/head.$3" 2>/dev/null || cat "${FX}/head")"
+             q=""; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+             if [ -z "${q}" ]; then echo "${h}"
+             else printf '{"headRefOid":"%s","state":"OPEN","baseRefName":"main","changedFiles":1}\n' "${h}" | jq -r "${q}"; fi ;;
   "run view") case "$*" in *--log-failed*) printf 'test\tstep\t2026-10-29T00:00:00.0000000Z FAIL TestRed\n' ;; *) echo completed ;; esac ;;
   # The heads pass's read of the open story PRs, once the project has an origin (the main-red and stuck: cases).
   "repo view") [ ! -e "${FX}/repo.fail" ] || exit 1; echo o/r ;;
@@ -64,9 +71,17 @@ case "$1 $2" in
           *"--jq .sha "*/commits/*) b="${path#*/commits/}"
                                     if [ -n "${SWARM_FIX_MAIN_LOG_SECONDS:-}" ] && [ -e "${FX}/base.${b}.run" ]; then cat "${FX}/base.${b}.run"
                                     else cat "${FX}/base.${b}"; fi ;;
+          */commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/7/merge (HTTP 422)" >&2; exit 1 ;;
+          *"contents/.github/workflows?ref="*) [ -d "${FX}/wf" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+                                               printf '['; s=""
+                                               for f in "${FX}"/wf/*; do printf '%s{"type":"file","name":"%s","path":".github/workflows/%s"}' "${s}" "${f##*/}" "${f##*/}"; s=,; done
+                                               echo ']' ;;
+          */contents/.github/workflows/*) f="${path##*/}"; cat "${FX}/wf/${f%%\?*}" ;;
+          *"actions/workflows?"*) echo '{"total_count":0,"workflows":[]}' ;;
           */commits/*) echo '{"files":[{"filename":"bin/x"}],"parents":[]}' ;;
+          */compare/main...*) echo '{"files":[{"filename":"bin/x","status":"modified"}]}' ;;
           */compare/*) echo '{"behind_by":0}' ;;
-          */actions/runs*) echo '{"total_count":0,"workflow_runs":[]}' ;;
+          */actions/runs*) cat "${FX}/runs" 2>/dev/null || echo '{"total_count":0,"workflow_runs":[]}' ;;
           */rules/branches/*) [ -e "${FX}/rules" ] || { echo "stub: no rules" >&2; exit 1; }; cat "${FX}/rules" ;;
           */protection) echo 'Branch not protected (HTTP 404)' >&2; exit 1 ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -137,7 +152,7 @@ fix_stop() {
 # fresh [config line]... — a board with one held story, h, and nothing else; no events, no earlier run.
 fresh() {
   stop; fix_stop; rm -f "${FX:?}/ps"
-  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log
+  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks "${FX}/runs"; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log "${FX}/wf"
   again
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo "${H}" > "${FX}/head"; checks success
@@ -366,6 +381,19 @@ checks success
 check "once its head is green, it wakes" returned 25
 check "it prints merge: <slug> <PR URL>" test "$(out)|$(rc)" == "merge: r ${URL}|0"
 check "it logs lead-woken for the review story" test "$(events)" == "lead-woken r"
+
+# A green check run is not all green needs: pr.yml, which every pull_request runs, has no run on the head,
+# so the heads pass does not count it green until it has a green one (heads_green's ci_gate head gets the
+# PR's base, number and file count, as wait-pr does). If heads_green drops them, the item wakes it at once.
+fresh "merge = human"; checks failure; mkdir -p "${FX}/wf"; printf 'name: pr\non: pull_request\n' > "${FX}/wf/pr.yml"
+item r "kind: code" "status: review" "prs: ${URL}"
+start 20000
+checks success; must "it polled" polls 2
+check "with merge = human, a review story whose green head has no run of a pull_request workflow does not wake it" nothing_yet
+check "the heads pass does not count that head green" grep -qxF "red merge: r ${URL}" "${P}/.swarm/lead/heads"
+printf '{"total_count":1,"workflow_runs":[{"id":1,"name":"pr","path":".github/workflows/pr.yml","event":"pull_request","head_sha":"%s","status":"completed","conclusion":"success"}]}\n' "${H}" > "${FX}/runs"
+check "once that workflow's pull_request run on the head is green, it wakes" returned 25
+check "it prints merge: <slug> <PR URL>, once that run is green" test "$(out)|$(rc)" == "merge: r ${URL}|0"
 
 # Each gh pr view takes 1.3 s, longer than the 1 s between polls: the cases below wait for reads (start,
 # polls), not for time.

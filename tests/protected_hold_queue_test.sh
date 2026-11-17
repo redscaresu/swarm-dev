@@ -28,8 +28,10 @@ HELD="merge: s ${URL} (held: changes hooks/x.sh; exit: the user merges it)"
 cp "${ROOT}/bin/gh" "${ROOT}/merge-gh"
 # changes <path> — the PR's one file.
 changes() { echo "[{\"filename\":\"$1\",\"status\":\"modified\"}]" > "${FX}/files"; echo 1 > "${FX}/nfiles"; }
-# reads_stub — gh as wait --lead reads it: PR <n>'s head is ${ROOT}/head.<n>, else ${H1}, its one check run
-# green, no status; the project's repo is o/r with no open PR. Anything else fails. With ${ROOT}/hang.<n>
+# reads_stub — gh as wait --lead reads it: PR <n>'s head is ${ROOT}/head.<n>, else ${H1}, open, into main
+# and changing one file (pr view's --jq filter runs over those), its one check run green, no status; no
+# merge ref (a 422) and no .github/workflows at the head (a 404), so ci_gate head waits on no pull_request
+# workflow; the project's repo is o/r with no open PR. Anything else fails. With ${ROOT}/hang.<n>
 # the next read of PR <n>'s head first removes it and sleeps 200 s: one gh that hangs.
 reads_stub() {
   printf '#!/bin/sh\nLOG="%s"; H="%s"; D="%s"\n' "${ROOT}/gh.log" "${H1}" "${ROOT}" > "${ROOT}/bin/gh"
@@ -37,12 +39,17 @@ reads_stub() {
 echo "$*" >> "${LOG}"
 case "$1 $2" in
   "pr view") [ ! -e "${D}/hang.$3" ] || { rm "${D}/hang.$3"; sleep 200; }
-             cat "${D}/head.$3" 2>/dev/null || echo "${H}" ;;
+             h="$(cat "${D}/head.$3" 2>/dev/null || echo "${H}")"
+             q=""; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+             if [ -z "${q}" ]; then echo "${h}"
+             else printf '{"headRefOid":"%s","state":"OPEN","baseRefName":"main","changedFiles":1}\n' "${h}" | jq -r "${q}"; fi ;;
   "repo view") echo o/r ;;
   "pr list") echo '[]' ;;
   api*) case "$*" in
           *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
           */status*) echo '{"total_count":0,"statuses":[]}' ;;
+          */commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/7/merge (HTTP 422)" >&2; exit 1 ;;
+          *"contents/.github/workflows?ref="*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
         esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -78,10 +85,12 @@ lead() {
 }
 merge_out() { grep '^merge: ' "${ROOT}/out" || true; }
 gh_count() { grep -c -- "$1" "${ROOT}/gh.log" || true; }
-# gh_calls — gh.log's calls by kind, joined with |. The heads pass's base read (lead_bases) asks for the repo's
+# gh_calls — gh.log's calls by kind, joined with |. ci_gate head's read of the workflows a pull_request runs
+# is the merge ref, then the head's .github/workflows. The heads pass's base read (lead_bases) asks for the repo's
 # default branch, which reads_stub refuses, so it reads nothing more.
 gh_calls() {
-  sed -E 's/^(pr view [0-9]+|repo view|pr list) .*/\1/; s/^api .*check-runs.*/check-runs/; s/^api .*\/status.*/status/; s/^api --jq \.default_branch .*/default branch/' "${ROOT}/gh.log" | paste -sd'|' -
+  sed -E 's/^(pr view [0-9]+|repo view|pr list) .*/\1/; s/^api .*check-runs.*/check-runs/; s/^api .*\/status.*/status/; s/^api --jq \.default_branch .*/default branch/
+    s/^api .*\/commits\/refs\/pull\/.*/merge ref/; s/^api .*\/contents\/\.github\/workflows.*/workflows/' "${ROOT}/gh.log" | paste -sd'|' -
 }
 
 # --- status: the held PR on its own tagged row, the story's other PR on the untagged row; no gh call.
@@ -95,8 +104,8 @@ lead 20000
 is "wait --lead wakes on the held PR" 0 "${rc}"
 is "it prints merge: for the held PR alone, with its path and the user's exit" "${HELD}" "$(merge_out)"
 is "it reads no head of a PR that waits on no one: PR 8 or 9" 0 "$(gh_count '^pr view [89] ')"
-is "its gh calls are the heads pass's: PR 7's head, its checks, the repo, its open PRs and its base" \
-  "pr view 7|check-runs|status|repo view|pr list|default branch" "$(gh_calls)"
+is "its gh calls are the heads pass's: PR 7's head, its checks and pull_request workflows, the repo, its open PRs and its base" \
+  "pr view 7|check-runs|status|merge ref|workflows|repo view|pr list|default branch" "$(gh_calls)"
 
 # --- A story and its epic both list the held PR: wait --lead reports it once, reading its head once, and
 # status tags it on both rows.
