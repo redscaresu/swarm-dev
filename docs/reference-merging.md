@@ -264,12 +264,12 @@ look the same. A stacked build keeps its parent's merges in its history after th
 merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
 squash has taken it off the base.
 Once the parent's PR has merged, the build's own merge of the parent's branch is checked against
-that branch, the way a merge of the base is checked against the base. A line it dropped prints only
-while the parent's branch had it and the base still has it.
+that branch, the way a merge of the base is checked against the base. A line it dropped that the
+parent's branch had prints while the base still has it.
 A line the parent added counts from the build's first merge of the base after the parent's squash: before that, the PR's merge base with the base has no copy of it, so the PR's merge cannot delete it.
 The build's side of that merge can hold commits of the base that the parent's branch lacks: it started on another parent's branch, cut from a newer base, or it merged the base itself.
-A line of those commits that the merge dropped prints too, and a line the build added itself does not.
-Where the build added a copy of the same line itself and the merge kept one of the two, nothing prints, since a count cannot tell the copies apart.
+A line of those commits that the merge dropped would not be in the parent's branch's file, so such a merge is checked only when it is git's own merge of the two, with no conflict resolved by hand and no edit.
+Resolved or edited by hand, it cannot be checked, and the PR is held as for any merge the scan cannot read.
 `dropped-lines` asks gh which PR holds
 the merge's second parent, and treats that commit as the parent's branch when the PR has merged and
 its merge commit is on the base. Until the parent's PR merges, the merge cannot be checked. The check
@@ -1172,7 +1172,7 @@ It skips only the merges that `swarm.sh merge` recorded as `base-merged` in even
 Any other merge is scanned, a GitHub web-editor merge included.
 For a merge with neither parent on the fetched `<base>`, it asks gh which PRs hold the merge's second parent (`repos/<owner/repo>/commits/<sha>/pulls`).
 When one of them has merged and its merge commit is on the fetched `<base>`, the merge is a stacked build's merge of its parent's branch: it is scanned with that branch in the base's place, and a line it dropped counts only while the base still has it.
-Where that merge's first parent holds a commit of `<base>` that the parent's branch lacks, the merge is scanned once more for that commit's lines: one the merge dropped counts too, and a line the build added itself does not.
+Where that merge's first parent holds a commit of `<base>` that the parent's branch lacks, the merge is scanned only when its `git show --remerge-diff` is empty: otherwise it exits 2 naming the merge.
 When gh cannot list those PRs, it exits 2 naming the merge.
 Each dropped line prints as `<sha7> <file>: <text>`.
 It exits 0 when nothing was dropped, 1 when it printed a line, and 2 when it cannot check: bad arguments, another origin, a head that moved or a stale fetch (naming both SHAs), git below 2.36, or a merge it cannot scan (an octopus, or one with neither parent on the base whose second parent is on no merged PR's branch).

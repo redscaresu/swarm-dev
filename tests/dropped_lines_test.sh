@@ -289,40 +289,38 @@ R="$(lines three-pr | sed 's/^ten$/ten-pr/' | grep -vx six | parent_merged paren
 check "a merge of a merged parent's branch that drops a line main and that branch still hold: it prints, exit 1" \
   "${M:0:7} f: six"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
 
-# parent_behind <name> <line>... — parent_merged's shape with child holding a commit of main that pr's
-# branch lacks, as a build does that started on another parent's branch or merged main itself (#879's and
-# #909's merge): main appends the lines given and child merges main, then replaces ten with ten-child and
-# a } of its own and leaves one main-added at the end, before pr replaces ten with ten-pr. child's merge of
-# pr resolves f to stdin. Prints the repo's path.
-parent_behind() {
-  local d; d="$(new_repo "$1")"; shift
-  on "${d}" pr; lines three-pr | put "${d}" f
-  git -C "${d}" checkout -q -b child pr; echo c1 | put "${d}" c
-  on "${d}" main; printf '%s\n' "${BASE0[@]}" "$@" | put "${d}" f
-  on "${d}" child; merge "${d}" main >/dev/null
-  printf '%s\n' one two three-pr "${BASE0[@]:3:6}" ten-child '}' "${BASE0[@]:10}" main-added | put "${d}" f
-  on "${d}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${d}" f
-  on "${d}" child; merge "${d}" pr - >/dev/null
-  on "${d}" main; git -C "${d}" merge -q --squash pr >/dev/null; git -C "${d}" commit -qm 'the parent (#1)'
-  on "${d}" child; merge "${d}" main >/dev/null; echo "${d}"
-}
-
-# The resolution takes pr's ten-pr, dropping ten-child and child's own }, a text main's f holds once too:
-# neither is the base's line. Then it drops main-added as well, which only child's side of the merge had.
-R="$({ lines three-pr | sed 's/^ten$/ten-pr/'; echo main-added; } | parent_behind behindkept main-added)"
-check "a merge of a merged parent's branch, its first parent ahead on main, that drops only the build's own lines: nothing, exit 0" \
+# child can hold a commit of main that pr's branch lacks, as a build does that started on another parent's
+# branch or merged main itself (#879's and #909's merge): main appends main-added and child merges main
+# before pr replaces ten with ten-pr. A line of that commit the merge of pr dropped would not be in pr's
+# file, so that merge is scanned only when it is git's own merge of the two, as this one is.
+R="$(new_repo aheadown)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; printf '%s\n' "${BASE0[@]}" main-added | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+on "${R}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${R}" f
+on "${R}" child; merge "${R}" pr >/dev/null
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+on "${R}" child; merge "${R}" main >/dev/null
+check "a merge of a merged parent's branch, its first parent ahead on main, that is git's own merge: nothing, exit 0" \
   "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
-R="$(lines three-pr | sed 's/^ten$/ten-pr/' | parent_behind behinddrop main-added)"; M="$(git -C "${R}" rev-parse child^1)"
-check "the same merge dropping a line of main that only its first parent held: that line prints, the build's own } does not" \
-  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
-# main added the line twice and child removed one copy itself before the merge dropped the other: child owes
-# the dropped copy alone, so putting that one back clears it.
-R="$(lines three-pr | sed 's/^ten$/ten-pr/' | parent_behind behindcut main-added main-added)"; M="$(git -C "${R}" rev-parse child^1)"
-check "the same, main holding the line twice and the build having removed one copy itself: the dropped copy prints once" \
-  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
-{ cat "${R}/f"; echo main-added; } > "${tmp}/f.back"; put "${R}" f < "${tmp}/f.back"
-check "the same once the build has put the dropped copy back, the copy it removed itself still out: nothing, exit 0" \
-  "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+# The same resolved by hand is unchecked, never clean. main adds a second } at the top, which child merges
+# and pr's branch lacks; pr then removes the } it had, and child's merge of pr drops main's new copy as
+# well. pr squash-merges, main adds a third } after five, and child's clean merge of main holds that newest
+# copy alone, so main's second copy is missing and no count of pr's file or child's can show it.
+R="$(new_repo aheadhand)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; printf '%s\n' '}' "${BASE0[@]}" | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+on "${R}" pr; lines three-pr | grep -vx '}' | put "${R}" f
+on "${R}" child; M="$(lines three-pr | grep -vx '}' | merge "${R}" pr -)"
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+printf '%s\n' '}' one two three-pr four five '}' "${BASE0[@]:5:6}" eleven | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+check "a merge of a merged parent's branch, its first parent ahead on main, resolved by hand and dropping a line of main: unchecked, exit 2" \
+  "merge ${M:0:7} is unchecked: its first parent holds commits of main that the merged parent's branch lacks, and it is not git's own merge of the two"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
 
 # squashed_parent <name> — new_repo <name> with pr as a stacked build's parent: pr's merge of main keeps
 # three-pr and three-main, dropping main-added on purpose; child, stacked on pr, adds c; then pr
