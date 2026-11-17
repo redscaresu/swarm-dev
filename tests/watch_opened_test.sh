@@ -198,17 +198,21 @@ check "watch --epic polls on when the PR list fails" "polling" "${got##*|}"
 mv "${ROOT}/prlist.keep" "${ROOT}/prlist.json"
 # A story added to the epic after its watch started, in another repo (svc2) whose list shows its PR
 # open, holds the watch: the second list takes in the repos the epic's stories name now. z's PR, open
-# at the start, holds the first poll; during it (on-list) the lead story w is added in svc2 and z's PR
-# closes. Each later poll lists svc, then svc and svc2 past the cache, so 8 lists make three polls.
+# at the start, holds the first poll; during it (on-list) the lead story w is added in svc2, z's PR
+# closes and the epic file goes, as an epic's last story PR deletes it: the repos come from the story
+# files alone. Each later poll lists svc, then svc and svc2 past the cache, so 8 lists make three polls.
 git init -q "${ROOT}/repos/svc2" && git -C "${ROOT}/repos/svc2" remote add origin https://github.com/o/svc2
 echo "[{\"number\": 1, \"head\": {\"ref\": \"story/w\", \"sha\": \"w1\"}, \"updated_at\": \"${now}\"}]" > "${ROOT}/prlist2.json"
 printf -- '---\nstatus: ready\nkind: lead\nepic: fin\nrepo: svc2\n---\n' > "${ROOT}/w.pending"
 prs; cp "${ROOT}/prlist.json" "${ROOT}/prlist-noz.json"; prs story/z
-printf 'cp "%s" "%s"\ncp "%s" "%s"\n' "${ROOT}/prlist-noz.json" "${ROOT}/prlist.json" "${ROOT}/w.pending" "${p}/docs/stories/w.md" > "${ROOT}/on-list"
-check "watch --epic polls on while a story added in another repo since its start has a PR open there" \
+printf 'cp "%s" "%s"\ncp "%s" "%s"\nmv "%s" "%s"\n' "${ROOT}/prlist-noz.json" "${ROOT}/prlist.json" "${ROOT}/w.pending" \
+  "${p}/docs/stories/w.md" "${p}/docs/epics/fin.md" "${ROOT}/fin.keep" > "${ROOT}/on-list"
+check "watch --epic polls on while a story added in another repo since its start has a PR open there, its epic file gone" \
   "|polling" "$(WATCH_LISTS=8 watch_for --epic fin)"
 check "watch --epic lists the added story's repo, resolving it once" "1+|1" \
   "$([[ $(grep -c 'repos/o/svc2/pulls?' "${ROOT}/calls" || true) -ge 1 ]] && echo 1+)|$(grep -c '^repo view https://github.com/o/svc2' "${ROOT}/calls" || true)"
+check "the on-list change ran: the epic file is gone" "gone" "$([[ -f "${p}/docs/epics/fin.md" ]] || echo gone)"
+mv "${ROOT}/fin.keep" "${p}/docs/epics/fin.md"
 rm -f "${p}/docs/stories/z.md" "${p}/docs/stories/w.md" "${ROOT}/on-list"
 # Only an epic's watch says it. The backlog's only code story, c, is done and no PR is open, so an
 # epic's rule would find nothing left there, yet the backlog's and the lead's watches poll on.

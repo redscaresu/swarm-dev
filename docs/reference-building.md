@@ -599,6 +599,7 @@ No agent work left is the rule the `finish:` line on a merge or handover note us
 A poll whose PR list failed for any repo cannot tell, so the watch polls on.
 Before it prints the line, it lists each repo again past the poll cache, since a shared list can be a poll old and no later poll would see a PR opened since.
 That second list also takes in the repos the epic's stories name at that moment, so a story added in another repo after the watch started is checked too.
+It reads those repos from the story files alone, since the epic's last story PR deletes the epic file.
 Each such repo is resolved once per watch, with one `gh repo view`.
 When that resolve or the second list fails, the watch says so once on stderr, until the read next succeeds, and polls on.
 A watch given repos sees only those, so it never prints the line.

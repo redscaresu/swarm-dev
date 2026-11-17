@@ -3247,15 +3247,15 @@ epic_pr() {
 # epic_unlisted <epic> <heads> <owner/repo>... — true when an uncached list of each repo (watch_rows with
 # WATCH_SHARE off) succeeds and shows no open PR of <epic>'s stories (epic_pr): a shared list can be up
 # to a poll old, and epic-done ends the watch, so no later poll would see a PR opened since. The repos
-# are the given ones and those the epic's stories name now (watch_scope, in a subshell, as it dies when
-# they name none), so a story added in another repo since the watch started is listed too. It reads and
+# are the given ones and those the epic's stories name now (epic_repo_names), so a story added in another
+# repo since the watch started is listed too. It reads and
 # updates watch_prs's epic_known (the repo names resolved so far, the start's included) and epic_extra
 # (the owner/names resolved since), so each name costs one gh repo view, a GraphQL read, per watch. A
 # resolve or a list that fails fails it, said once on stderr (epic_say) until that read next succeeds.
 epic_unlisted() {
   local e="$1" h="$2" r rows n sha br age name names
   shift 2
-  names="$(watch_scope --epic "${e}" 2>/dev/null && echo "${WATCH_NAMES[*]}")" || names=""
+  names="$(epic_repo_names "${e}")"
   for name in ${names}; do
     [[ "${epic_known}" != *" ${name} "* ]] || continue
     if ! r="$(repo_slug "${name}" 2>/dev/null)"; then
@@ -3272,6 +3272,19 @@ epic_unlisted() {
     while read -r n sha br age; do
       [[ -z "${n}" ]] || ! epic_pr "${e}" "${h}" "${br}" || return 1
     done <<< "${rows}"
+  done
+}
+
+# epic_repo_names <epic> — the repo names, as the board names them, of the project (when it is a repo)
+# and of each story whose epic: is <epic>, as watch_scope's default takes them. It reads the story
+# files alone: an epic's last story PR deletes the epic file, so at the poll epic-done is for, watch_scope
+# --epic would die on it.
+epic_repo_names() {
+  local f
+  [[ ${PROJECT_IS_GIT} != 1 ]] || basename "${PROJECT_DIR}"
+  for f in "${BOARD}"/stories/*.md; do
+    [[ -f "${f}" && "$(basename "${f}")" != README.md && "$(fm "${f}" epic)" == "$1" ]] || continue
+    fm "${f}" repo
   done
 }
 
