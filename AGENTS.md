@@ -73,6 +73,7 @@ Useful while it runs:
 - `swarm.sh tidy [--yes]`: close empty panes and retired agents' panes; lists them first.
 - `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag and every one is a fix (a patch), `retro v<x.y.z>` before a minor release that no done retro file covers, `stage v<T>` when staged draft epics can go active because the base has a tag at or above the minor before their stage, and `idle:` lines for capacity nothing uses (`dash` shows them too).
 - `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic. It starts builds and review agents, never reviews or merges a PR, and ends the epic with its report, written only once no agent work is left (the `finish:` line on a merge or handover note says so). `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead, and with `--epic` or `--backlog` also once when a story PR of theirs opens.
+- `swarm.sh watch --epic <slug>`, with no repos named, also returns `epic-done: <slug> has no agent work left` (exit 0) on a poll where the epic has no agent work left by the `finish:` line's rule and no PR of its stories is open, so the conductor writes its report.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story, a green PR that waits on the user, an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode, one of `next`'s `idle:` lines for blocked stories, for ready stories with no build and for an epic that can start or has no plan running, a reviewed story PR left unmerged past `queue_minutes` (`unmerged:`), a story PR that conflicts with its base (`conflict:`), a review agent's stop note that no running conductor has (`stopped:`), a plan swarm whose agents have all written their output (`planned:`) or one that ended without it (`plan-missing:`), or a `usage:` warning once the usage estimate passes `usage_warn_percent`, among others: [§ The lead](docs/reference-lead.md#the-lead) in docs/reference-lead.md lists every line.
   A run with nothing new to report ends on `timeout:` (exit 1), `replaced:` when a newer run took over (exit 143), or `wait-failed: exit <rc>` on an error; a run killed outright or stopped before it started prints nothing (docs/reference-lead.md says when).
   It also starts a review agent itself: when a `review-agent` start was cut short with tries left, it runs the next try, and its `no-review:` line says `(started N of 3)`.
@@ -131,6 +132,7 @@ Useful while it runs:
   (in any session, the lead's too), and, for an agent, `git checkout`, `switch`, `restore`,
   `reset --hard`, `stash` or `clean` in the main checkout, `pkill`, `killall` and `gh pr checks`
   loops (reference-merging.md § Merging).
+  It also refuses an agent's `make test` with no `TESTS=` where the checkout has `scripts/select-tests.sh`.
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
 - One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
@@ -191,6 +193,7 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
                                             # it never runs the full suite: it names each changed file that would select every test,
                                             # which CI's full run covers, and runs the tests for the rest
 # make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
+                                            # the guard refuses it in an agent's session; an agent names TESTS= or runs select-tests.sh --run
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
                                             # if its swarm.sh reaches it; an unpinned swarm.sh call stops there; dash starts no detached refresh

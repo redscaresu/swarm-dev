@@ -5,10 +5,11 @@
 # another command, and lets a lone swarm.sh merge and plain mentions through; outside one it allows
 # everything. A call that says merge is refused when the check cannot run. It also blocks a cd before
 # ;, git checkout over uncommitted changes, git reset --hard, restore or clean dropping work in a swarm
-# project's main checkout and, for a swarm agent, git moving the main checkout and a
-# kill by pattern or of every process. A block writes one incident line to the project's
-# .swarm/events.tsv, with slug= and role= for an agent's call and version= plugin.json's, each left out
-# when it cannot be read, and hooks.json runs the script on Bash calls.
+# project's main checkout and, for a swarm agent, git moving the main checkout, a kill by pattern or
+# of every process and a make test with no TESTS= where scripts/select-tests.sh runs. A block writes
+# one incident line to the project's .swarm/events.tsv, with slug= and role= for an agent's call and
+# version= plugin.json's, each left out when it cannot be read, and hooks.json runs the script on Bash
+# calls.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -383,11 +384,34 @@ check "an agent's while IFS= read -r loop over PRs passes" as agent "${W}" 0 'wh
 # shellcheck disable=SC2016 # $l is the loop's own
 check "an agent's single gh pr checks piped into a while loop passes" as agent "${W}" 0 'gh pr checks 271 | while read -r l; do echo "$l"; done'
 check "an agent's gh pr checks after a finished while loop passes" as agent "${W}" 0 "while false; do :; done; gh pr checks 271"
+# An agent's make test with no TESTS= runs the whole suite: refused where scripts/select-tests.sh
+# runs a change's tests, in a swarm project of its own, outside git, so P's checkout stays as it was.
+MK="${ROOT}/mk"; MK_LOG="${MK}/.swarm/events.tsv"
+mkdir -p "${MK}/.claude/swarm" "${MK}/scripts" && touch "${MK}/scripts/select-tests.sh"
+mk_lines() { if [[ -f "${MK_LOG}" ]]; then wc -l < "${MK_LOG}" | tr -d ' '; else echo 0; fi; }
+refused() { # <command>: an agent's call exits 2, logs one line and says to run select-tests.sh
+  local was out rc=0
+  was="$(mk_lines)"
+  out="$(cd "${MK}" && payload "${MK}" "$1" | SWARM_AGENT=b1 bash "${HOOK}" 2>&1)" || rc=$?
+  [[ "${rc}/$(mk_lines)/$(last "${MK_LOG}" outcome)" == "2/$((was + 1))/guard-blocked: make test with no TESTS" ]] &&
+    [[ "${out}" == *"scripts/select-tests.sh --run"* && "${out}" == *"CI's sharded run is the full suite"* ]]
+}
+for c in "make test" "make test JOBS=4" "make -C . test" "make --directory=${MK} test" "timeout 600 make test" "env -u SWARM_PROJECT make test" "timeout -k 10 600 make test" "nohup timeout 600 make test" "env -C ${MK} make test" "TESTS= make test" "make test TESTS=a TESTS=" "make check test"; do
+  check "an agent's ${c} is refused with the select-tests pointer" refused "${c}"
+  check "the lead's ${c} passes" as lead "${MK}" 0 "${c}"
+done
+for c in "make test TESTS=tests/x_test.sh" "TESTS=tests/x_test.sh make test" "env -u SWARM_PROJECT make test TESTS=tests/x_test.sh" "env -u SWARM_PROJECT echo make test" "nohup printf make test" "scripts/select-tests.sh --run" "make check" "echo make test"; do
+  check "an agent's ${c} passes" as agent "${MK}" 0 "${c}"
+done
+check "an agent's make -C <a checkout with no select-tests.sh> test passes" as agent "${MK}" 0 "make -C ${P} test"
+check "an agent's make test in a project with no select-tests.sh passes" as agent "${W}" 0 "make test"
+check "an agent's env -C <a checkout with no select-tests.sh> make test passes" as agent "${MK}" 0 "env -C ${P} make test"
 # The fast path sends pr checks to the parser, and a bare checks word past it.
 mkdir -p "${ROOT}/markpy" && printf '#!/bin/sh\n: > "%s/py-ran"\nexit 0\n' "${ROOT}" > "${ROOT}/markpy/python3" && chmod +x "${ROOT}/markpy/python3"
 ran() { rm -f "${ROOT}/py-ran"; call "${W}" "$1" "PATH='${ROOT}/markpy':\${PATH} bash '${HOOK}'" >/dev/null; if [[ -e "${ROOT}/py-ran" ]]; then echo parser; else echo fast; fi; }
 check "make checks takes the fast path" test "$(ran "make checks")" == fast
 check "gh pr checks 271 reaches the parser" test "$(ran "gh pr checks 271")" == parser
+check "make test reaches the parser" test "$(ran "make test")" == parser
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -264,7 +264,25 @@ no copy of it at the base's tip, or at the PR's merge base with the base, the li
 A file the base deleted, or renamed past what git detects, still counts its lines, since the two
 look the same. A stacked build keeps its parent's merges in its history after the parent's squash
 merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
-squash has taken it off the base. A line the PR's own merge drops while the base still has it still
+squash has taken it off the base.
+Once the parent's PR has merged, the build's own merge of the parent's branch is checked against
+that branch, the way a merge of the base is checked against the base. A line it dropped that the
+parent's branch had prints while the base still has it.
+A line the parent added counts from the build's first merge of the base after the parent's squash: before that, the PR's merge base with the base has no copy of it, so the PR's merge cannot delete it.
+The build's side of that merge can hold commits of the base that the parent's branch lacks: it started on another parent's branch, cut from a newer base, or it merged the base itself.
+A line of those commits that the merge dropped would not be in the parent's branch's file, so such a merge is checked only when it is git's own merge of the two, with no conflict resolved by hand and no edit.
+Resolved or edited by hand, it cannot be checked, and the PR is held as for any merge the scan cannot read.
+`dropped-lines` asks gh which PR holds
+the merge's second parent, and treats that commit as the parent's branch when the PR has merged and
+its merge commit is on the base. Until the parent's PR merges, the merge cannot be checked. The check
+used to refuse such a merge even after the parent merged, which stopped the review of four story PRs
+that had merged their parent's branch while stacked
+([#879](https://github.com/redscaresu/swarm-dev/pull/879),
+[#909](https://github.com/redscaresu/swarm-dev/pull/909),
+[#956](https://github.com/redscaresu/swarm-dev/pull/956) and
+[#905](https://github.com/redscaresu/swarm-dev/pull/905)); each time, the lead had the builder
+rebuild the branch as one commit on the base.
+A line the PR's own merge drops while the base still has it still
 prints. A line the PR's head still holds does not count, so a commit that puts a dropped line back
 clears the hold on the next `swarm.sh merge`. After reading every merge, the check counts the line's
 copies in the head's file. The head must hold at least the copies the merge kept plus the ones it
@@ -295,8 +313,8 @@ line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
 holds the PR too and says why: `held: <slug> (dropped base lines unchecked: <why>); the user checks the
 merge by hand and merges it, or runs swarm.sh merge again`. That covers a gh or fetch error,
-git below 2.36, a merge the scan cannot read (an octopus, or a stacked build's merge of its parent
-branch), and a PR with 250 or more commits, the most GitHub lists. A passing error clears on the next
+git below 2.36, a merge the scan cannot read (an octopus, or a stacked build's merge of a parent
+branch whose PR has not merged), and a PR with 250 or more commits, the most GitHub lists. A passing error clears on the next
 `swarm.sh merge`. When the PR's head moved on GitHub meanwhile (`refs/pull/<n>/head` is another commit,
 or gh no longer lists the head), `merge` refuses for a new review instead, with a line that ends
 `review the new head`. On a `--board` PR the held line names the PR's URL in place of a slug, and
@@ -811,8 +829,14 @@ another session's process. `kill $!` and `kill <pid>` pass. It refuses an agent'
 any `while` or `until` loop around `gh pr checks` (a `while read` loop that checks each PR once
 passes), and names `swarm.sh wait-pr`, which stops on a red
 check, a conflict or a deadline. A single `gh pr checks` passes.
+It refuses an agent's `make test` with no `TESTS=`, or an empty one, where make runs in a checkout that has `scripts/select-tests.sh`.
+That covers `make test JOBS=4`, `make -C <dir> test` and a `make test` behind `timeout`, `env` or `nohup` with their usual options (`env -u <var>`, `timeout -k 10 600`), and it follows `env -C <dir>`.
+The refusal names `scripts/select-tests.sh --run` and says CI's sharded run is the full suite.
+`make test TESTS=<files>`, `TESTS=<files> make test` and `scripts/select-tests.sh --run` pass.
+So does an agent's `make test` in a project with no `scripts/select-tests.sh`.
+A `make test` that a test starts inside another run is no Bash call of a session, so the hook never sees it.
 Your own session has no `SWARM_AGENT`, so only the `cd`, `git checkout` and main checkout rules
-apply to it. These
+apply to it, and its bare `make test` passes. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
@@ -1154,8 +1178,12 @@ It also counts only while `<head>` has not put it back: `<head>`'s file must hol
 A line the head extends does not count either: a line that `<head>` added, beyond the base's own copies, holds all of its words in the same order, and they are more than half of that line's words, so a line only re-indented counts as extended too. Each such line stands in for one dropped line, and a dropped line of fewer than three words always counts.
 It skips only the merges that `swarm.sh merge` recorded as `base-merged` in events.tsv: GitHub's own merges of the base, which it checked bring nothing else.
 Any other merge is scanned, a GitHub web-editor merge included.
+For a merge with neither parent on the fetched `<base>`, it asks gh which PRs hold the merge's second parent (`repos/<owner/repo>/commits/<sha>/pulls`).
+When one of them has merged and its merge commit is on the fetched `<base>`, the merge is a stacked build's merge of its parent's branch: it is scanned with that branch in the base's place, and a line it dropped counts only while the base still has it.
+Where that merge's first parent holds a commit of `<base>` that the parent's branch lacks, the merge is scanned only when its `git show --remerge-diff` is empty: otherwise it exits 2 naming the merge.
+When gh cannot list those PRs, it exits 2 naming the merge.
 Each dropped line prints as `<sha7> <file>: <text>`.
-It exits 0 when nothing was dropped, 1 when it printed a line, and 2 when it cannot check: bad arguments, another origin, a head that moved or a stale fetch (naming both SHAs), git below 2.36, or a merge it cannot scan (an octopus, or one with neither parent on the base).
+It exits 0 when nothing was dropped, 1 when it printed a line, and 2 when it cannot check: bad arguments, another origin, a head that moved or a stale fetch (naming both SHAs), git below 2.36, or a merge it cannot scan (an octopus, or one with neither parent on the base whose second parent is on no merged PR's branch).
 
 **`swarm.sh init`**
 Set a project up, from its git root:

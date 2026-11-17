@@ -26,10 +26,14 @@ cat >> "${ROOT}/bin/gh" <<'EOF'
 echo "$*" >> "$F/calls"
 q=""; for a in "$@"; do [ "$p" = -q ] && q="$a"; p="$a"; done
 case "$1 $2" in
-  "repo view") echo o/svc; exit 0 ;;
+  "repo view") echo "${3#https://github.com/}"; exit 0 ;;
 esac
 case "$2 $3" in
-  "--paginate repos/o/svc/pulls?"*) out="$(jq -r "$q" "$F/prlist.json")"; printf '%s\n' "${out}"; exit 0 ;;
+  # on-list, when there, runs once after svc's list is read: a change to the board or the PRs made
+  # while a watch runs, past its start.
+  "--paginate repos/o/svc/pulls?"*) out="$(jq -r "$q" "$F/prlist.json")" || exit 1
+    [ ! -f "$F/on-list" ] || { sh "$F/on-list"; rm -f "$F/on-list"; }; printf '%s\n' "${out}"; exit 0 ;;
+  "--paginate repos/o/svc2/pulls?"*) out="$(jq -r "$q" "$F/prlist2.json")" || exit 1; printf '%s\n' "${out}"; exit 0 ;;
 esac
 case "$2" in
   repos/o/svc/pulls/*) echo MERGEABLE ;;
@@ -82,7 +86,8 @@ opened_events() { ev_rows pr-opened url; }
 unsee() { { grep -vx "opened o/svc#$1" "${seen}" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${seen}"; }
 
 # watch_for <watch args...> — what watch printed (stdout and stderr), a |, then how it ended: its exit
-# code, "polling" once it has listed the PRs three times (so two whole polls said nothing), or "timeout"
+# code, "polling" once it has listed the PRs three times (so two whole polls said nothing; WATCH_LISTS
+# times when set, for a poll that lists more than one repo), or "timeout"
 # when neither comes within WATCH_SECS, swarm.sh's start included. It polls every 0.12 s; calls then holds
 # only this run's gh calls. The watch runs as a process group of its own, and watch_for returns only once
 # that group is gone (stop_group): a watch still running is stopped with every process it started, and
@@ -99,7 +104,7 @@ watch_for() {
   pid=$!; group_record "${pid}" "${ROOT}/groups" || note=" (no group ${pid})"
   for ((i = 0; i < WATCH_SECS * 5; i++)); do
     if ! kill -0 "${pid}" 2>/dev/null; then { wait "${pid}"; } 2>/dev/null && end=0 || end=$?; break; fi
-    if [[ $(grep -c 'pulls?state=open' "${ROOT}/calls" || true) -ge 3 ]]; then end=polling; break; fi
+    if [[ $(grep -c 'pulls?state=open' "${ROOT}/calls" || true) -ge "${WATCH_LISTS:-3}" ]]; then end=polling; break; fi
     sleep 0.2
   done
   out="$(cat "${ROOT}/watch.out")"
@@ -159,6 +164,62 @@ check "the bare watch logs no pr-opened line" "${logged}" "$(opened_events)"
 mv "${EV}" "${ROOT}/events.keep"; mkdir "${EV}"
 check "watch --epic with events.tsv unwritable says the PR opened and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
 rmdir "${EV}"; mv "${ROOT}/events.keep" "${EV}"
+
+# An epic with no agent work left: its code story y is done, and only a lead story, x, is left, with no
+# PR of the epic open. Its watch says so on its first poll and exits 0, so its conductor reports (two
+# conductors sat busy for hours on 2026-11-16 because their watch never returned after the last merge).
+printf -- '---\nstatus: active\n---\n' > "${p}/docs/epics/fin.md"
+printf -- '---\nstatus: done\nkind: code\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/y.md"
+printf -- '---\nstatus: ready\nkind: lead\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/x.md"
+prs
+check "watch --epic of an epic with only a lead story left says epic-done and exits 0" \
+  "epic-done: fin has no agent work left|0" "$(watch_for --epic fin)"
+# One cached list for the poll, then one past the cache before the line: two lists, one poll.
+check "watch --epic says epic-done on its first poll, after listing again" "2" "$(grep -c 'pulls?state=open' "${ROOT}/calls" || true)"
+# A watch given repos sees only those, so it cannot tell the epic has no PR open elsewhere.
+check "watch --epic given a repo never says epic-done" "|polling" "$(watch_for --epic fin svc)"
+# A code story of the epic still ready, blocked on an agent's story, or in review with its PR open is
+# agent work: the watch polls on. z's PR (#4) is recorded opened, so the watch has nothing to say of it.
+for st in ready blocked; do
+  printf -- '---\nstatus: %s\nkind: code\nepic: fin\nrepo: svc\ndepends_on: [a]\n---\n' "${st}" > "${p}/docs/stories/z.md"
+  check "watch --epic polls on while a code story of the epic is ${st}" "|polling" "$(watch_for --epic fin)"
+done
+printf -- '---\nstatus: review\nkind: code\nepic: fin\nrepo: svc\n---\n' > "${p}/docs/stories/z.md"
+prs story/z; echo "opened o/svc#4" >> "${seen}"
+check "watch --epic polls on while a code story of the epic is in review with its PR open" "|polling" "$(watch_for --epic fin)"
+# The open PR alone holds it: z left in review with no PR open is the user's, and the epic is done.
+prs
+check "watch --epic says epic-done once the review story's PR is no longer open" \
+  "epic-done: fin has no agent work left|0" "$(watch_for --epic fin)"
+# A list that fails cannot tell whether a PR of the epic is open: the watch polls on, saying the failure.
+mv "${ROOT}/prlist.json" "${ROOT}/prlist.keep"
+got="$(watch_for --epic fin)"
+check "watch --epic polls on when the PR list fails" "polling" "${got##*|}"
+mv "${ROOT}/prlist.keep" "${ROOT}/prlist.json"
+# A story added to the epic after its watch started, in another repo (svc2) whose list shows its PR
+# open, holds the watch: the second list takes in the repos the epic's stories name now. z's PR, open
+# at the start, holds the first poll; during it (on-list) the lead story w is added in svc2, z's PR
+# closes and the epic file goes, as an epic's last story PR deletes it: the repos come from the story
+# files alone. Each later poll lists svc, then svc and svc2 past the cache, so 8 lists make three polls.
+git init -q "${ROOT}/repos/svc2" && git -C "${ROOT}/repos/svc2" remote add origin https://github.com/o/svc2
+echo "[{\"number\": 1, \"head\": {\"ref\": \"story/w\", \"sha\": \"w1\"}, \"updated_at\": \"${now}\"}]" > "${ROOT}/prlist2.json"
+printf -- '---\nstatus: ready\nkind: lead\nepic: fin\nrepo: svc2\n---\n' > "${ROOT}/w.pending"
+prs; cp "${ROOT}/prlist.json" "${ROOT}/prlist-noz.json"; prs story/z
+printf 'cp "%s" "%s"\ncp "%s" "%s"\nmv "%s" "%s"\n' "${ROOT}/prlist-noz.json" "${ROOT}/prlist.json" "${ROOT}/w.pending" \
+  "${p}/docs/stories/w.md" "${p}/docs/epics/fin.md" "${ROOT}/fin.keep" > "${ROOT}/on-list"
+check "watch --epic polls on while a story added in another repo since its start has a PR open there, its epic file gone" \
+  "|polling" "$(WATCH_LISTS=8 watch_for --epic fin)"
+check "watch --epic lists the added story's repo, resolving it once" "1+|1" \
+  "$([[ $(grep -c 'repos/o/svc2/pulls?' "${ROOT}/calls" || true) -ge 1 ]] && echo 1+)|$(grep -c '^repo view https://github.com/o/svc2' "${ROOT}/calls" || true)"
+check "the on-list change ran: the epic file is gone" "gone" "$([[ -f "${p}/docs/epics/fin.md" ]] || echo gone)"
+mv "${ROOT}/fin.keep" "${p}/docs/epics/fin.md"
+rm -f "${p}/docs/stories/z.md" "${p}/docs/stories/w.md" "${ROOT}/on-list"
+# Only an epic's watch says it. The backlog's only code story, c, is done and no PR is open, so an
+# epic's rule would find nothing left there, yet the backlog's and the lead's watches poll on.
+printf -- '---\nstatus: done\nkind: code\nrepo: svc\n---\n' > "${p}/docs/stories/c.md"
+echo '[]' > "${ROOT}/prlist.json"
+check "watch --backlog never says epic-done" "|polling" "$(watch_for --backlog)"
+check "the bare watch never says epic-done" "|polling" "$(watch_for)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} check(s) failed"; exit 1; fi
 echo "all passed"

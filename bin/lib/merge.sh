@@ -796,12 +796,14 @@ base_accepted_from() {
 # GitHub's merge of the base for any story (base_merged; merge_base_update's `base-merged <sha>`, shown
 # to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
 # GitHub's web editor).
-# With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it prints
-# dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
+# With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it asks
+# merged_parent about each merge left, passes dropped_lines.py each second parent it names as
+# `--merged <sha>`, so a stacked build's merge of a merged parent's branch is scanned against that
+# branch, and prints dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
 # `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m ver rc=0 keep=()
+  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m p ver rc=0 keep=() args=()
   local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
   [[ $# -eq 4 && "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "${n}" =~ ^[0-9]+$ && "${head}" =~ ^[0-9a-f]{40}$ \
      && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"
@@ -820,7 +822,12 @@ dropped_lines() {
   [[ ${#keep[@]} -gt 0 ]] || return 0
   ver="$(remerge_git)" \
     || die "dropped-lines: git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which the scan of ${url}'s merges reads: update git"
-  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${keep[@]}")" || rc=$?
+  args=("${keep[@]}")
+  for m in "${keep[@]}"; do
+    p="$(merged_parent "${repo}" "${m}")" || die "dropped-lines: ${p}"
+    [[ -z "${p}" ]] || args+=(--merged "${p}")
+  done
+  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${args[@]}")" || rc=$?
   case ${rc} in
     0) [[ -z "${out}" ]] || echo "${out}" ;;
     1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: dropped_lines.py exited 1 with no dropped line: ${out:-it printed nothing}"
@@ -830,6 +837,31 @@ dropped_lines() {
     2) echo "${out}"; exit 2 ;;
     *) die "dropped-lines: dropped_lines.py exited ${rc}: ${out:-it printed nothing}" ;;
   esac
+}
+
+# merged_parent <owner/repo> <merge> — the second parent of <merge> when it is a stacked build's merge of a
+# parent's branch whose PR has merged (dropped_lines), read in the clone and against the base pr_fetch
+# fetched (DROPPED_DIR, DROPPED_TIP): <merge> has two parents, neither on the fetched base, and gh lists a
+# merged PR that holds the second parent whose merge commit (the parent's squash) is on the fetched base.
+# Nothing for any other merge, which dropped_lines.py scans or refuses as before. gh's
+# commits/<sha>/pulls is GitHub's record of the PRs whose commits hold <sha>, a merged PR's commits too,
+# so no branch name or story is guessed at. When gh fails or does not answer within BASE_MOVED_WAIT, it
+# prints why and returns 1.
+merged_parent() {
+  local repo="$1" m="$2" src="${DROPPED_DIR}" tip="${DROPPED_TIP}" out sha rc=0 ps=()
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+  read -r -a ps <<< "$(git -C "${src}" rev-list --parents -n 1 "${m}" -- 2>/dev/null)"
+  [[ ${#ps[@]} -eq 3 ]] || return 0
+  ! git -C "${src}" merge-base --is-ancestor "${ps[1]}" "${tip}" 2>/dev/null || return 0
+  ! git -C "${src}" merge-base --is-ancestor "${ps[2]}" "${tip}" 2>/dev/null || return 0
+  out="$(within "${limit}" gh api "repos/${repo}/commits/${ps[2]}/pulls?per_page=100" \
+    --jq '.[] | select(.merged_at != null) | .merge_commit_sha' < /dev/null 2>&1)" || rc=$?
+  if [[ ${rc} -eq 142 ]]; then echo "gh did not list the PRs that hold ${ps[2]:0:7}, merge ${m:0:7}'s second parent, within ${limit}s"; return 1; fi
+  if [[ ${rc} -ne 0 ]]; then echo "gh cannot list the PRs that hold ${ps[2]:0:7}, merge ${m:0:7}'s second parent: ${out##*$'\n'}"; return 1; fi
+  for sha in ${out}; do
+    [[ "${sha}" =~ ^[0-9a-f]{40}$ ]] || continue
+    if git -C "${src}" merge-base --is-ancestor "${sha}" "${tip}" 2>/dev/null; then echo "${ps[2]}"; return 0; fi
+  done
 }
 
 # pr_fetch <who> <owner/repo> <n> <head> <base> — fetch PR <n>'s head and <base> for a read of its
@@ -3070,8 +3102,16 @@ queued_sent() {
 # shared read can be up to that old, so a change can take a poll longer to be seen. The mergeable read
 # (watch_mergeable) is never shared: it is keyed by PR number, not head, and a kept MERGEABLE would hide
 # a new conflict.
+# A conductor's `watch --epic <slug>`, with no repos named, prints `epic-done: <slug> has no agent work
+# left` and exits 0 on a poll that lists every repo, finds no open PR of the epic's stories
+# (epic_pr) and no agent work left in the epic (agent_work_left, the rule of conductor_note's finish:
+# line), and finds no such PR again on an uncached list (epic_unlisted), so the conductor writes its
+# report: a watch that outlived its epic's last merge kept the conductor busy, and next waiting on it,
+# for hours. A poll whose list failed for any repo cannot tell, so it polls on; a watch given repos
+# sees only those, so it never says it.
 watch_prs() {
-  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo WATCH_SHARE epic="" listed epic_open
+  [[ "${1:-}" != --epic || $# -ne 2 ]] || epic="$2"
   watch_scope "$@"; watch_repos die
   WATCH_SHARE="$(watch_share)"
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
@@ -3089,10 +3129,14 @@ watch_prs() {
   # below uses it, so a watch that returns at one PR reads none past it. unlisted: the repos whose list
   # failed, said once until it next succeeds. unread: the PRs whose check-runs read failed, likewise.
   local warned unlisted=" " rows runs why unread=" "
+  # epic_known, epic_extra, epic_said: epic_unlisted's resolved repo names, the owner/names it added and
+  # the failures it has said.
+  local epic_known=" ${WATCH_NAMES[*]} " epic_extra="" epic_said=" "
   while :; do
-    warned=""
+    warned=""; listed=1; epic_open=""
     for repo in "${repos[@]}"; do
       if ! rows="$(watch_rows "${repo}")"; then
+        listed=""
         if [[ "${unlisted}" != *" ${repo} "* ]]; then
           echo "swarm: watch: gh cannot list ${repo}'s open PRs: ${rows##*$'\n'}" >&2; unlisted+="${repo} "
         fi
@@ -3101,6 +3145,7 @@ watch_prs() {
       unlisted="${unlisted// ${repo} / }"
       while read -r n sha br age; do
         [[ -n "${n}" ]] || continue
+        [[ -z "${epic}" ]] || ! epic_pr "${epic}" "${heads}" "${br}" || epic_open=1
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
         # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
         # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
@@ -3189,8 +3234,72 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
+    if [[ -n "${epic}" && -n "${listed}" && -z "${epic_open}" ]] && ! agent_work_left "${epic}" \
+      && epic_unlisted "${epic}" "${heads}" "${repos[@]}"; then
+      echo "epic-done: ${epic} has no agent work left"; return 0
+    fi
     nap "${WATCH_POLL}"
   done
+}
+
+# epic_pr <epic> <heads> <branch> — true when <branch> is a PR of <epic>'s stories: story/<slug> for a
+# story in watch's heads, or one whose story file names <epic> now (a story added after the watch
+# started). A fix-main story's PR is in every conductor's scope but is no epic's.
+epic_pr() {
+  [[ "$3" != story/fix-main-* ]] || return 1
+  [[ " $2 " == *" $3 "* ]] || [[ "$(fm "${BOARD}/stories/${3#story/}.md" epic)" == "$1" ]]
+}
+
+# epic_unlisted <epic> <heads> <owner/repo>... — true when an uncached list of each repo (watch_rows with
+# WATCH_SHARE off) succeeds and shows no open PR of <epic>'s stories (epic_pr): a shared list can be up
+# to a poll old, and epic-done ends the watch, so no later poll would see a PR opened since. The repos
+# are the given ones and those the epic's stories name now (epic_repo_names), so a story added in another
+# repo since the watch started is listed too. It reads and
+# updates watch_prs's epic_known (the repo names resolved so far, the start's included) and epic_extra
+# (the owner/names resolved since), so each name costs one gh repo view, a GraphQL read, per watch. A
+# resolve or a list that fails fails it, said once on stderr (epic_say) until that read next succeeds.
+epic_unlisted() {
+  local e="$1" h="$2" r rows n sha br age name names
+  shift 2
+  names="$(epic_repo_names "${e}")"
+  for name in ${names}; do
+    [[ "${epic_known}" != *" ${name} "* ]] || continue
+    if ! r="$(repo_slug "${name}" 2>/dev/null)"; then
+      epic_say "resolve ${name}" "repo ${name}, which a story of epic ${e} names, cannot be resolved (${r##*$'\n'})"; return 1
+    fi
+    epic_said="${epic_said// resolve ${name} / }"; epic_known+="${name} "
+    [[ " $* ${epic_extra} " == *" ${r} "* ]] || epic_extra+="${r} "
+  done
+  for r in "$@" ${epic_extra}; do
+    if ! rows="$(WATCH_SHARE=0 watch_rows "${r}")"; then
+      epic_say "list ${r}" "gh cannot list ${r}'s open PRs past the poll cache: ${rows##*$'\n'}"; return 1
+    fi
+    epic_said="${epic_said// list ${r} / }"
+    while read -r n sha br age; do
+      [[ -z "${n}" ]] || ! epic_pr "${e}" "${h}" "${br}" || return 1
+    done <<< "${rows}"
+  done
+}
+
+# epic_repo_names <epic> — the repo names, as the board names them, of the project (when it is a repo)
+# and of each story whose epic: is <epic>, as watch_scope's default takes them. It reads the story
+# files alone: an epic's last story PR deletes the epic file, so at the poll epic-done is for, watch_scope
+# --epic would die on it.
+epic_repo_names() {
+  local f
+  [[ ${PROJECT_IS_GIT} != 1 ]] || basename "${PROJECT_DIR}"
+  for f in "${BOARD}"/stories/*.md; do
+    [[ -f "${f}" && "$(basename "${f}")" != README.md && "$(fm "${f}" epic)" == "$1" ]] || continue
+    fm "${f}" repo
+  done
+}
+
+# epic_say <key> <why> — say on stderr that watch cannot tell whether its epic is done, and why, once per
+# <key> in watch_prs's epic_said, until epic_unlisted clears the key on a read that succeeds.
+epic_say() {
+  [[ "${epic_said}" != *" $1 "* ]] || return 0
+  epic_said+="$1 "
+  echo "swarm: watch: $2, so whether epic ${epic} has no agent work left is unknown; polling on" >&2
 }
 
 # watch_share — the poll cache's max age, in whole seconds, for watch's reads (WATCH_SHARE) and next's

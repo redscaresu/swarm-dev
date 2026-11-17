@@ -256,6 +256,72 @@ check "a merge of a stacked parent branch is unchecked, with its reason, not dro
 check "a range git cannot read exits 2 saying so" \
   "cannot list the merges in main..nope: fatal: bad revision 'main..nope'"$'\n'"exit 2" "$(scan "${R}" main nope)"
 
+# parent_merged <name> [-] — a stacked build's merge of its parent's branch, once the parent merged (#879,
+# #909, #956, #905): pr replaces three with three-pr; child, stacked on pr, adds c; pr then replaces ten
+# with ten-pr, and child merges pr, with f resolved to stdin when - is given (else git's own merge). pr
+# then squash-merges into main and child merges main. Leaves child checked out, whose first parent is
+# the merge of pr; prints the repo's path.
+parent_merged() {
+  local d; d="$(new_repo "$1")"
+  on "${d}" pr; lines three-pr | put "${d}" f
+  git -C "${d}" checkout -q -b child pr; echo c1 | put "${d}" c
+  on "${d}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${d}" f
+  on "${d}" child; merge "${d}" pr "${2:-}" >/dev/null
+  on "${d}" main; git -C "${d}" merge -q --squash pr >/dev/null; git -C "${d}" commit -qm 'the parent (#1)'
+  on "${d}" child; merge "${d}" main >/dev/null; echo "${d}"
+}
+
+R="$(parent_merged parentmerged)"; M="$(git -C "${R}" rev-parse child^1)"
+check "a merge of a merged parent's branch, its second parent --merged, no line lost: nothing, exit 0" \
+  "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+check "the same merge with no --merged: still unchecked, with today's reason" \
+  "merge ${M:0:7} is unchecked: neither parent is on main, so it is not a merge of main (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
+  "$(scan "${R}" main child)"
+check "the same merge with --merged naming another commit of the parent's branch: still unchecked" \
+  "merge ${M:0:7} is unchecked: neither parent is on main, so it is not a merge of main (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr^)")"
+check "a --merged with no SHA after it: the usage line, exit 2" \
+  "usage: dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged)"
+# The merge of pr drops six, which main and pr's branch both still hold, and child's clean merge of main
+# keeps it out.
+R="$(lines three-pr | sed 's/^ten$/ten-pr/' | grep -vx six | parent_merged parentdrop -)"; M="$(git -C "${R}" rev-parse child^1)"
+check "a merge of a merged parent's branch that drops a line main and that branch still hold: it prints, exit 1" \
+  "${M:0:7} f: six"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+
+# child can hold a commit of main that pr's branch lacks, as a build does that started on another parent's
+# branch or merged main itself (#879's and #909's merge): main appends main-added and child merges main
+# before pr replaces ten with ten-pr. A line of that commit the merge of pr dropped would not be in pr's
+# file, so that merge is scanned only when it is git's own merge of the two, as this one is.
+R="$(new_repo aheadown)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; printf '%s\n' "${BASE0[@]}" main-added | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+on "${R}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${R}" f
+on "${R}" child; merge "${R}" pr >/dev/null
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+on "${R}" child; merge "${R}" main >/dev/null
+check "a merge of a merged parent's branch, its first parent ahead on main, that is git's own merge: nothing, exit 0" \
+  "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+# The same resolved by hand is unchecked, never clean. main adds a second } at the top, which child merges
+# and pr's branch lacks; pr then removes the } it had, and child's merge of pr drops main's new copy as
+# well. pr squash-merges, main adds a third } after five, and child's clean merge of main holds that newest
+# copy alone, so main's second copy is missing and no count of pr's file or child's can show it.
+R="$(new_repo aheadhand)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; printf '%s\n' '}' "${BASE0[@]}" | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+on "${R}" pr; lines three-pr | grep -vx '}' | put "${R}" f
+on "${R}" child; M="$(lines three-pr | grep -vx '}' | merge "${R}" pr -)"
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+printf '%s\n' '}' one two three-pr four five '}' "${BASE0[@]:5:6}" eleven | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+check "a merge of a merged parent's branch, its first parent ahead on main, resolved by hand and dropping a line of main: unchecked, exit 2" \
+  "merge ${M:0:7} is unchecked: its first parent holds commits of main that the merged parent's branch lacks, and it is not git's own merge of the two"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+
 # squashed_parent <name> — new_repo <name> with pr as a stacked build's parent: pr's merge of main keeps
 # three-pr and three-main, dropping main-added on purpose; child, stacked on pr, adds c; then pr
 # squash-merges into main, so main's f no longer has main-added, and pr's merge, still in child's
@@ -435,16 +501,19 @@ check "a dropped line the head holds more copies of than the base, short of what
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
-# commits (${tmp}/commits.json, honouring --jq) and logs each call.
+# commits (${tmp}/commits.json) and the PRs that hold a commit (${tmp}/pulls.json, a 404 while it is
+# absent), honouring --jq, and logs each call.
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "${tmp}" && pwd -P)"; O="${ROOT}/acme/widget.git"; P="${ROOT}/widget"; URL7=https://github.com/acme/widget/pull/7
 mkdir -p "${ROOT}/acme" "${ROOT}/bin" "${ROOT}/oldgit"; git init -q --bare "${O}"
 # shellcheck disable=SC2016 # the stub's own variables
 printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\nFX="%s"\n' "${ROOT}" "${ROOT}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
+q="."; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
 case "$*" in
-  *"/pulls/7/commits"*) q="."; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
-                        jq -r "${q}" "${FX}/commits.json" ;;
+  *"/pulls/7/commits"*) jq -r "${q}" "${FX}/commits.json" ;;
+  *"/commits/"*"/pulls"*) [ -f "${FX}/pulls.json" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+                          jq -r "${q}" "${FX}/pulls.json" ;;
   *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 esac
 STUB
@@ -529,5 +598,34 @@ on "${W}" main; echo m2 | put "${W}" m2; git -C "${W}" push -q "${O}" main
 was="$(git -C "${P}" rev-parse origin/main)"; pull "${PLAIN}"
 check "dropped-lines: a run with origin/main behind origin's main exits 0" "exit 0" "$(dl "${PLAIN}")"
 check "dropped-lines: the run did not move the clone's origin/main" "${was}" "$(git -C "${P}" rev-parse origin/main)"
+
+# A stacked build's merge of its parent's branch (parent_merged's shape, in W, on s): par replaces s3,
+# kid, stacked on par, adds k, par replaces s5, and kid merges par (PM) with git's own merge. par then
+# squash-merges into main (SQ), and kid merges main. gh's list of the PRs that hold PM's second parent
+# (commits/<sha>/pulls) is ${ROOT}/pulls.json, one PR, #6: pulls <merged_at> <merge commit> writes it.
+on "${W}" main; printf '%s\n' s1 s2 s3 s4 s5 s6 | put "${W}" s
+git -C "${W}" checkout -q -b par main; printf '%s\n' s1 s2 s3-par s4 s5 s6 | put "${W}" s
+git -C "${W}" checkout -q -b kid par; echo k1 | put "${W}" k
+on "${W}" par; printf '%s\n' s1 s2 s3-par s4 s5-par s6 | put "${W}" s; PAR="$(git -C "${W}" rev-parse HEAD)"
+on "${W}" kid; PM="$(merge "${W}" par)"
+on "${W}" main; git -C "${W}" merge -q --squash par >/dev/null; git -C "${W}" commit -qm 'the parent (#6)'
+SQ="$(git -C "${W}" rev-parse HEAD)"; git -C "${W}" push -q "${O}" main
+on "${W}" kid; KID="$(merge "${W}" main)"; pull "${KID}"
+pulls() { printf '[{"number":6,"merged_at":%s,"merge_commit_sha":"%s"}]\n' "$1" "$2" > "${ROOT}/pulls.json"; }
+pulls '"2026-11-16T00:00:00Z"' "${SQ}"
+check "dropped-lines: a stacked merge of a parent's branch whose PR merged, its squash on main, no line lost: exit 0" \
+  "exit 0" "$(dl "${KID}")"
+UNCHECKED="merge ${PM:0:7} is unchecked: neither parent is on ${SQ}, so it is not a merge of ${SQ} (a stacked build's merge of its parent branch?)"$'\n'"exit 2"
+pulls null "${SQ}"
+check "dropped-lines: the same, gh listing the parent's PR as not merged: today's reason, exit 2" "${UNCHECKED}" "$(dl "${KID}")"
+pulls '"2026-11-16T00:00:00Z"' "${PAR}"
+check "dropped-lines: the same, the merged PR's merge commit not on the fetched main: today's reason, exit 2" \
+  "${UNCHECKED}" "$(dl "${KID}")"
+echo '[]' > "${ROOT}/pulls.json"
+check "dropped-lines: the same, gh listing no PR that holds the second parent: today's reason, exit 2" "${UNCHECKED}" "$(dl "${KID}")"
+rm -f "${ROOT}/pulls.json"
+check "dropped-lines: the same, gh failing on that list: exit 2 naming the merge" \
+  "swarm: dropped-lines: gh cannot list the PRs that hold ${PAR:0:7}, merge ${PM:0:7}'s second parent: gh: Not Found (HTTP 404)"$'\n'"exit 2" \
+  "$(dl "${KID}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

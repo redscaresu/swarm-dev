@@ -56,3 +56,5 @@ Board PRs that only edit, hold or finish stories get no codex review (commands/s
   escaped-of-deferred and the 4+ round share, beside the Before table.
 - The line is kept, with the reading that justified it, or a merged revert PR is linked with the
   numbers that failed.
+
+**At the v0.31.0 retro (2026-11-17):** kept. Its step 1 can start once v0.31.0 ships demote-kinds-key.
