@@ -1074,7 +1074,9 @@ RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may tak
 # findings to fix written to <slug>.round.md (review_pass on it), and each file:line a point its ## Findings
 # name, every finding there naming one (recheck_named), its line as at <old head>. With the worktree at the PR's new head
 # (review_at_head), it passes when `git diff <old head>..<new head>` rewrites each named line and nothing
-# else (recheck_hunks) and the new head is green (ci_gate head, within RECHECK_CI_SECONDS). A pass writes
+# else (recheck_hunks) and the new head is green (ci_gate head with the PR's base, number and changed file
+# count, as wait-pr reads it, so a workflow its pull_request runs with no run on the head is not finished;
+# the count's read and ci_gate's each within RECHECK_CI_SECONDS). A pass writes
 # the new head's findings file, a pass whose ## Handled by the review agent carries the round file's, any
 # file there before kept as <slug>.md.prev, and .head; main logs
 # it as review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing
@@ -1083,7 +1085,7 @@ RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may tak
 # again, and the rest say what to fix first.
 review_recheck() {
   local slug="$1" pr="$2" old="$3" usage="swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>..."
-  local out round handled repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
+  local out round handled repo why rc point base changed secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --recheck: bad slug '${slug}' (${usage})"
   [[ "${pr}" =~ ^https://[^/[:space:]]+/([^/[:space:]]+/[^/[:space:]]+)/pull/[0-9]+$ ]] \
     || die "review-agent --recheck: '${pr}' is not a PR URL (${usage})"
@@ -1107,7 +1109,14 @@ review_recheck() {
   why="$(recheck_named "${round}" "${REVIEW_WT}" "$@")" || die "review-agent --recheck: ${why}; nothing was written: ${full}"
   why="$(recheck_hunks "${REVIEW_WT}" "${old}" "${REVIEW_HEAD}" "$@")" \
     || die "review-agent --recheck: ${old:0:7}..${REVIEW_HEAD:0:7} ${why}; nothing was written: ${full}"
-  rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${REVIEW_HEAD}" </dev/null 2>&1)" || rc=$?
+  # The base and file count, as wait-pr passes them: a workflow the PR's pull_request should start, with no
+  # run on the head yet, is not finished, so one green check alone does not pass the head.
+  why="$(within "${secs}" gh pr view "${pr}" --json baseRefName,changedFiles --jq '.baseRefName + " " + (.changedFiles | tostring)' </dev/null 2>/dev/null)" || why=""
+  read -r base changed <<< "${why}"
+  [[ "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
+    || die "review-agent --recheck: could not read ${pr}'s base branch and changed file count (gh pr view --json baseRefName,changedFiles) within ${secs}s, so the workflows its pull_request runs are unknown; nothing was written: ${REVIEW_AGAIN}"
+  rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${REVIEW_HEAD}" "${base}" "${pr##*/}" "${changed}" </dev/null 2>&1)" || rc=$?
+  why="${why//$'\n'/; }"   # ci_gate's "not waited on:" line joins the first
   case "${rc}" in
     0) ;;
     1) die "review-agent --recheck: the head ${REVIEW_HEAD:0:7} is not green: ${why}; nothing was written: ${full}" ;;

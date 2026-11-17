@@ -31,9 +31,14 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$*" in
   "pr list"*) cat "${R}/prs.json" 2>/dev/null || echo '[]' ;;
   "repo view"*) echo na-owner/na-repo ;;
+  # The heads pass's read (pr_head's --json headRefOid,state,baseRefName,changedFiles) gets its fields.
+  "pr view"*baseRefName*) read -r _ || true; echo "${H} OPEN main 1" ;;
   "pr view"*) read -r _ || true; echo "${H}" ;;
   *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
   *status*) echo '{"total_count":0,"statuses":[]}' ;;
+  # No merge ref (a 422) and no .github/workflows at the head (a 404): ci_gate head waits on no pull_request workflow.
+  *commits/refs/pull/*) echo "gh: No commit found (HTTP 422)" >&2; exit 1 ;;
+  *"contents/.github/workflows?ref="*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   *) exit 1 ;;
 esac
 STUB

@@ -117,7 +117,11 @@ case "$1 $2" in
                    if [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
                    elif [ -e "${FX}/compare" ] || [ "${#c}" != 40 ]; then serve compare
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
-      */contents/.github/workflows\?*) serve workflows ;;
+      # The PR's merge ref, which ci_gate head reads for the workflows a pull_request runs: a 422, as before
+      # GitHub makes one, so they are read at the head. The listing at a ref with a fixture of its own
+      # (workflows.<ref>) gets that one, else ${FX}/workflows.
+      */commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/7/merge (HTTP 422)" >&2; exit 1 ;;
+      */contents/.github/workflows\?*) ref="${path##*ref=}"; if [ -e "${FX}/workflows.${ref}" ]; then serve "workflows.${ref}"; else serve workflows; fi ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
@@ -185,7 +189,8 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 # fresh — merge = agent with the board at the project root, since with merge = human the
 # lead merges only under an HLD that grants merge (the grant cases below); story s in review with
 # prs: ${URL}; head ${H1} with one green check run and no status; squash allowed; on the merge commit
-# a green check run and a green run of the one workflow that runs on push to main.
+# a green check run and a green run of the one workflow that runs on push to main. At ${H1} itself
+# .github/workflows lists nothing, so merge's read of the head waits on no pull_request workflow.
 fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log" "${P}"/stories/fix-main-*; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   printf '%s\n' "merge = agent" "board_dir = ." > "${P}/.claude/swarm/config"
@@ -196,7 +201,7 @@ fresh() {
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
-  workflows ci; wfruns "${FX}/${M}.runs" "$(run ci completed success "${M}")"
+  workflows ci; wfruns "${FX}/${M}.runs" "$(run ci completed success "${M}")"; echo '[]' > "${FX}/workflows.${H1}"
   item s "status: review" "prs: ${URL}"
 }
 # merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,

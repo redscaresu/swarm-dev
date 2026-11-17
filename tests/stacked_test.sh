@@ -82,6 +82,9 @@ case "$1 $2" in
   api*) case "$*" in
           *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"t","status":"completed","conclusion":"success"}]}' ;;
           *status*) echo '{"total_count":0,"statuses":[]}' ;;
+          # No merge ref (a 422) and no .github/workflows at the head (a 404): ci_gate head waits on no pull_request workflow.
+          */commits/refs/pull/*) echo "gh: No commit found (HTTP 422)" >&2; exit 1 ;;
+          *"contents/.github/workflows?ref="*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
         esac ;;
 esac
 EOF

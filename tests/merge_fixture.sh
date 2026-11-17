@@ -196,7 +196,9 @@ case "$1 $2" in
                        if [ -e "${k}" ]; then [ ! -e "${FX}/update.unread" ] || echo 99 > "${FX}/readback-left"
                          get m "${k}"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
                        serve update ;;
-      */contents/.github/workflows\?*) serve workflows ;;
+      # The .github/workflows listing at a ref with a fixture of its own (workflows.<ref>) gets that one, with
+      # its own read count, else ${FX}/workflows.
+      */contents/.github/workflows\?*) ref="${path##*ref=}"; if [ -e "${FX}/workflows.${ref}" ]; then serve "workflows.${ref}"; else serve workflows; fi ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one. With
       # ${FX}/contents.hang it first sleeps a minute.
       # ${FX}/on-contents runs once first: another process's fetch while release_check reads.
@@ -271,7 +273,9 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 # fresh [config line]... — merge = agent (a later line overrides it), since with merge = human the
 # lead merges only under an HLD that grants merge (the grant cases below); story s in review with
 # prs: ${URL}; head ${H1} with one green check run and no status; squash allowed; on the merge commit
-# a green check run and a green run of the one workflow that runs on push to main.
+# a green check run and a green run of the one workflow that runs on push to main. At ${H1} itself
+# .github/workflows lists nothing (workflows.${H1}), so merge's read of the head waits on no pull_request
+# workflow and leaves the other reads' counts as they were; a case that tests that wait lists its own.
 fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log" "${P}"/docs/stories/fix-main-*; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   printf '%s\n' "merge = agent" "$@" > "${P}/.claude/swarm/config"
@@ -282,7 +286,7 @@ fresh() {
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
-  workflows ci; wfruns "${FX}/${M}.runs" "$(run ci completed success "${M}")"
+  workflows ci; wfruns "${FX}/${M}.runs" "$(run ci completed success "${M}")"; echo '[]' > "${FX}/workflows.${H1}"
   item s "status: review" "prs: ${URL}"
 }
 # merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,
