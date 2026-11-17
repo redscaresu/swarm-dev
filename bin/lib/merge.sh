@@ -796,12 +796,14 @@ base_accepted_from() {
 # GitHub's merge of the base for any story (base_merged; merge_base_update's `base-merged <sha>`, shown
 # to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
 # GitHub's web editor).
-# With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it prints
-# dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
+# With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it asks
+# merged_parent about each merge left, passes dropped_lines.py each second parent it names as
+# `--merged <sha>`, so a stacked build's merge of a merged parent's branch is scanned against that
+# branch, and prints dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
 # `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m ver rc=0 keep=()
+  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m p ver rc=0 keep=() args=()
   local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
   [[ $# -eq 4 && "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "${n}" =~ ^[0-9]+$ && "${head}" =~ ^[0-9a-f]{40}$ \
      && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"
@@ -820,7 +822,12 @@ dropped_lines() {
   [[ ${#keep[@]} -gt 0 ]] || return 0
   ver="$(remerge_git)" \
     || die "dropped-lines: git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which the scan of ${url}'s merges reads: update git"
-  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${keep[@]}")" || rc=$?
+  args=("${keep[@]}")
+  for m in "${keep[@]}"; do
+    p="$(merged_parent "${repo}" "${m}")" || die "dropped-lines: ${p}"
+    [[ -z "${p}" ]] || args+=(--merged "${p}")
+  done
+  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${args[@]}")" || rc=$?
   case ${rc} in
     0) [[ -z "${out}" ]] || echo "${out}" ;;
     1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: dropped_lines.py exited 1 with no dropped line: ${out:-it printed nothing}"
@@ -830,6 +837,31 @@ dropped_lines() {
     2) echo "${out}"; exit 2 ;;
     *) die "dropped-lines: dropped_lines.py exited ${rc}: ${out:-it printed nothing}" ;;
   esac
+}
+
+# merged_parent <owner/repo> <merge> — the second parent of <merge> when it is a stacked build's merge of a
+# parent's branch whose PR has merged (dropped_lines), read in the clone and against the base pr_fetch
+# fetched (DROPPED_DIR, DROPPED_TIP): <merge> has two parents, neither on the fetched base, and gh lists a
+# merged PR that holds the second parent whose merge commit (the parent's squash) is on the fetched base.
+# Nothing for any other merge, which dropped_lines.py scans or refuses as before. gh's
+# commits/<sha>/pulls is GitHub's record of the PRs whose commits hold <sha>, a merged PR's commits too,
+# so no branch name or story is guessed at. When gh fails or does not answer within BASE_MOVED_WAIT, it
+# prints why and returns 1.
+merged_parent() {
+  local repo="$1" m="$2" src="${DROPPED_DIR}" tip="${DROPPED_TIP}" out sha rc=0 ps=()
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+  read -r -a ps <<< "$(git -C "${src}" rev-list --parents -n 1 "${m}" -- 2>/dev/null)"
+  [[ ${#ps[@]} -eq 3 ]] || return 0
+  ! git -C "${src}" merge-base --is-ancestor "${ps[1]}" "${tip}" 2>/dev/null || return 0
+  ! git -C "${src}" merge-base --is-ancestor "${ps[2]}" "${tip}" 2>/dev/null || return 0
+  out="$(within "${limit}" gh api "repos/${repo}/commits/${ps[2]}/pulls?per_page=100" \
+    --jq '.[] | select(.merged_at != null) | .merge_commit_sha' < /dev/null 2>&1)" || rc=$?
+  if [[ ${rc} -eq 142 ]]; then echo "gh did not list the PRs that hold ${ps[2]:0:7}, merge ${m:0:7}'s second parent, within ${limit}s"; return 1; fi
+  if [[ ${rc} -ne 0 ]]; then echo "gh cannot list the PRs that hold ${ps[2]:0:7}, merge ${m:0:7}'s second parent: ${out##*$'\n'}"; return 1; fi
+  for sha in ${out}; do
+    [[ "${sha}" =~ ^[0-9a-f]{40}$ ]] || continue
+    if git -C "${src}" merge-base --is-ancestor "${sha}" "${tip}" 2>/dev/null; then echo "${ps[2]}"; return 0; fi
+  done
 }
 
 # pr_fetch <who> <owner/repo> <n> <head> <base> — fetch PR <n>'s head and <base> for a read of its
