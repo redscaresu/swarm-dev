@@ -13,7 +13,7 @@
 # 8. a round whose dropped-lines finding went to the builder wakes no no-review: line;
 # 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI;
 # 10. codex-review runs with the PR (SWARM_PR), and a decline the builder gave a reason for is logged with --because;
-# 11. the round cap: from round 3 (CAP_ROUND) the brief and review-agent --next send only regressions and
+# 11. the round cap: from round 2 (CAP_ROUND) the brief and review-agent --next send only regressions and
 #     false lines and defer the rest, and finding_rule logs a deferred finding proved real as escaped.
 # shellcheck disable=SC2016 # the backticks in the briefs' text are literal
 set -euo pipefail
@@ -453,18 +453,16 @@ check "10 review_brief's codex command carries SWARM_STORY and SWARM_PR=<the PR 
 check "10 both builder-decline logging lines carry --because with the builder's reason" "yes|yes" \
   "$(has 'log each as declined, with `--because "<the builder'"'"'s reason, one line>"`' "${b}")|$(has 'as declined, with the reason that fits and `--because "<the builder'"'"'s reason, one line>"`, when the builder declined it' "${b}")"
 
-# --- 11. The round cap: from round 3 the round line, and so the brief and review-agent --next, sends the
-# builder only a regression or a false line and defers the rest; rounds 1 and 2 carry none of it.
-CAP='Round cap (from round 3): of the findings that are real and inside the story, send the builder only a regression this PR introduces or a line now false about the code; this replaces the rule that each of them is to fix. Decline the rest as deferred: rebut them in the PR with the other declined ones, and log each with `--declined deferred` and no `--because`, since holding it back is your call, not the builder'"'"'s.'
+# --- 11. The round cap: from round 2 the round line, and so the brief and review-agent --next, sends the
+# builder only a regression or a false line and defers the rest; round 1 carries none of it.
+CAP='Round cap (from round 2): of the findings that are real and inside the story, send the builder only a regression this PR introduces or a line now false about the code; this replaces the rule that each of them is to fix. Decline the rest as deferred: rebut them in the PR with the other declined ones, and log each with `--declined deferred` and no `--because`, since holding it back is your call, not the builder'"'"'s.'
 FIX_ALL='One that is real and inside the story is to fix: the builder fixes it, never you.'
 FIX_CAP='Under the round cap above, only a regression this PR introduces or a line now false about the code is to fix: the builder fixes it, never you.'
-DEFER='deferred for a real one inside the story that the round cap holds back (from round 3),'
-for r in 1 2; do
-  b="$(vbrief "" "${r}")"
-  check "11 round ${r}'s brief has no cap line, no regression rule and no --declined deferred, fixes every real finding in the story, and names deferred among the reasons" \
-    "no|no|no|yes|yes" "$(has "${CAP}" "${b}")|$(has 'a regression this PR introduces' "${b}")|$(has '--declined deferred' "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER}" "${b}")"
-done
-for r in 3 4; do
+DEFER='deferred for a real one inside the story that the round cap holds back (from round 2),'
+b="$(vbrief "" 1)"
+check "11 round 1's brief has no cap line, no regression rule and no --declined deferred, fixes every real finding in the story, and names deferred among the reasons" \
+  "no|no|no|yes|yes" "$(has "${CAP}" "${b}")|$(has 'a regression this PR introduces' "${b}")|$(has '--declined deferred' "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER}" "${b}")"
+for r in 2 3; do
   b="$(vbrief "" "${r}")"
   check "11 round ${r}'s brief carries the cap line and the capped fix rule, not the fix-every-finding line" "yes|yes|no" \
     "$(has "${CAP}" "${b}")|$(has "${FIX_CAP}" "${b}")|$(has "${FIX_ALL}" "${b}")"
@@ -479,41 +477,35 @@ nextr() {
   review_next s1 '"${URL}")"
 }
 o="$(nextr 2)"
-check "11 review-agent --next's round 2 carries no cap line" "yes|no" "$(has 'Review round 2 of story s1' "${o}")|$(has "${CAP}" "${o}")"
-o="$(nextr 3)"
-check "11 review-agent --next's round 3 carries the cap line, exactly as review_round_line sets it" "yes|yes|yes" \
-  "$(has 'Review round 3 of story s1' "${o}")|$(has "${CAP}" "${o}")|$(has "$(flat "$(lib 'review_round_line 3 '"${URL}")")" "${o}")"
+check "11 review-agent --next's round 2 carries the cap line, exactly as review_round_line sets it" "yes|yes|yes" \
+  "$(has 'Review round 2 of story s1' "${o}")|$(has "${CAP}" "${o}")|$(has "$(flat "$(lib 'review_round_line 2 '"${URL}")")" "${o}")"
 
-# --- 12. demote_kinds: unset, rounds 1 to 3 print exactly today's round line; set, rounds 1 and 2 add one
+# --- 12. demote_kinds: unset, rounds 1 and 2 print exactly today's round line; set, round 1 adds one
 # line that defers the listed kinds unless a regression or a now-false line, and the brief's fix rule and
-# deferred reason follow it; round 3 has the cap line alone.
+# deferred reason follow it; round 2 has the cap line alone.
 TESTS_CI='Tests (review_verify = ci): read the diff and trust CI for the tests; run no local test suite and no mutation run.'
 R1="This is review round 1 of the story: run codex alone. ${TESTS_CI} "
 R2="This is review round 2 of the story: run codex alone. ${TESTS_CI} "
 check "12 unset, round 1's line is exactly today's" "${R1}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 1 '"${URL}")")"
-check "12 unset, round 2's line is exactly today's" "${R2}" "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 2 '"${URL}")")"
-check "12 unset, round 3's line is exactly today's: round 2's form and the cap line" \
-  "${R2/round 2/round 3}${CAP} " "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 3 '"${URL}")")"
+check "12 unset, round 2's line is exactly today's: round 1's form and the cap line" \
+  "${R2}${CAP} " "$(flat "$(lib 'CFG_review_verify=ci; review_round_line 2 '"${URL}")")"
 DEMOTE='Demoted kinds (demote_kinds = duplicate-code,efficiency): of the findings that are real and inside the story, send the builder one of kinds duplicate-code, efficiency only when it is a regression this PR introduces or a line now false about the code; this replaces the rule that each of them is to fix. Decline the rest of those kinds as deferred: rebut them in the PR with the other declined ones, and log each with `--declined deferred` and no `--because`, since holding it back is your call, not the builder'"'"'s.'
 DK='CFG_demote_kinds=duplicate-code,efficiency; CFG_review_verify=ci;'
 check "12 set, round 1's line is today's and the demote line" "${R1}${DEMOTE} " "$(flat "$(lib "${DK}"' review_round_line 1 '"${URL}")")"
-check "12 set, round 2's line is today's and the demote line" "${R2}${DEMOTE} " "$(flat "$(lib "${DK}"' review_round_line 2 '"${URL}")")"
-o="$(flat "$(lib "${DK}"' review_round_line 3 '"${URL}")")"
-check "12 set, round 3 has the cap line and no demote line" "yes|no" "$(has "${CAP}" "${o}")|$(has 'Demoted kinds' "${o}")"
+o="$(flat "$(lib "${DK}"' review_round_line 2 '"${URL}")")"
+check "12 set, round 2 has the cap line and no demote line" "yes|no" "$(has "${CAP}" "${o}")|$(has 'Demoted kinds' "${o}")"
 FIX_DEMOTE='One that is real and inside the story is to fix, except one of the demoted kinds above, which is to fix only as a regression this PR introduces or a line now false about the code: the builder fixes it, never you.'
-DEFER_BOTH='deferred for a real one inside the story that the round cap holds back (from round 3) or, before that round, demote_kinds holds back (kinds duplicate-code, efficiency),'
-for r in 1 2; do
-  b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' '"${r}")")"
-  check "12 set, round ${r}'s brief has the demote line and the demoted fix rule, not the fix-every-finding line, and names both deferral causes" \
-    "yes|yes|no|yes" "$(has "${DEMOTE}" "${b}")|$(has "${FIX_DEMOTE}" "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER_BOTH}" "${b}")"
-done
-b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 3')")"
-check "12 set, round 3's brief keeps the capped fix rule and no demote line" "yes|no|no" \
+DEFER_BOTH='deferred for a real one inside the story that the round cap holds back (from round 2) or, before that round, demote_kinds holds back (kinds duplicate-code, efficiency),'
+b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 1')")"
+check "12 set, round 1's brief has the demote line and the demoted fix rule, not the fix-every-finding line, and names both deferral causes" \
+  "yes|yes|no|yes" "$(has "${DEMOTE}" "${b}")|$(has "${FIX_DEMOTE}" "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER_BOTH}" "${b}")"
+b="$(flat "$(lib "${DK}"' review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' 2')")"
+check "12 set, round 2's brief keeps the capped fix rule and no demote line" "yes|no|no" \
   "$(has "${FIX_CAP}" "${b}")|$(has "${FIX_DEMOTE}" "${b}")|$(has 'Demoted kinds' "${b}")"
 check "12 finding_rule names deferred for both the round cap and demote_kinds" yes \
-  "$(has 'deferred when the round cap held it back (from review round 3) or demote_kinds did (a kind it lists, before that round).' "$(flat "$(lib finding_rule)")")"
+  "$(has 'deferred when the round cap held it back (from review round 2) or demote_kinds did (a kind it lists, before that round).' "$(flat "$(lib finding_rule)")")"
 check "12 the conductor names both deferral causes" yes \
-  "$(has 'declined as `deferred` (held back by the round cap, from review round 3, or by demote_kinds before it) that a later fix proves real' "$(flat "$(lib 'conduct_brief e 2>/dev/null || true')")")"
+  "$(has 'declined as `deferred` (held back by the round cap, from review round 2, or by demote_kinds before it) that a later fix proves real' "$(flat "$(lib 'conduct_brief e 2>/dev/null || true')")")"
 rm -f "${F}" "${F}.prev" "${F%.md}.head"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }

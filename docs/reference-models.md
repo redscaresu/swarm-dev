@@ -201,9 +201,9 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   The brief and `review-agent --next` each print the line for their round.
   Any other value stops `swarm.sh` with the file and line
 - `demote_kinds` (default empty): finding kinds, separated by commas, such as `demote_kinds = duplicate-code,efficiency`.
-  On review rounds 1 and 2, the review agent sends the builder a real finding of one of these kinds only when it is a regression the PR introduces or a line now false about the code.
-  It declines the rest as `deferred`, rebuts them in the PR with its other declines and logs each with `--declined deferred` and no `--because`, as the round cap does from round 3.
-  From round 3 the round cap covers every kind, so the setting adds nothing there.
+  On review round 1, the review agent sends the builder a real finding of one of these kinds only when it is a regression the PR introduces or a line now false about the code.
+  It declines the rest as `deferred`, rebuts them in the PR with its other declines and logs each with `--declined deferred` and no `--because`, as the round cap does from round 2.
+  From round 2 the round cap covers every kind, so the setting adds nothing there.
   The brief and `review-agent --next` each print the line for their round.
   Each kind is short kebab-case, at most 32 characters, as a logged finding's kind is.
   Set it per board, from the kinds that board's builders nearly always decline (`flow reviewers` shows the decline rate per kind).

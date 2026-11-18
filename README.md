@@ -35,7 +35,7 @@ own terminal pane, so you can watch any of them at work.
 3. **Agents build it.** A conductor starts one builder per story, each in its own git worktree.
    Stories that do not touch the same code are built at the same time.
 4. **Agents review it.** Every PR gets a review agent, plus codex, a second reviewer from a
-   different model family. The builder fixes what they find. From the third round, only
+   different model family. The builder fixes what they find. From the second round, only
    regressions and false statements go back, so a review does not loop for ever.
 5. **It merges.** By default you merge each green, reviewed PR. You can let the agents merge too.
    A PR that touches CI, hooks or the build always waits for you.
