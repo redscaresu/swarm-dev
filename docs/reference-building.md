@@ -857,7 +857,9 @@ in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, never edits the PR'
 Before it reviews, it waits for the PR's checks with `swarm.sh wait-pr`, and a head counts green only
 once it has also triaged `swarm.sh findings`: the notes on every check run and
 the PR's open code-scanning alerts. Each real finding, a red check or a conflict goes to the builder
-as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment. After a nudge the agent waits
+as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment.
+GitHub's runner-migration notice (a runner image such as `ubuntu-latest` moving to a new version) is not about the PR and is not a finding: the agent nudges, rebuts and logs nothing for it.
+After a nudge the agent waits
 for the builder, then for green on the head the builder pushed. The green step runs once per round,
 on the first head and then on the head the builder pushes after each findings `tell`, and each run is
 bounded: at most two nudges, and at most two heads `wait-pr` calls red. Before any findings or wording nudge went to the builder, when
