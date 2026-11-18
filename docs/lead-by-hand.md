@@ -1,6 +1,6 @@
 # What the lead still does by hand
 
-These are the steps a lead still takes by hand as of v0.30.1. Each one is a gap in swarm-dev with an
+These are the steps a lead still takes by hand as of v0.31.0. Each one is a gap in swarm-dev with an
 open issue. Read this list once a session. When one of these symptoms shows, do the step, then log it:
 
 ```bash

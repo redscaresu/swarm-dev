@@ -6,7 +6,7 @@ description: What swarm-dev is (a Claude Code plugin that plans epics, splits th
 swarm-dev turns an agreed design into merged PRs. The user agrees an HLD or an epic with a co-author
 agent; agents split it into epics and one-PR stories, then build the stories in parallel, each in
 its own herdr pane the user can watch. The user approves every level before the next one starts.
-This text covers v0.30.1. All state lives in the board, the directory `swarm.sh config board_dir` prints.
+This text covers v0.31.0. All state lives in the board, the directory `swarm.sh config board_dir` prints.
 
 ## First run in a project
 

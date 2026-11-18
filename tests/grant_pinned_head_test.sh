@@ -65,7 +65,11 @@ case "$1 $2" in
       */compare/*) serve "compare.${path##*...}" ;;
       */rules/branches/*) echo '[]' ;;
       */branches/*) echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
-      */contents/.github/workflows\?*) serve workflows ;;
+      # The PR's merge ref, which ci_gate head reads for the workflows a pull_request runs: a 422, as before
+      # GitHub makes one, so they are read at the head. The listing at a ref with a fixture of its own
+      # (workflows.<ref>) gets that one, else ${FX}/workflows.
+      */commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/7/merge (HTTP 422)" >&2; exit 1 ;;
+      */contents/.github/workflows\?*) ref="${path##*ref=}"; if [ -e "${FX}/workflows.${ref}" ]; then serve "workflows.${ref}"; else serve workflows; fi ;;
       */contents/*) f="${path%%\?*}"; serve "wf.${f##*/}" ;;
       *) echo "stub: no fixture for ${path}" >&2; exit 1 ;;
     esac ;;
@@ -87,7 +91,8 @@ page() { local f="$1" k="$2" IFS=,; shift 2; printf '{"total_count":%s,"%s":[%s]
 # fresh <files> — merge = human; epic g in review with prs: ${URL}, under agreed HLD h granting merge,
 # and story s, ready under g; the PR at head ${H1}, green, listing <files> (a JSON list) now and at
 # ${H1}; on the merge commit a green check run and a green run of the one workflow that runs on push
-# to main.
+# to main. At ${H1} .github/workflows lists nothing, so merge's read of the head waits on no pull_request
+# workflow and reads no file list there.
 fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   echo "merge = human" > "${P}/.claude/swarm/config"
@@ -100,7 +105,7 @@ fresh() {
   rm -rf "${P}/.swarm/board-state"
   page "${FX}/${H1}.checks" check_runs "$(run test completed success)"; page "${FX}/${H1}.status" statuses
   page "${FX}/${M}.checks" check_runs "$(run test completed success)"; page "${FX}/${M}.status" statuses
-  echo '[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]' > "${FX}/workflows"
+  echo '[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]' > "${FX}/workflows"; echo '[]' > "${FX}/workflows.${H1}"
   printf 'name: ci\non:\n  push:\n    branches: [main]\n' > "${FX}/wf.ci.yml"
   page "${FX}/${M}.runs" workflow_runs "$(run ci completed success "${M}")"
 }

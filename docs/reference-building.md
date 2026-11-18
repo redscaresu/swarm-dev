@@ -594,6 +594,18 @@ story's new PR has a new head, so it is reported. Watches that run at once share
 lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
 be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
 The lead's bare `watch` never prints it.
+A conductor's `watch --epic <slug>`, with no repos named, also returns `epic-done: <slug> has no agent work left`, exit 0, on a poll where the epic has no agent work left and no PR of the epic's stories is open.
+No agent work left is the rule the `finish:` line on a merge or handover note uses ([reference-merging.md § Merging](reference-merging.md#merging)), so a `kind: lead` story left does not hold it.
+A poll whose PR list failed for any repo cannot tell, so the watch polls on.
+Before it prints the line, it lists each repo again past the poll cache, since a shared list can be a poll old and no later poll would see a PR opened since.
+That second list also takes in the repos the epic's stories name at that moment, so a story added in another repo after the watch started is checked too.
+It reads those repos from the story files alone, since the epic's last story PR deletes the epic file.
+Each such repo is resolved once per watch, with one `gh repo view`.
+When that resolve or the second list fails, the watch says so once on stderr, until the read next succeeds, and polls on.
+A watch given repos sees only those, so it never prints the line.
+The conductor then writes its report.
+Without it, two conductors sat busy for hours on 2026-11-16 after their epic's last PR merged (15h28m after #968, 13h36m after #974), and `next` printed `wait conduct-<epic>` ahead of every later step until the lead killed each watch.
+`watch --backlog` and the bare `watch` never print it.
 It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued.
 A poll that reports one PR reads nothing past it.
 A failed read counts as `UNKNOWN` for that poll and is said on stderr.
@@ -1184,7 +1196,7 @@ that PR before: each `.swarm/findings.tsv` declined row whose PR is the same PR 
 never one whose number only starts the same), with its round, its reason and its `--because`. A line
 over them says each reason is the builder's claim, not a fact, and that codex ignores none of them.
 With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
-unchanged. On a usage or rate limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
+unchanged. When codex hits a usage or rate limit, cannot reach its provider, or times out, the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
@@ -1236,7 +1248,7 @@ codex usage limit` (`codex rate limit` on a rate limit) and then the findings, a
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` (`rate limit` on a rate limit) and exits as codex did. It
+nothing in time, codex-review prints `codex skipped: <why>` (`usage limit`, `rate limit`, `unreachable` or `timed out after <N> min`, with its cause) and exits as codex did. It
 waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
 call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
@@ -1345,6 +1357,8 @@ Run by `review-<slug>` from its own pane after the builder pushes a wording fix,
 `<old head>` is the head it last reviewed, as `.swarm/reviews/<slug>.head` records it, and that round's findings to fix must already be written to its round file, `.swarm/reviews/<slug>.round.md`.
 Each `file:line` must appear in that file's `## Findings` section as a whole path (or under the worktree's own path), with the line number as at `<old head>`, every finding there must cite one of them, and every `file:line` a finding cites must be one of them (a range or list such as `doc.md:3-5` or `doc.md:3,8`, or a bare `:8` later in the finding, never is).
 It passes only when the worktree is at the PR's new head with nothing uncommitted, `git diff <old head>..<new head>` rewrites each named line and nothing else, and the new head is green.
+Green means what `swarm.sh wait-pr` waits for: every check is green, and so is each workflow that a `pull_request` into the base runs for the PR's files, so a workflow with no run on the new head yet counts as CI still running.
+For that it reads the PR's base branch and changed file count first, within 60 seconds (`SWARM_RECHECK_CI_SECONDS`); a read that fails says to run `--recheck` again.
 Every line the diff removes or rewrites must be named, and no hunk may add more lines than it removes.
 A file added, deleted, renamed, binary or with a new mode fails it, and so does an empty diff.
 On a pass it writes the new head's findings file, `.swarm/reviews/<slug>.md`, as a pass (its `head:` line, a `## Findings` section saying the wording recheck passed, and a `## Handled by the review agent` section carrying the round file's, the points the agent declined or found out of scope and already logged and rebutted), keeps any file already there as `<slug>.md.prev`, and records the new head. events.tsv logs it as `review-agent:recheck <slug> ok`, which counts no round, so the next `--next` prints the same round.
