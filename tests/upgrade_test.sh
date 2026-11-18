@@ -63,7 +63,7 @@ SWARM="${REPO}/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 H="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${H}"' EXIT
+trap 'stop_test_group; rm -rf "${H}"' EXIT
 export CLAUDE_CONFIG_DIR="${H}/claude-config" CLAUDE_PROJECTS_DIR="${H}/claude-config/projects"
 P="${H}/my proj"; LOG="${H}/herdr.log"
 NEW="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${REPO}/.claude-plugin/plugin.json")"

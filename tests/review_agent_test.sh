@@ -13,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 # No .claude.json here, so require_trusted lets the agents start. A wait checks the session often.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects" SWARM_STALL_POLL_MS=200
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"

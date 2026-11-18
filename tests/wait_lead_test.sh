@@ -24,7 +24,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 lpid=""; tpid=""
-trap 'stop; fix_stop; [[ -z "${tpid}" ]] || kill "${tpid}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'stop; fix_stop; [[ -z "${tpid}" ]] || kill "${tpid}" 2>/dev/null; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111; H2=2222222222222222222222222222222222222222; URL=https://github.com/o/r/pull/7

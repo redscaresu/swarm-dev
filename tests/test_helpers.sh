@@ -19,8 +19,9 @@
 # before it writes. The hooks' own event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log)
 # are not swarm.sh calls; each hook checks it itself and writes no line there. tests/live_logs_test.sh checks that every test sources
 # this first. It also defines signer_stubs and isolate_signer, below, for a test of what signs a commit,
-# no_version, for a test that compares whole events.tsv lines, and in_new_group, group_record,
-# stop_group and stop_groups, for a test that stops a background process and every process it started.
+# no_version, for a test that compares whole events.tsv lines, in_new_group, group_record,
+# stop_group and stop_groups, for a test that stops a background process and every process it started,
+# and stop_test_group, which the EXIT trap of every test that starts a background process runs.
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
 unset HERDR_SOCKET_PATH HERDR_WORKSPACE_ID
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
@@ -77,6 +78,7 @@ no_version() { sed -E 's/ ~~ version=[^[:space:]]+$//; s/ version=[^[:space:]]+$
 #
 # and its EXIT trap runs stop_groups "${ROOT}/groups" before its rm -rf, for a group a check left
 # running (the record is a file, as a group started inside $( ) sets no variable the trap can read).
+# A background process left in the test's own group is stop_test_group's, below, which that trap runs too.
 
 # in_new_group <command> [args...] — exec <command> as the leader of a new process group, so its pid is
 # the group's id, and every process it starts is in that group unless one makes its own. Run it as the
@@ -138,4 +140,38 @@ stop_groups() {
   local g
   [[ -f "$1" ]] || return 0
   while read -r g; do stop_group "${g}" "$1" || true; done < <(cat "$1")
+}
+
+# stop_test_group — for the EXIT trap of every test that starts a background process, before its
+# rm -rf: KILL every other process in this test's own process group, and return once pgrep -g finds
+# none. make test starts each file as the leader of a group of its own (scripts/test.sh --one), and a
+# job the test puts in the background stays in that group with every process under it, even one a
+# kill re-parents to init, where no pgrep -P walk from the test finds it. A group of the test's own
+# making (in_new_group) is stop_groups' to stop. The shell cannot STOP or KILL its own group without
+# ending itself, so this KILLs the members one pid at a time, reads the group again and KILLs again,
+# so a child forked meanwhile goes on the next pass, and reaps those that are this shell's children.
+# It spares a member whose parent is this shell's parent: run by hand as `bash tests/x.sh | tail`,
+# the tail is in the group too, and is the caller's. The group is $$, so a shell that leads no group
+# (a file run by hand from a shell with no job control) finds no member and stops nothing. Returns 1,
+# naming what is left on stderr, if a member outlives 50 polls of 0.1 s. Call it from the test's own
+# EXIT trap: in a subshell $$ is still the test's pid, and the subshell is a member it KILLs.
+stop_test_group() {
+  local g=$$ tries=50 pause=0.1 i p mine spare list
+  list="$(mktemp)" || return 1
+  for ((i = 0; i < tries; i++)); do
+    # Into a file: a pgrep in a $( ) or a pipe would list the subshell around it.
+    pgrep -P "${PPID}" -g "${g}" > "${list}" 2>/dev/null || true
+    spare=" $(tr '\n' ' ' < "${list}")"
+    pgrep -g "${g}" > "${list}" 2>/dev/null || true
+    mine=""
+    while read -r p; do
+      [[ "${p}" == "${g}" || "${spare}" == *" ${p} "* ]] || { mine+=" ${p}"; kill -KILL "${p}" 2>/dev/null || true; }
+    done < "${list}"
+    [[ -n "${mine}" ]] || { rm -f "${list}"; return 0; }
+    for p in ${mine}; do { wait "${p}"; } 2>/dev/null || true; done
+    sleep "${pause}"
+  done
+  rm -f "${list}"
+  echo "stop_test_group: group ${g} still has${mine} after ${tries} polls" >&2
+  return 1
 }

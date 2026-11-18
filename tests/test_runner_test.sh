@@ -34,7 +34,7 @@ reap() {
   local p
   for p in $(left) $(pgrep -f "${M}/stop" || true) $(snap_live | cut -d' ' -f1); do tree "${p}"; done
 }
-trap 'reap; rm -rf "${ROOT}"' EXIT
+trap 'reap; stop_test_group; rm -rf "${ROOT}"' EXIT
 # A pgrep that cannot list processes (a sandbox) would see no refresh, and leave the one the last
 # check starts: stop before starting any.
 pgrep -f . > /dev/null || { echo "FAIL pgrep cannot list processes here"; exit 1; }

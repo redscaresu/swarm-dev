@@ -18,7 +18,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export HOME="${ROOT}/home" TMPDIR="${ROOT}/tmp"   # under its own root, so parallel runs share no ~
 mkdir -p "${HOME}" "${TMPDIR}"
 

@@ -250,6 +250,15 @@ are not `swarm.sh` calls, so each hook checks `SWARM_FORBID_PROJECT` itself and 
 worktree of it, is refused and writes nothing there, and that both hooks, run from a worktree of the copy,
 leave its `events.tsv` as it was.
 
+A test that starts a background process calls `stop_test_group` from `tests/test_helpers.sh` in its EXIT trap, before it removes its temp root.
+`make test` starts each file as the leader of its own process group.
+A background job stays in that group with everything it starts, even after it is re-parented to init.
+`stop_test_group` kills every other process in the group, so nothing the test leaves behind keeps writing into its root.
+It spares a process whose parent is the test's parent, such as the `tail` in `bash tests/x.sh | tail`.
+When the file does not lead its group, such as a file run by hand from a shell without job control, `stop_test_group` stops nothing.
+A group the test makes itself with `in_new_group` is stopped by `stop_group`, or by `stop_groups` in the trap.
+`tests/test_helpers_test.sh` checks it.
+
 Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
 in the PR that you did. Story files and briefs are written for agents and need no pass.

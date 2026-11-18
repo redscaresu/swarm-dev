@@ -17,7 +17,7 @@ cleanup() {
   # A hung stub this test left (a failed check) is killed by the pid it wrote.
   local f
   for f in "${ROOT}"/pid.*; do [[ ! -f "${f}" ]] || kill -KILL "$(cat "${f}")" 2>/dev/null || true; done
-  rm -rf "${ROOT}"
+  stop_test_group; rm -rf "${ROOT}"
 }
 trap cleanup EXIT
 # No agent starts here, but swarm.sh reads Claude Code's config: never the real one.
