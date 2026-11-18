@@ -172,7 +172,8 @@ hooks/                hooks.json; merge-guard.sh (the guard on merges and comman
                       user-caught-reminder.sh (reminds the lead to log a time a person had to step in)
 scripts/              test.sh (the make test runner), select-tests.sh and select_tests.py (the tests a branch's
                       changes map to), test-map.tsv (that map), lint (make check: JSON a test feeds must
-                      parse), pre-commit, board-only.sh
+                      parse, and bin/lib's Python reads now and today only through bin/lib/clock.py),
+                      pre-commit, board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
@@ -188,7 +189,7 @@ Before you open a PR:
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
-make check                                  # scripts/lint over tests/*_test.sh
+make check                                  # scripts/lint over tests/*_test.sh and bin/lib/*.py
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
                                             # it never runs the full suite: it names each changed file that would select every test,
                                             # which CI's full run covers, and runs the tests for the rest

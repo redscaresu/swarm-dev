@@ -1,4 +1,5 @@
 import collections, datetime, os, re, sys
+import clock
 from events_outcome import outcome
 from report import *
 from recurring import block, board_log, dated_fixes
@@ -303,7 +304,7 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
 
 # After a blank line, recurring's block: the kinds fixed (or escaped) on RECURRING_MIN_PRS or more PRs
 # in the last RECURRING_DAYS days. flow and review-yield skip these lines: they are not a row's width.
-today = datetime.date.today()
+today = clock.today()
 recurring_lines = block(dated_fixes(sys.argv[1], today), sys.argv[2], today, RECURRING_DAYS, RECURRING_MIN_PRS)
 if recurring_lines:
     print("\n" + "\n".join(recurring_lines))

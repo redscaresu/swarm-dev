@@ -10,6 +10,10 @@
 # #515's stray \} is flagged too, and in a printf format. A line that says "# vacuous-test: ok" is
 # let through. make check runs it over LINT_FILES and fails on a finding.
 # The fixture holds only JSON that parses, so this file passes the lint too; sed breaks the copies.
+# Its python-clock check fails a .py file that reads now or today from datetime, in each form and
+# under each import's name (one a function's own import shares too), by file and line. It passes
+# time.time(), a timestamp's day and another module's now() or date. make check runs it over every
+# bin/lib/*.py but bin/lib/clock.py.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -118,5 +122,44 @@ rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${bad515}" 2>&1)" || rc=$?
 check "make check runs the lint over LINT_FILES, and fails on a finding" make_flags
 rc=0; make -s -C "${REPO}" check LINT_FILES="${good}" > /dev/null 2>&1 || rc=$?
 check "and passes when there is none" [ "${rc}" = 0 ]
+
+# python-clock: each line of clocks.py from 7 on reads the real clock, and none before it does.
+clocks="${tmp}/clocks.py"
+cat > "${clocks}" <<'FIXTURE'
+import datetime, time
+import datetime as dt
+from datetime import date, datetime as moment
+import other
+fine = (time.time(), datetime.date.fromtimestamp(0), other.now(), other.date.today(), datetime.timedelta(1))
+def parse(v): from datetime import datetime as dt; return dt.fromisoformat(v)   # a scope's own dt
+a = date.today()
+b = datetime.date.today()
+c = datetime.datetime.now(datetime.timezone.utc)
+d = dt.datetime.utcnow()
+e = moment.today()
+f = moment.now
+FIXTURE
+lint "${clocks}"
+got="$(sed -nE 's/^[^:]*:([0-9]+): python-clock: ([^ ]*) reads the real clock; use clock.now\(\), clock.today\(\) or clock.utc_now\(\) \(bin\/lib\/clock.py\), which SWARM_DASH_NOW fixes$/\1 \2/p' <<< "${out}" | tr '\n' ' ')"
+check "python-clock flags each real-clock read by file and line, and nothing else" \
+  [ "${rc}|${got}|$(grep -c "^${clocks}:" <<< "${out}")" = "1|7 date.today 8 datetime.date.today 9 datetime.datetime.now 10 dt.datetime.utcnow 11 moment.today 12 moment.now |6" ]
+head -6 "${clocks}" > "${tmp}/fine.py"
+lint "${tmp}/fine.py"
+check "and passes a file whose clock reads are not datetime's now or today" [ "${rc}|${out}" = "0|" ]
+printf 'from other import date\nprint(date.today())\n' > "${tmp}/other_date.py"
+lint "${tmp}/other_date.py"
+check "or whose date is another module's" [ "${rc}|${out}" = "0|" ]
+printf 'from datetime import date\nprint(date.today())\n' > "${tmp}/today.py"
+rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${tmp}/today.py" 2>&1)" || rc=$?
+check "make check fails on a .py file that calls date.today(), naming its line" \
+  [ "${rc}|$(grep -c "^${tmp}/today.py:2: python-clock: date.today reads the real clock" <<< "${out}")" = "2|1" ]
+# make check with no LINT_FILES, in a copy of the repo's lint: a bin/lib/*.py that reads today fails
+# it, while the copy's own bin/lib/clock.py, the one file that may, passes.
+C="${tmp}/repo"; mkdir -p "${C}/bin/lib" "${C}/scripts" "${C}/tests"
+cp "${REPO}/Makefile" "${C}/"; cp "${LINT}" "${C}/scripts/"; cp "${good}" "${C}/tests/"
+cp "${REPO}/bin/lib/clock.py" "${C}/bin/lib/"; echo 'late = datetime.date.today()' >> "${C}/bin/lib/clock.py"
+cp "${tmp}/today.py" "${C}/bin/lib/planted.py"
+rc=0; out="$(make -s -C "${C}" check 2>&1)" || rc=$?
+check "make check reads every bin/lib/*.py but clock.py by default" [ "${rc}|$(grep -c ': python-clock: ' <<< "${out}")|$(grep -c '^bin/lib/planted.py:2: python-clock: ' <<< "${out}")" = "2|1|1" ]
 
 [ "${fails}" -eq 0 ] || { echo "${fails} check(s) failed"; exit 1; }

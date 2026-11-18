@@ -5,6 +5,7 @@
 # runs; a run counts when its head is one of the PR's commits. Then per repo, the CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
 # Last, the test files that failed on a head before it went green (flaky_tests).
 import datetime, functools, os, re, statistics, subprocess, urllib.parse
+import clock
 from report import *
 from gh_cache import Listing, as_of, cached, closed, commits, forget, pull
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
@@ -166,7 +167,7 @@ def list_range(repo, lo, hi, ask, have, held, lines):
     # returned. None when gh cannot list them. Raises Stop.
     top = hi
     # A run queued or waiting for over a day (a runner that never came) holds nothing.
-    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale = (clock.utc_now() - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     while True:
         call = ask if ask and hi == top else f"{lo}..{hi}" if hi else f">={lo}"
         got = list_runs(repo, call, lines)
@@ -397,11 +398,11 @@ def windowed(start, end):
                    and (not epic or r["epic"] == epic)}.values())
 
 if __name__ == "__main__":
-    end = datetime.date.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
+    end = clock.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
     if since == "0000-00-00":
         since = (end - datetime.timedelta(days=30)).isoformat()
         print(f"PRs from the last 30 days, {since} on; --since sets the start")
-    now = windowed(since, until)
+    now = windowed(since, end.isoformat())   # to today, so a day SWARM_DASH_NOW pins counts no later build
     # SWARM_CI_TIME_ONLY (dash's ci line, which reads the ci time table alone) skips this row and its
     # per-attempt calls.
     if not os.environ.get("SWARM_CI_TIME_ONLY"):

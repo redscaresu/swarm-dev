@@ -17,6 +17,7 @@
 # each, and is - on the other rows, which read no files. Then, after a blank line, file conflicts: the
 # three files conflicts hit most; or none conflicted, or none read when it read no merge-in.
 import collections, datetime, os, re
+import clock
 from report import *
 from gh_cache import commits, pull
 
@@ -111,7 +112,7 @@ def cause(root, oid):
         return ("neither", "behind")[ancestor.returncode], [], ""
     return "unread", [], f"{oid[:12]}: git merge-base: {said(ancestor)}"
 
-end = datetime.date.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
+end = clock.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
 if since == "0000-00-00" and not epic:
     since = (end - datetime.timedelta(days=DAYS)).isoformat()
     print(f"PRs from the last {DAYS} days, {since} on; --since sets the start")

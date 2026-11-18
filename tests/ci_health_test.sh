@@ -203,7 +203,7 @@ dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so t
   out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_NO_CI_REFRESH="${NOREFRESH:-}" PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
     COLUMNS=200 bash "${SWARM}" dash 2>&1)" || true
   rm -f "${dir}"/tmp/swarm-dash-3-*
-  grep -oE "ci [0-9].*(vs last week|h old)" <<< "${out}" || true
+  grep -oE "ci [0-9].*(vs last week|h old|\(slowest: [^)]*\))" <<< "${out}" || true
 }
 refreshed() { # waits up to 60 s for the refresh dash started to end, and so let go of its flock on <cache>.run
   python3 -c '
@@ -243,6 +243,19 @@ check "a line past 6 hours old says its age" "$(dash)" "${want} · 10h old"
 rm "${dir}"/tmp/swarm-dash-ci-*/*.failed; echo 1 > "$(ci_cache).run"
 dash > /dev/null; refreshed
 check "a <cache>.run no refresh holds does not hold a refresh off" "$(dash)" "${want}"
+# SWARM_DASH_NOW fixes the refresh's day too (bin/lib/clock.py), and flow's: at noon 3 days back, the
+# refresh's 7 days run from 6 days before that to that day, which holds f's two builds and g's but not
+# e's today, and the 7 days before hold no PR, so the line has no change. dash_slow.py's own date.today()
+# (#854) would start the window 3 days later, and flow_ci_health.py's window, with no end, would hold e.
+pinned="$(python3 -c 'import datetime as d, sys; print(int(d.datetime.combine(d.date.fromisoformat(sys.argv[1]), d.time(12)).timestamp()))' "$(ago 3)")"
+then="$(SWARM_DASH_NOW="${pinned}" flow --since "$(ago 6 "${pinned}")" | ci | awk -F'\t' '$1 == "o/r" && $7 == "" { printf "ci %.0fm (slowest: %s %.0fm)", $3, $4, $5 }')"
+aged 25200; SWARM_DASH_NOW="${pinned}" dash > /dev/null; refreshed
+check "with SWARM_DASH_NOW 3 days back, dash's refresh counts the 7 days to that day, as flow does: ci 16m (slowest: test 13m)" \
+  "$(SWARM_DASH_NOW="${pinned}" NOREFRESH=1 dash)|${then}" "ci 16m (slowest: test 13m)|ci 16m (slowest: test 13m)"
+# And flow's own start with no --since, 30 days before that day (flow_ci_health.py's date.today() had it).
+check "with SWARM_DASH_NOW 3 days back and no --since, flow's window starts 30 days before that day" \
+  "$(SWARM_DASH_NOW="${pinned}" flow | ci | head -1)" "PRs from the last 30 days, $(ago 30 "${pinned}") on; --since sets the start"
+aged 25200; dash > /dev/null; refreshed   # the real day's line again, which the checks below read
 # A refresh where gh can read none of the PRs (FAIL=1: e's, f's and g's runs; offline, say) fails: the
 # line there was stays, its age said, and the next refresh comes 10 minutes later, not 6 hours.
 aged 25200

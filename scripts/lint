@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""scripts/lint [file...] — the repo's lints over shell test files (tests/*_test.sh by default); make
-check runs it. It prints file:line: and the problem for each finding, and exits 1 when there is one.
+"""scripts/lint [file...] — the repo's lints: vacuous-test over shell test files and python-clock over
+Python files (tests/*_test.sh and bin/lib/*.py by default; a file ending in .py gets python-clock, any
+other vacuous-test); make check runs it. It prints file:line: and the problem for each finding, and
+exits 1 when there is one.
 
 vacuous-test: JSON a test feeds to a hook or helper must parse, or the code it meant to exercise never
 runs and the test passes anyway (#515: a stray \\} in a hook input). Each quoted shell word and each
@@ -14,7 +16,14 @@ helper's) or reaches its reader whole: a heredoc, a here-string, a variable's va
 format or echo's one word in a command that pipes or redirects. A list's comma-joined items pass too,
 unless the word reaches its reader whole. A word that is not JSON on purpose (bad input a test feeds
 to see it refused, or the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
-"# vacuous-test: ok, bad JSON on purpose"."""
+"# vacuous-test: ok, bad JSON on purpose".
+
+python-clock: bin/lib's Python reads now and today only through bin/lib/clock.py, which SWARM_DASH_NOW
+fixes, so a test can pin the day (#854, #586: dash_slow.py's own date.today() moved dash's CI week
+when a run crossed midnight). A date.today(), datetime.today(), datetime.now() or datetime.utcnow()
+anywhere else is a finding, called or not, under any name an import gives datetime, date or the
+datetime class. time.time() is not one: deadlines and ages run on the real clock."""
+import ast
 import glob
 import json
 import os
@@ -22,6 +31,7 @@ import re
 import sys
 
 OK_MARK = "vacuous-test: ok"
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
 # An object, or a list: of objects, or with no space after its [ (a shell test, [ "$x" or [[ -z, has
 # one), or of numbers, whose comma or ] no shell test has.
 LOOKS_JSON = re.compile(r'\s*(\{\s*["}]|\[+(\s*\{|["\]]|\s*-?(0|[1-9][0-9]*)(\.[0-9]+)?\s*[,\]]|true|false|null))')
@@ -339,15 +349,72 @@ def lint_file(path):
     return out
 
 
+CLOCK_HELPER = os.path.join(REPO, "bin", "lib", "clock.py")
+CLOCK_READS = ("today", "now", "utcnow")   # each a real-clock read on datetime.date or datetime.datetime
+CLOCK_CLASSES = ("datetime.date", "datetime.datetime", "date", "datetime")   # the last two: a name no import binds
+
+
+def clock_aliases(tree):
+    """What each name an import binds can stand for: `import datetime as dt` adds datetime to dt's,
+    `from datetime import date as d` adds datetime.date to d's, `from other import date` other.date to
+    date's. A name keeps every meaning any scope's import gives it, so a function's own import cannot
+    hide the module's."""
+    names = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names.setdefault(a.asname or a.name.partition(".")[0], set()).add(a.name if a.asname else a.name.partition(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                names.setdefault(a.asname or a.name, set()).add(f"{node.module or ''}.{a.name}")
+    return names
+
+
+def dotted(node):
+    """a.b.c for a chain of attributes on a name, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id] + parts[::-1])
+
+
+def lint_python(path):
+    """The python-clock findings in one Python file, each 'path:line: message'; none in the clock helper."""
+    if os.path.realpath(path) == os.path.realpath(CLOCK_HELPER):
+        return []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    try:
+        tree = ast.parse(text, path)
+    except SyntaxError as e:
+        return [f"{path}:{e.lineno}: python-clock: cannot parse it ({e.msg}), so its clock reads are unchecked"]
+    names, out = clock_aliases(tree), []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and node.attr in CLOCK_READS):
+            continue
+        cls = dotted(node.value)
+        if cls is None:
+            continue
+        head, _, rest = cls.partition(".")
+        if any(".".join(filter(None, [m, rest])) in CLOCK_CLASSES for m in names.get(head, {head})):
+            out.append(f"{path}:{node.lineno}: python-clock: {cls}.{node.attr} reads the real clock; use clock.now(),"
+                       f" clock.today() or clock.utc_now() (bin/lib/clock.py), which SWARM_DASH_NOW fixes")
+    return sorted(out, key=lambda f: int(f.split(":")[1]))
+
+
 def main(argv):
-    tests = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "tests")
-    paths = argv or sorted(os.path.relpath(p) for p in glob.glob(os.path.join(tests, "*_test.sh")))
-    findings = [f for p in paths for f in lint_file(p)]
+    paths = argv or sorted(os.path.relpath(p) for g in (("tests", "*_test.sh"), ("bin", "lib", "*.py"))
+                           for p in glob.glob(os.path.join(REPO, *g)))
+    findings = [f for p in paths for f in (lint_python(p) if p.endswith(".py") else lint_file(p))]
     for f in findings:
         print(f)
     if findings:
-        print(f"lint: {len(findings)} finding(s); a word that is not JSON on purpose says so in a"
-              f" comment on its line: # {OK_MARK}, <why>")
+        hint = (f"; a word that is not JSON on purpose says so in a comment on its line: # {OK_MARK}, <why>"
+                if any(": vacuous-test: " in f for f in findings) else "")
+        print(f"lint: {len(findings)} finding(s){hint}")
         return 1
     return 0
 

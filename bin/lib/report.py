@@ -1,5 +1,5 @@
 import datetime, functools, glob, gzip, json, os, re, subprocess, sys, time, zlib
-import gh_cache
+import clock, gh_cache
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -141,7 +141,7 @@ def local_day(t):
 
 def rework_settled():
     # The local day before which a merge has had all its REWORK_DAYS for a fix to come, as YYYY-MM-DD.
-    return (datetime.date.today() - datetime.timedelta(days=REWORK_DAYS)).isoformat()
+    return (clock.today() - datetime.timedelta(days=REWORK_DAYS)).isoformat()
 
 def rework_of(merged, findings, judged=None):
     # The pr_keys of the merged PRs (of judged alone, when given) a later PR fixed within REWORK_DAYS of

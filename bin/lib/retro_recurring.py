@@ -4,12 +4,13 @@
 # name in its group. One line per kind, most PRs first: `<kind>: <n> PRs, as <the names seen>`. With
 # none, one line saying so. Run by retro_report.py, with day, findings and board among its globals.
 import collections, datetime
+import clock
 from recurring import check_story, dated_fixes, fold, fold_group, recurring
 
 MIN_PRS = 3
 
 since = datetime.date.fromisoformat(day)  # noqa: F821 # retro_report.py's context
-today = datetime.date.today()
+today = clock.today()
 fixes = [f for f in dated_fixes(findings, today) if f[0] >= since]  # noqa: F821
 names = collections.defaultdict(set)
 for _, kind, _ in fixes:

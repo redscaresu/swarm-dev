@@ -1,4 +1,5 @@
 import collections, datetime, glob, itertools, json, os, re, subprocess, time
+import clock
 E = os.environ
 from report import *
 from panes import *
@@ -7,9 +8,9 @@ from dash_age import *
 from events_outcome import outcome
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
-# Now, and so today and the header's clock: SWARM_DASH_NOW (epoch seconds) fixes them, so a test's
-# "today" holds across midnight and a golden frame is the same on every run.
-NOW = float(E.get("SWARM_DASH_NOW") or time.time())
+# Now, and so today and the header's clock, from clock.py: SWARM_DASH_NOW (epoch seconds) fixes them, so
+# a test's "today" holds across midnight and a golden frame is the same on every run.
+NOW = clock.now()
 TODAY = datetime.date.fromtimestamp(NOW)
 NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
 WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
