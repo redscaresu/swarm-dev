@@ -41,7 +41,7 @@ The lead keeps one `swarm.sh wait --lead` running and acts on each line it print
 builder, 60 minutes by default), `conflict:`, `unmerged:`, `no-review:`, `main-red:`, `sign-blocked:`,
 `planned:` (a plan swarm's agents have all written their output), `plan-missing:` (one of them ended without it), `usage:` (an estimate past `usage_warn_percent`, a warning only) and `idle:` each name their exit. From review round 3 the round cap sends back only regressions and
 false statements; the rest is logged as deferred. Each time a person steps in, log it with
-`swarm.sh intervene lead-hand|user-caught <cause> "<line>"`.
+`swarm.sh intervene lead-hand|user-caught <cause> "<line>"`. The lead makes routine calls (restarts, reviews, conductors, load, a `--force-with-lease` push to a story branch after its same-diff and signed checks) without asking, and logs each the same way.
 
 ## Commands
 
