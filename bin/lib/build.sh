@@ -1213,7 +1213,7 @@ recheck_hunks() {
       }'
 }
 
-CAP_ROUND=3   # the review round from which the round cap holds findings back (review_round_line)
+CAP_ROUND=2   # the review round from which the round cap holds findings back (review_round_line)
 
 # review_round_line <round> — what review round <round> runs, for review_brief and review_next:
 # codex alone, on every round. Then whether the

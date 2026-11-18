@@ -82,7 +82,7 @@ Useful while it runs:
   It never edits the PR's code.
   It waits for green, runs codex alone every round, and decides which findings to fix and which to decline.
   It sends the ones to fix to the builder, then reviews the builder's next head in the same session.
-  From round 3 (the round cap) it sends only a regression the PR introduces or a line now false about the code, and declines the rest as deferred.
+  From round 2 (the round cap) it sends only a regression the PR introduces or a line now false about the code, and declines the rest as deferred.
   A round with nothing to fix, because the agent declines every finding as a nit, low value, out of scope, wrong or deferred, is a pass: the review agent merges the PR with `merge = agent` or an HLD `merge` grant, and otherwise hands it to the user.
   With `escalate_ladder` set, the `step_up_findings`-th findings round (default 3) hands the build to the next model.
   On the top rung, the `top_rung_rounds`-th round (default 2) goes to the lead.
