@@ -15,3 +15,5 @@ Print one line naming the failed read and keep the item for the next poll.
 - a stubbed failing read prints the line; with the change removed nothing is printed (shown on a worktree copy, quoted in the PR)
 - Docs that state the behaviour say so
 - scripts/select-tests.sh --run passes
+
+**Folded into the v0.32 Python rewrite (the user, 2026-11-18):** not built in bash. The v0.32 HLD names this as a requirement of the command it ports, with this story's Done when as the test the Python version must pass; this file goes when that plan absorbs it.

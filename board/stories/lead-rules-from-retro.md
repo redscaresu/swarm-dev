@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 depends_on: []
 touches: [commands/swarm.md:routine lead calls, commands/swarm.md:force-push rule]
 ---
