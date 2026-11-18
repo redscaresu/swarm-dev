@@ -21,7 +21,7 @@ check() { # <name> <want> <got>
 
 # has <doc> <regex> — yes when the doc, its lines joined, matches the regex.
 has() {
-  if tr '\n' ' ' < "$1" | tr -s ' ' | grep -Eq "$2"; then echo yes; else echo no; fi
+  if tr '\n' ' ' < "$1" | tr -s ' ' | grep -E "$2" > /dev/null; then echo yes; else echo no; fi
 }
 
 check "plan independent epics at the same time, the next once a plan waits for approval" yes \

@@ -158,7 +158,7 @@ review
 tl="${p}/.swarm/codex/s1.tail"
 check "a failed codex's last 20 lines are kept in .swarm/codex/s1.tail under its exit" \
   "3|yes|21|codex line 6|codex line 25" \
-  "${rc}|$(head -1 "${tl}" 2>/dev/null | grep -qE '^# [0-9T:Z-]+ codex exited 3; its last 20 lines:$' && echo yes || echo no)|$(wc -l < "${tl}" 2>/dev/null | tr -d ' ')|$(sed -n 2p "${tl}" 2>/dev/null)|$(tail -1 "${tl}" 2>/dev/null)"
+  "${rc}|$(head -1 "${tl}" 2>/dev/null | grep -E '^# [0-9T:Z-]+ codex exited 3; its last 20 lines:$' > /dev/null && echo yes || echo no)|$(wc -l < "${tl}" 2>/dev/null | tr -d ' ')|$(sed -n 2p "${tl}" 2>/dev/null)|$(tail -1 "${tl}" 2>/dev/null)"
 # group_other <path> — its mode's group and other bits, in octal: 0 when only the owner may read it.
 group_other() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o077))' "$1" 2>&1; }
 check "the kept lines and their directory are the owner's alone, whatever the caller's umask" "0o0|0o0" \

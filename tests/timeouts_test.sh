@@ -356,7 +356,7 @@ check "a heredoc body with an apostrophe leaves the lines after it read as code"
   "$(flagged 'cat <<EOF' "the user's decisions" 'EOF' 'curl "$U"' 'curl "$V"')"
 check "a file that ends inside a quote is reported" 1 "$(flagged 'x="a')"
 check "the finding says where within lives and that gh has no flag" yes \
-  "$(printf '%s\n' 'curl "$U"' > "${dir}/f.sh"; untimed "${dir}/f.sh" | grep -q 'within <seconds>.*merge.sh.*gh has no timeout flag' && echo yes || echo no)"
+  "$(printf '%s\n' 'curl "$U"' > "${dir}/f.sh"; untimed "${dir}/f.sh" | grep 'within <seconds>.*merge.sh.*gh has no timeout flag' > /dev/null && echo yes || echo no)"
 
 # shell_files <repo> — the shell files git tracks under <repo>'s bin/ and hooks/: *.sh, or a first
 # line that is a sh or bash shebang (as loose_match_test.sh's).
@@ -365,7 +365,7 @@ shell_files() {
   git -C "$1" ls-files bin hooks | while IFS= read -r f; do
     case "${f}" in
       *.sh) echo "${f}" ;;
-      *) if head -n 1 "$1/${f}" | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)'; then echo "${f}"; fi ;;
+      *) if head -n 1 "$1/${f}" | grep -E '^#!.*[/ ](ba)?sh([[:space:]]|$)' > /dev/null; then echo "${f}"; fi ;;
     esac
   done
 }

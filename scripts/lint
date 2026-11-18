@@ -14,7 +14,15 @@ helper's) or reaches its reader whole: a heredoc, a here-string, a variable's va
 format or echo's one word in a command that pipes or redirects. A list's comma-joined items pass too,
 unless the word reaches its reader whole. A word that is not JSON on purpose (bad input a test feeds
 to see it refused, or the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
-"# vacuous-test: ok, bad JSON on purpose"."""
+"# vacuous-test: ok, bad JSON on purpose".
+
+grep-q-pipe: a pipe into grep -q (or -Eq, --quiet and the like) fails under pipefail once what it reads
+passes the pipe's 64 KB: grep exits at its first match, the writer then gets SIGPIPE, and the pipeline
+returns 141 where the test meant 0 (#851). Code reads it, comments do not; a heredoc's body and a
+"$(...)" are read as shell too, as a stub's is. An option's argument (grep -e -q) is not an option. Give grep a here-string, grep -q <pattern> <<< "$(...)", or drop the -q and
+send grep's output to /dev/null, so grep reads to the end. A line that only quotes such a pipe (a
+doc's text a test checks for) says so in a comment on its line (or the heredoc's <<), e.g.
+"# grep-q-pipe: ok, a brief's text"."""
 import glob
 import json
 import os
@@ -22,6 +30,17 @@ import re
 import sys
 
 OK_MARK = "vacuous-test: ok"
+PIPE_OK_MARK = "grep-q-pipe: ok"
+# A pipe (not ||, nor >|), a line break or \ continuation after it, then grep.
+GREP_PIPE = re.compile(r'(?<![|>])\|&?(?!\|)(?:\s|\\\n)*[ef]?grep(?=\s)')
+# One shell word: quoted parts and bare characters run together; an operator or an unclosed " ends it.
+SHELL_WORD = re.compile(r"""(?:'[^']*'|"(?:\\.|[^"\\])*"|\$'(?:\\.|[^'\\])*'|\\.|[^\s'"\\;&|()<>])+""")
+# A redirect (2>/dev/null, >&2, <in), whose target word grep_words drops; grep reads on past it.
+REDIRECT = re.compile(r'(?:[0-9]+|&)?(?:>>|>&|<&|>\||>|<)[ \t]*')
+GREP_ARG_SHORT = "efmABCdD"   # a short option whose argument is the rest of its cluster, or the next word
+GREP_ARG_LONG = ("--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context",
+                 "--directories", "--devices", "--label", "--include", "--exclude", "--exclude-dir",
+                 "--binary-files")
 # An object, or a list: of objects, or with no space after its [ (a shell test, [ "$x" or [[ -z, has
 # one), or of numbers, whose comma or ] no shell test has.
 LOOKS_JSON = re.compile(r'\s*(\{\s*["}]|\[+(\s*\{|["\]]|\s*-?(0|[1-9][0-9]*)(\.[0-9]+)?\s*[,\]]|true|false|null))')
@@ -317,8 +336,121 @@ def problem(text, sent):
     return None
 
 
+def code_only(text, first_line=1, spans=None):
+    """text with each shell comment blanked to its line's end, line breaks kept, so a match in it is
+    code; a heredoc's body has its comments blanked too, read as shell on its own. Each body adds to
+    spans its (first line, last line, the line of its <<)."""
+    spans = [] if spans is None else spans
+    out, i, n, pending = [], 0, len(text), []
+
+    def line_at(pos):
+        return first_line + text.count("\n", 0, pos)
+
+    while i < n:
+        c, start = text[i], i
+        if c == "\\":
+            i += 2
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;|&()"):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        elif c == "'" and text[i - 1:i] == "$":
+            i = skip_ansi_c(text, i + 1)
+        elif c == "'":
+            end = text.find("'", i + 1)
+            i = n if end < 0 else end + 1
+        elif c == '"':   # each $(...) in it is shell of its own
+            subs = []
+            i = skip_double(text, i + 1, subs) + 1
+            for a, b in subs:
+                out.append(text[start:a] + code_only(text[a:b], line_at(a), spans))
+                start = b
+        elif text.startswith("<<", i) and not text.startswith("<<<", i) and HEREDOC.match(text, i):
+            m = HEREDOC.match(text, i)
+            pending.append((m.group(1) == "-", m.group(3), line_at(i)))
+            i = m.end()
+        elif c == "\n" and pending:
+            out.append(c)
+            i += 1
+            for strip_tabs, delim, opener in pending:
+                body_at = i
+                while i < n:
+                    end = text.find("\n", i)
+                    end = n if end < 0 else end
+                    if (text[i:end].lstrip("\t") if strip_tabs else text[i:end]) == delim:
+                        break
+                    i = end + 1
+                body = text[body_at:i]
+                spans.append((line_at(body_at), line_at(body_at) + body.count("\n") - 1, opener))
+                out.append(code_only(body, line_at(body_at), spans))
+            pending = []
+            continue
+        else:
+            i += 1
+        out.append(text[start:i])
+    return "".join(out)
+
+
+def grep_words(code, at):
+    """The words of the grep command whose arguments start at code[at], up to the line's end (past
+    each backslash continuation) or an operator; a redirect and its target are not words."""
+    rest = code[at:].replace("\\\n", " ")
+    end = rest.find("\n")
+    rest, words, i = rest[:None if end < 0 else end], [], 0
+    while True:
+        while i < len(rest) and rest[i] in " \t":
+            i += 1
+        r = REDIRECT.match(rest, i)
+        m = SHELL_WORD.match(rest, r.end() if r else i)
+        if not m:
+            return words
+        if not r:
+            words.append(re.sub(r"""^\$?['"]|['"]$""", "", m.group(0)))
+        i = m.end()
+
+
+def quiet(words):
+    """Whether grep, given these words, runs with -q (in a cluster), --quiet or --silent: an option's
+    argument is not read as an option, and -- ends them."""
+    skip = False
+    for w in words:
+        if skip or not w.startswith("-") or w == "-":
+            skip = False
+            continue
+        if w == "--":
+            return False
+        if w.startswith("--"):
+            if w in ("--quiet", "--silent"):
+                return True
+            skip = "=" not in w and w in GREP_ARG_LONG
+            continue
+        for k, c in enumerate(w[1:], 1):
+            if c == "q":
+                return True
+            if c in GREP_ARG_SHORT:
+                skip = k == len(w) - 1
+                break
+    return False
+
+
+def grep_q_pipes(path, text):
+    """The grep-q-pipe findings in one file's text, each 'path:line: message', at grep's line."""
+    lines, spans, out = text.split("\n"), [], []
+    code = code_only(text, 1, spans)
+    for m in GREP_PIPE.finditer(code):
+        if not quiet(grep_words(code, m.end())):
+            continue
+        at = code.count("\n", 0, m.end()) + 1
+        marked = [at] + [opener for first, last, opener in spans if first <= at <= last]
+        if any(PIPE_OK_MARK in lines[k - 1].lower() for k in marked):
+            continue
+        out.append(f"{path}:{at}: grep-q-pipe: a pipe into grep -q returns 141 under pipefail once its input"
+                   f" passes 64 KB; use grep -q <pattern> <<< \"$(...)\", or grep without -q > /dev/null")
+    return out
+
+
 def lint_file(path):
-    """The vacuous-test findings in one file, each 'path:line: message'."""
+    """The findings in one file, vacuous-test's then grep-q-pipe's, each 'path:line: message'."""
     with open(path, encoding="utf-8", errors="replace") as f:
         text = f.read()
     file_lines, found, out = text.split("\n"), [], []
@@ -336,7 +468,7 @@ def lint_file(path):
                 shown = value.replace(MARK, "0").strip().replace("\n", " ")
                 shown = shown if len(shown) <= SHOWN else shown[:SHOWN] + "..."
                 out.append(f"{path}:{start + bad[0] - 1}: vacuous-test: invalid JSON ({bad[1]}): {shown}")
-    return out
+    return out + grep_q_pipes(path, text)
 
 
 def main(argv):
@@ -347,7 +479,8 @@ def main(argv):
         print(f)
     if findings:
         print(f"lint: {len(findings)} finding(s); a word that is not JSON on purpose says so in a"
-              f" comment on its line: # {OK_MARK}, <why>")
+              f" comment on its line: # {OK_MARK}, <why>; a line that only quotes a grep -q pipe:"
+              f" # {PIPE_OK_MARK}, <why>")
         return 1
     return 0
 

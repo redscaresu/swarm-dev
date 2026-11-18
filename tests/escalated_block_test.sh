@@ -78,10 +78,10 @@ started i w:p2; sw close i impossible >/dev/null
 is "close i impossible: the body as committed, and the block in .swarm/escalated/i" "same|yes" \
   "$(same_body i)|$(grep -q '^\*\*Impossible\.\*\*' "${S}/i" && echo yes)"
 is "next names i escalated, its builder having called its Done when impossible (impossible_block reads .swarm/escalated)" \
-  "escalated i|yes" "$(next | head -1)|$(next | grep -qF "i's builder called its Done when impossible:" && echo yes)"
+  "escalated i|yes" "$(next | head -1)|$(next | grep -F "i's builder called its Done when impossible:" > /dev/null && echo yes)"
 cp "${S}/i" "${ROOT}/i.block"; rm "${S}/i"
 is "with .swarm/escalated/i gone, next no longer says its builder called it impossible (the story file has no block)" "escalated i|yes" \
-  "$(next | head -1)|$(next | grep -qF "i failed on Fable:" && echo yes)"
+  "$(next | head -1)|$(next | grep -F "i failed on Fable:" > /dev/null && echo yes)"
 cp "${ROOT}/i.block" "${S}/i"
 sw reset i re-scoped >/dev/null
 is "reset i deletes .swarm/escalated/i and leaves the story file byte for byte as committed" "gone|identical" \

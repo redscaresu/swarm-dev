@@ -172,7 +172,7 @@ hooks/                hooks.json; merge-guard.sh (the guard on merges and comman
                       user-caught-reminder.sh (reminds the lead to log a time a person had to step in)
 scripts/              test.sh (the make test runner), select-tests.sh and select_tests.py (the tests a branch's
                       changes map to), test-map.tsv (that map), lint (make check: JSON a test feeds must
-                      parse), pre-commit, board-only.sh
+                      parse, and no test pipes into grep -q), pre-commit, board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
@@ -207,6 +207,11 @@ map does not know. CI's sharded run is the gate: `test` is the required check, a
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- In a test, never pipe into `grep -q`: under `pipefail` the pipeline returns 141 once grep's input
+  passes 64 KB, since grep exits at its first match and the writer gets SIGPIPE.
+  Write `grep -q <pattern> <<< "$(...)"`, or drop the `-q` and send grep's output to `/dev/null`.
+  `make check` fails such a line; one that only quotes the pipe (a doc's text) says
+  `# grep-q-pipe: ok, <why>` on its line or its heredoc's `<<` line.
 - Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
   hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
   `make test` already unsets it.
