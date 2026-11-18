@@ -21,6 +21,7 @@
 # A row counts in the window when its start's local day is in it. Then, after a blank line, over_30:
 # the rows whose minutes, as shown, are past 30, open ones too. --epic does not narrow it.
 import datetime, os, re
+import clock
 from events_outcome import fields, outcome
 
 OVER_MIN = 30
@@ -69,7 +70,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
         for key in [k for k in pending if k[0] == target[len("review-"):]]:
             close(key, t)
 
-now = datetime.datetime.now(datetime.timezone.utc)
+now = clock.utc_now()
 over = 0
 print("story\tfrom\tminutes\tpane")
 for slug, kind, start, version, end in sorted(done + [[k[0], *v, None] for k, v in pending.items()], key=lambda r: r[2]):

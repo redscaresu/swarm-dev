@@ -24,12 +24,14 @@ swarm.sh knows (known_slugs), alone or with .md, is its own record, whatever wor
 credential file's type (.pem, .key, .env ...) is skipped whatever its name. So is anything that is not a
 regular file or folder (a symlink could lead out of the folder to anything).
 """
-import datetime
 import json
 import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # bin/lib, which python3 -I leaves off
+import clock  # noqa: E402
 
 # A credential's name: a word one holds (which a slug can hold too), or a credential file's type, which
 # no slug exemption overrides.
@@ -275,7 +277,7 @@ def write_restore(out, commit, branch, when, memory, logs, skipped, board_repo):
 
 def main():
     out, swarm, memory, checkout, commit, branch, project = sys.argv[1:8]
-    when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    when = clock.utc_now().strftime("%Y-%m-%d %H:%M UTC")
     skipped, logs, own = [], 0, set()
     if os.path.isdir(swarm):
         known = known_slugs(swarm, os.environ.get("HANDOVER_BOARD", checkout), checkout)

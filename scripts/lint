@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""scripts/lint [file...] — the repo's lints over shell test files (tests/*.sh by default); make
-check runs it. It prints file:line: and the problem for each finding, and exits 1 when there is one.
+"""scripts/lint [file...] — the repo's lints: vacuous-test and grep-q-pipe over shell test files and
+python-clock over Python files (tests/*.sh and bin/lib/*.py by default; a file ending in .py gets
+python-clock, any other the two shell lints); make check runs it. It prints file:line: and the problem
+for each finding, and exits 1 when there is one.
 
 vacuous-test: JSON a test feeds to a hook or helper must parse, or the code it meant to exercise never
 runs and the test passes anyway (#515: a stray \\} in a hook input). Each quoted shell word and each
@@ -22,7 +24,14 @@ returns 141 where the test meant 0 (#851). Code reads it, comments do not; a her
 "$(...)" are read as shell too, as a stub's is. An option's argument (grep -e -q) is not an option. Give grep a here-string, grep -q <pattern> <<< "$(...)", or drop the -q and
 send grep's output to /dev/null, so grep reads to the end. A line that only quotes such a pipe (a
 doc's text a test checks for) says so in a comment on its line (or the heredoc's <<), e.g.
-"# grep-q-pipe: ok, a brief's text"."""
+"# grep-q-pipe: ok, a brief's text".
+
+python-clock: bin/lib's Python reads now and today only through bin/lib/clock.py, which SWARM_DASH_NOW
+fixes, so a test can pin the day (#854, #586: dash_slow.py's own date.today() moved dash's CI week
+when a run crossed midnight). A date.today(), datetime.today(), datetime.now() or datetime.utcnow()
+anywhere else is a finding, called or not, under any name an import gives datetime, date or the
+datetime class. time.time() is not one: deadlines and ages run on the real clock."""
+import ast
 import glob
 import json
 import os
@@ -30,6 +39,7 @@ import re
 import sys
 
 OK_MARK = "vacuous-test: ok"
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
 PIPE_OK_MARK = "grep-q-pipe: ok"
 # A pipe (not ||, nor >|), a line break or \ continuation after it, then grep.
 GREP_PIPE = re.compile(r'(?<![|>])\|&?(?!\|)(?:\s|\\\n)*[ef]?grep(?=\s)')
@@ -471,16 +481,74 @@ def lint_file(path):
     return out + grep_q_pipes(path, text)
 
 
+CLOCK_HELPER = os.path.join(REPO, "bin", "lib", "clock.py")
+CLOCK_READS = ("today", "now", "utcnow")   # each a real-clock read on datetime.date or datetime.datetime
+CLOCK_CLASSES = ("datetime.date", "datetime.datetime", "date", "datetime")   # the last two: a name no import binds
+
+
+def clock_aliases(tree):
+    """What each name an import binds can stand for: `import datetime as dt` adds datetime to dt's,
+    `from datetime import date as d` adds datetime.date to d's, `from other import date` other.date to
+    date's. A name keeps every meaning any scope's import gives it, so a function's own import cannot
+    hide the module's."""
+    names = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names.setdefault(a.asname or a.name.partition(".")[0], set()).add(a.name if a.asname else a.name.partition(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                names.setdefault(a.asname or a.name, set()).add(f"{node.module or ''}.{a.name}")
+    return names
+
+
+def dotted(node):
+    """a.b.c for a chain of attributes on a name, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id] + parts[::-1])
+
+
+def lint_python(path):
+    """The python-clock findings in one Python file, each 'path:line: message'; none in the clock helper."""
+    if os.path.realpath(path) == os.path.realpath(CLOCK_HELPER):
+        return []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    try:
+        tree = ast.parse(text, path)
+    except SyntaxError as e:
+        return [f"{path}:{e.lineno}: python-clock: cannot parse it ({e.msg}), so its clock reads are unchecked"]
+    names, out = clock_aliases(tree), []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and node.attr in CLOCK_READS):
+            continue
+        cls = dotted(node.value)
+        if cls is None:
+            continue
+        head, _, rest = cls.partition(".")
+        if any(".".join(filter(None, [m, rest])) in CLOCK_CLASSES for m in names.get(head, {head})):
+            out.append(f"{path}:{node.lineno}: python-clock: {cls}.{node.attr} reads the real clock; use clock.now(),"
+                       f" clock.today() or clock.utc_now() (bin/lib/clock.py), which SWARM_DASH_NOW fixes")
+    return sorted(out, key=lambda f: int(f.split(":")[1]))
+
+
 def main(argv):
-    tests = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "tests")
-    paths = argv or sorted(os.path.relpath(p) for p in glob.glob(os.path.join(tests, "*.sh")))
-    findings = [f for p in paths for f in lint_file(p)]
+    paths = argv or sorted(os.path.relpath(p) for g in (("tests", "*.sh"), ("bin", "lib", "*.py"))
+                           for p in glob.glob(os.path.join(REPO, *g)))
+    findings = [f for p in paths for f in (lint_python(p) if p.endswith(".py") else lint_file(p))]
     for f in findings:
         print(f)
     if findings:
-        print(f"lint: {len(findings)} finding(s); a word that is not JSON on purpose says so in a"
-              f" comment on its line: # {OK_MARK}, <why>; a line that only quotes a grep -q pipe:"
-              f" # {PIPE_OK_MARK}, <why>")
+        # The shell lints' hint, when a shell file has a finding; python-clock's line says its own fix.
+        hint = (f"; a word that is not JSON on purpose says so in a comment on its line: # {OK_MARK}, <why>;"
+                f" a line that only quotes a grep -q pipe: # {PIPE_OK_MARK}, <why>"
+                if any(": python-clock: " not in f for f in findings) else "")
+        print(f"lint: {len(findings)} finding(s){hint}")
         return 1
     return 0
 

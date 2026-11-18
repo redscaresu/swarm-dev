@@ -1,4 +1,5 @@
 import datetime, fcntl, json, os, re, signal, stat, subprocess, sys, time
+import clock
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # The ci line runs flow's ci_health over two weeks of PRs, 4 gh calls each, so at most every 6 hours:
 # a week's median barely moves in that time. A refresh that fails is tried again after CI_RETRY, and
@@ -111,7 +112,7 @@ def ci_refresh(project, repo, cache):
     # <cache>.failed. It holds start_refresh's lock on <cache>.run (an inherited descriptor) until it ends.
     line = None
     try:
-        since = (datetime.date.today() - datetime.timedelta(days=6)).isoformat()
+        since = (clock.today() - datetime.timedelta(days=6)).isoformat()
         env = {k: v for k, v in os.environ.items() if k != "HERDR_ENV"}
         env.update(SWARM_PROJECT=project, SWARM_FLOW_SECTIONS="ci_health", SWARM_CI_TIME_ONLY="1")
         swarm = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "swarm.sh")

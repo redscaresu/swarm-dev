@@ -304,3 +304,8 @@ at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/gol
 The fixture sets `SWARM_DASH_NOW`, which fixes dash's clock, so the frames come out the same on
 every run. If you change what dash draws, run `UPDATE_GOLDEN=1 bash tests/dash_golden_test.sh` and
 commit the regenerated frames in the same PR, so the review shows the new look as a diff.
+
+`SWARM_DASH_NOW` (epoch seconds) fixes the clock in `bin/lib/clock.py`, where the Python helpers under `bin/lib` read now and today.
+So the ci line's refresh counts its 6 days back from that day, and the Python behind `swarm.sh flow`, `outcomes` and `retro` takes that day as today.
+`make check` fails a `date.today()`, `datetime.today()`, `datetime.now()` or `datetime.utcnow()` anywhere else in `bin/lib/*.py`.
+It allows `time.time()`, so deadlines and ages stay on the real clock, and so does any helper that reads now from it.

@@ -5,6 +5,7 @@
 # read fresh every time. A write is a temp file renamed over the old one, so a parallel flow never
 # reads half a file; one that cannot be read or parsed is fetched again.
 import datetime, glob, json, os, re, tempfile
+import clock
 
 def path(repo, name):
     return os.path.join(os.environ.get("SWARM_GH_CACHE", ""), repo.lower().replace("/", "--"), name + ".json")
@@ -134,7 +135,7 @@ class Listing:
         # keep_days, items whose day (day(item)) is older than that many days, and older than start,
         # are dropped, and from moves up past them.
         if keep_days:
-            cut = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=keep_days)).isoformat()
+            cut = (clock.utc_now().date() - datetime.timedelta(days=keep_days)).isoformat()
             cut = min(cut, self.start)
             self.state["items"] = self.items = {k: v for k, v in self.items.items() if day(v) >= cut}
             self.state["from"] = max(self.state["from"], cut)
