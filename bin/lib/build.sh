@@ -1216,7 +1216,13 @@ CAP_ROUND=3   # the review round from which the round cap holds findings back (r
 # Before CAP_ROUND, demote_kinds (when set) does the same for the kinds it lists; from CAP_ROUND on the
 # cap line covers them, so it prints no line of its own there.
 review_round_line() {
-  echo "This is review round $1 of the story: run codex alone."
+  if [[ "$1" == 1 ]]; then
+    echo "This is review round 1 of the story. When the PR
+changes code (not only docs, board files or a dependency bump), state the touches and Done when
+above, then run \`/code-review <PR>\`."
+  else
+    echo "This is review round $1 of the story: run codex alone."
+  fi
   local trust="read the diff and trust CI for the tests; run no local test suite and no mutation run."
   if [[ "${CFG_review_verify:-ci}" != full ]]; then
     echo "Tests (review_verify = ci): ${trust}"
