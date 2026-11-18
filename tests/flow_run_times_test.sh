@@ -20,11 +20,9 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 watcher=""
-# tree <pid> — the process and everything under it, children first.
-tree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree "${c}"; done; echo "$1"; }
-# shellcheck disable=SC2046 # one pid per word
-stop_watch() { [[ -z "${watcher}" ]] || kill $(tree "${watcher}") 2>/dev/null || true; wait 2>/dev/null || true; watcher=""; }
-trap 'stop_watch; rm -rf "${ROOT}"' EXIT
+# stop_watch — stop the dash --watch below and everything under it: its group, which in_new_group made.
+stop_watch() { [[ -z "${watcher}" ]] || stop_group "${watcher}" "${ROOT}/groups" || true; watcher=""; }
+trap 'stop_groups "${ROOT}/groups"; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 check() { # <name> <output> <exact expected output>
@@ -150,8 +148,8 @@ mkdir -p "${ROOT}/sleep-bin"
 printf '#!/bin/sh\n[ "$*" = 1 ] && echo frame >> %q\nexec %q "$@"\n' "${ROOT}/frames" "$(command -v sleep)" > "${ROOT}/sleep-bin/sleep"
 chmod +x "${ROOT}/sleep-bin/sleep"
 : > "${times_a}"; : > "${ROOT}/frames"
-(cd "${A}" && PATH="${ROOT}/sleep-bin:${PATH}" exec bash "${SWARM}" dash --watch 1 > /dev/null 2>&1) &
-watcher=$!
+(cd "${A}" && in_new_group env PATH="${ROOT}/sleep-bin:${PATH}" bash "${SWARM}" dash --watch 1 > /dev/null 2>&1) &
+watcher=$!; group_record "${watcher}" "${ROOT}/groups"
 frames() { wc -l < "${ROOT}/frames" | tr -d ' '; }
 until_by=$((SECONDS + 60 + 4 * ${dash_s:-60}))
 until (( $(frames) >= 2 || SECONDS > until_by )); do sleep 0.1; done

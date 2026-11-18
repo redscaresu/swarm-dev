@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'touch "${ROOT}/go" "${ROOT}/u1/go" "${ROOT}/u2/go" 2>/dev/null; wait; rm -rf "${ROOT}"' EXIT
+trap 'touch "${ROOT}/go" "${ROOT}/u1/go" "${ROOT}/u2/go" 2>/dev/null; wait; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 export HOME="${ROOT}/home"   # its runs are top-level: a cap in the real ~/.swarm/test-cap would gate them
 mkdir -p "${ROOT}/log" "${ROOT}/bin" "${ROOT}/cwd"

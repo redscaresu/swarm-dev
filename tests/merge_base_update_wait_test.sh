@@ -16,7 +16,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'stop_groups "${ROOT}/groups"; stop_test_group; chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
@@ -284,24 +284,22 @@ printf '2026-10-28T00:00:00Z\tmerge\ta\t-\tbase-merged %s from %s\n' "${H3}" "${
 # head_at <sha> — PR #1 (story/a) is at <sha>.
 head_at() { printf '[{"number": 1, "head": {"ref": "story/a", "sha": "%s"}, "updated_at": "%s"}]\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${W}/prlist.json"; }
 # watch_for <watch args...> — what watch printed, a |, then how it ended: its exit code, or "polling"
-# once it has listed the PRs three times (two whole polls said nothing), or "timeout" after 60 s. A
-# watch still running is stopped, and its children.
+# once it has listed the PRs three times (two whole polls said nothing), or "timeout" after 60 s. The
+# watch runs as a process group of its own (in_new_group), and whether it ended or still runs, its
+# group is then stopped (stop_group), every process under it too, and its record line dropped.
 watch_for() {
-  local pid i end=timeout kids k out
+  local pid i end=timeout out
   : > "${W}/calls"; rm -f "${W}/watch.out"
-  (cd "${WP}" && exec env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${W}/bin:${PATH}" \
+  (cd "${WP}" && in_new_group env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${W}/bin:${PATH}" \
     bash "${SWARM}" watch "$@" > "${W}/watch.out" 2>&1) &
-  pid=$!
+  pid=$!; group_record "${pid}" "${ROOT}/groups"
   for ((i = 0; i < 300; i++)); do
     if ! kill -0 "${pid}" 2>/dev/null; then { wait "${pid}"; } 2>/dev/null && end=0 || end=$?; break; fi
     if [[ $(grep -c 'pulls?state=open' "${W}/calls" || true) -ge 3 ]]; then end=polling; break; fi
     sleep 0.2
   done
   out="$(cat "${W}/watch.out")"
-  if [[ "${end}" == polling || "${end}" == timeout ]]; then
-    kids="$(pgrep -P "${pid}" || true)"; kill "${pid}" 2>/dev/null || true; { wait "${pid}"; } 2>/dev/null || true
-    for k in ${kids}; do kill "${k}" 2>/dev/null || true; done
-  fi
+  stop_group "${pid}" "${ROOT}/groups" || true
   printf '%s|%s' "${out}" "${end}"
 }
 head_at "${H3}"

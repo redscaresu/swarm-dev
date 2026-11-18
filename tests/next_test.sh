@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0
 # The claude stub goes first on PATH, so no run here reaches the real claude.
-STUB_BIN="$(mktemp -d)"; trap 'rm -rf "${STUB_BIN}"' EXIT
+STUB_BIN="$(mktemp -d)"; trap 'stop_test_group; rm -rf "${STUB_BIN}"' EXIT
 export CLAUDE_CONFIG_DIR="${STUB_BIN}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"

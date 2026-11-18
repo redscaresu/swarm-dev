@@ -12,7 +12,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 P="${ROOT}/proj"; LOG="${P}/.swarm/events.tsv"
-trap 'chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 # agents.sh's EVENT_SEP and EVENT_OUTCOME_AWK, read by sourcing it, as swarm.sh does.
 from_agents() { PROJECT_DIR="${ROOT}/src" bash -c 'source "$1/agents.sh"; printf %s "${!2}"' _ "${LIB}" "$1"; }
 SEP="$(from_agents EVENT_SEP)"; EVENT_AWK="$(from_agents EVENT_OUTCOME_AWK)"

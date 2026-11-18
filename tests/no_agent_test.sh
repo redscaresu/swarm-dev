@@ -14,7 +14,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 busy_pid=""
 other_pid=""
-trap 'unbusy; [[ -z "${other_pid}" ]] || kill "${other_pid}" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
+trap 'unbusy; [[ -z "${other_pid}" ]] || kill "${other_pid}" 2>/dev/null || true; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111

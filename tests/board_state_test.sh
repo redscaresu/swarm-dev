@@ -24,7 +24,7 @@ TEST_PATH="${PATH}"   # the test's own PATH, for st: read here, before bs export
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; ST="${P}/.swarm/board-state"; U=https://github.com/o/r/pull
 H=1111111111111111111111111111111111111111

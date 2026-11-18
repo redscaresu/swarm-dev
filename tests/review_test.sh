@@ -10,7 +10,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_groups "${ROOT}/groups"; stop_test_group; rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
@@ -685,36 +685,21 @@ wagents() { # <mine-builder's herdr status> <cx's herdr status>
 wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's session is $TWO (default idle), waiting on $TWO_WHY
   echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"s-two\",\"status\":\"${TWO:-idle}\"${TWO_WHY:+,\"waitingFor\":\"${TWO_WHY}\"}}]" > "${ROOT}/watch-sessions.json"
 }
-# watchstart — start watch --epic mine in the background, writing to watch.out, its pid in wpid
-# (Claude's sessions from $WATCH_SESSIONS, else watch-sessions.json; $WATCH_PRE first on its PATH).
-# SIGPIPE is ignored, as on CI, so a write into a closed pipe prints "Broken pipe" here too. watch.out
-# is removed first, so a writer an earlier watch left (see watchstop) writes to that run's unlinked
-# file, never this one's.
+# watchstart — start watch --epic mine in the background, as a process group of its own (in_new_group,
+# recorded in groups), writing to watch.out, its pid in wpid (Claude's sessions from $WATCH_SESSIONS,
+# else watch-sessions.json; $WATCH_PRE first on its PATH). SIGPIPE is ignored, as on CI, so a write
+# into a closed pipe prints "Broken pipe" here too. watch.out is removed first, so a writer an earlier
+# watch left writes to that run's unlinked file, never this one's.
 watchstart() {
   : > "${ROOT}/herdr.log"; rm -f "${ROOT}/watch.out"
-  (trap '' PIPE; cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${WATCH_PRE:+${WATCH_PRE}:}${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
-  wpid=$!
+  (trap '' PIPE; cd "${w}" && in_new_group env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${WATCH_PRE:+${WATCH_PRE}:}${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
+  wpid=$!; group_record "${wpid}" "${ROOT}/groups"
 }
-# watchstop <pid> — stop a watch and everything under it: STOP each process, parents first, and read
-# the children of all of them again until no new one shows, then KILL them all. Killing only swarm.sh
-# and its children leaves a deeper descendant, such as fm's head (swarm.sh, queued_line's $(...),
-# fm's $(...), head), to write into a closed pipe after the stop, and its "Broken pipe" into the next
-# watch's output (CI, 2026-10-27). kill(2) returns while a STOP is pending, so a fork already under
-# way can still finish after the last read and outlive the KILL; watchstart's fresh watch.out keeps
-# such a writer out of the next watch's output.
-watchstop() {
-  local all="" new="$1" p c i
-  for ((i = 0; i < 20 && ${#new} > 0; i++)); do
-    for p in ${new}; do kill -STOP "${p}" 2>/dev/null || true; done
-    all+=" ${new}"; new=""
-    for p in ${all}; do
-      for c in $(pgrep -P "${p}" || true); do [[ " ${all} ${new} " == *" ${c} "* ]] || new+=" ${c}"; done
-    done
-  done
-  # shellcheck disable=SC2086 # one pid per word
-  kill -KILL ${all} ${new} 2>/dev/null || true
-  { wait "$1"; } 2>/dev/null || true
-}
+# watchstop <pid> — stop a watch and everything under it: stop_group, whose group in_new_group made,
+# so a deeper descendant, such as fm's head (swarm.sh, queued_line's $(...), fm's $(...), head), is
+# stopped too and cannot write into a closed pipe after the stop, and its "Broken pipe" into the next
+# watch's output (CI, 2026-10-27).
+watchstop() { stop_group "$1" "${ROOT}/groups" || true; }
 # watchrun [<file>] — run a watch (watchstart) for at most 10 seconds and print what it printed, or
 # "(still watching)" once it has read the agents and not returned, or once <file> exists, so a watch
 # that wrongly polls on fails rather than hangs.
@@ -733,6 +718,7 @@ watchrun() {
     echo "(still watching)"; return
   fi
   { wait "${wpid}"; } 2>/dev/null || true
+  watchstop "${wpid}"   # what it left in its group, and its record line
   cat "${ROOT}/watch.out"
 }
 wagents idle idle; wsession waiting "permission prompt"

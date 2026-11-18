@@ -18,7 +18,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 export HOME="${ROOT}/home"   # its own runs are top-level when it runs alone: a cap in the real ~/.swarm/test-cap would gate them
 fails=0
