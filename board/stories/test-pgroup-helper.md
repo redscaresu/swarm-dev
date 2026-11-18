@@ -1,5 +1,6 @@
 ---
 kind: code
+fix: true
 status: ready
 depends_on: []
 touches: [tests/test_helpers.sh:stop group helper]

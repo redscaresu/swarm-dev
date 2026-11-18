@@ -1,5 +1,6 @@
 ---
 kind: code
+fix: true
 status: ready
 depends_on: []
 touches: [commands/swarm.md:moved-base steps]
