@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # swarm_lead_rules_test.sh — commands/swarm.md keeps the lead's three rules from the v0.28.0 retro:
 # plan independent epics at the same time, restart an agent at its first API-error stop, and judge
-# an agent alive from events.tsv, its PR and the stall check, not a pane read. Each check fails when its rule is removed.
+# an agent alive from events.tsv, its PR and the stall check, not a pane read. It also keeps the two
+# from the v0.31.0 retro: make routine calls without asking and log each, and force-push a story
+# branch only with --force-with-lease after the same-diff and signed checks. Each check fails when its rule is removed.
 # shellcheck disable=SC2016  # the backticks in the patterns are literal text in the doc
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -29,7 +31,7 @@ check "plan independent epics at the same time, the next once a plan waits for a
 check "never two plans' agents at once, since they share names and briefs" yes \
   "$(has "${DOC}" 'Never run two plans. agents at once: they share agent names and brief files')"
 check "the plan-epic arm starts the next independent plan before it stops" yes \
-  "$(has "${DOC}" 'approve the stories, that is the user.s decision: wait for it. Before you stop, start the next independent epic.s plan, as the planning rule under "Three more rules for the lead" says')"
+  "$(has "${DOC}" 'approve the stories, that is the user.s decision: wait for it. Before you stop, start the next independent epic.s plan, as the planning rule under "More rules for the lead" says')"
 check "a conductor is restarted by its agent name, the backlog's included" yes \
   "$(has "${DOC}" '`swarm.sh close <conductor>`, then the same `swarm.sh conduct <epic>` or `swarm.sh conduct --backlog` that started it.*`<conductor>` is its agent name as `next` or `status` prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>`')"
 check "a stuck planner is closed before its command runs again" yes \
@@ -51,15 +53,24 @@ check "restart at the first API-error stop, naming each route" yes \
 check "the restart is followed by a tell, since restart and conduct take no brief" yes \
   "$(has "${DOC}" 'take no brief.*to write its output as it goes.*A builder comes back working, so run `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background: the tell goes once its turn ends. A wait that times out or prints anything but `idle` or `done`.*sends nothing: deal with what it printed, then send the file again the same way.*`swarm.sh tell <conductor> note <file>` goes in busy or not')"
 check "the stuck: api error arm follows the restart rule by name" yes \
-  "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the restart rule under "Three more rules for the lead" says')"
+  "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the restart rule under "More rules for the lead" says')"
 check "a conductor is closed only when the restart rule says so" yes \
-  "$(has "${DOC}" 'Never close a conductor that has not reported, unless the restart rule under "Three more rules for the lead" says to')"
+  "$(has "${DOC}" 'Never close a conductor that has not reported, unless the restart rule under "More rules for the lead" says to')"
 check "alive from events.tsv, its PR, status and dash, never a pane read alone" yes \
   "$(has "${DOC}" 'whether an agent is alive from .\.swarm/events\.tsv., its PR where it has one, and `swarm.sh status` or `swarm.sh dash`, never from a pane read alone')"
 check "only dash shows the age; status shows the state" yes \
   "$(has "${DOC}" '`dash` shows `working <N>m` or `stalled <N>m`, `status` shows the agent.s state, and neither acts on anything')"
 check "wait --stall is not a liveness check" yes \
   "$(has "${DOC}" 'Do not use `swarm.sh wait --stall` as a check')"
+
+check "routine calls are the lead's, each logged with intervene" yes \
+  "$(has "${DOC}" 'Make the routine calls yourself, without asking the user first.*restart a dead or stuck agent.*start review agents and conductors.*throttle or restore load.*Log each one as it happens, as a `lead-hand` line in the form above')"
+check "the user still decides held merges, You: steps, money, credentials and their settings" yes \
+  "$(has "${DOC}" 'Ask the user only for what is theirs: a merge `swarm.sh merge` holds for a protected path or dropped lines, a `kind: lead` story.s \*\*You:\*\* steps, anything that spends money or touches credentials, and a change to their own settings files')"
+check "a lead force-push is story/* only, with its lease pinned to the checked head" yes \
+  "$(has "${DOC}" 'A force-push to a `story/\*` branch the swarm owns .a story.s PR branch. is a routine call too, in one form only: `git push --force-with-lease=<branch>:<old-head> origin <new-head>:<branch>`, naming the branch and both SHAs. Never `--force`, never a bare `--force-with-lease`, and never any other branch.')"
+check "the force-push waits on the same-diff and signed checks, and is logged" yes \
+  "$(has "${DOC}" 'The PR.s diff is unchanged: `git diff-tree -r --ignore-submodules=none "\$\(git merge-base origin/<base> <old-head>\)" <old-head>` and the same for `<new-head>` print the same.* Every commit you push is signed: .*shows `G` or `U` .a good signature. on each line. If either check fails, do not push.*Log the push the same way, with the PR URL, both SHAs and why')"
 
 if (( fails > 0 )); then echo "${fails} failed"; exit 1; fi
 echo "all passed"
