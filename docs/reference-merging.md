@@ -424,6 +424,17 @@ conflict says `pull the branch first (it holds GitHub's merge <head>), then merg
 push, and merge the new head`, the run-merge-again refusals name that head in `merge --head`, and
 the base check's own refusals, with a compare that fails, say the builder pulls its branch first too.
 
+**Pulling the builder's worktree forward.** After each base merge, `merge` brings the story's worktree to the new head before it waits on that head's CI.
+For a head an earlier `merge` run made (its `base-merged` line), it does this before it checks the head's CI, so a run that refuses a red or pending head still moves the worktree.
+A worktree with nothing uncommitted (`git status --porcelain`) at the old head is fetched and fast-forwarded (`git merge --ff-only`), and `merge` prints `pulled: <slug>'s worktree <path> is now at <new>, fast-forwarded from <old> to GitHub's merge of <base>`.
+Any other worktree is left as it is: one with uncommitted changes, one at another commit, and one whose fetch or fast-forward fails, or whose fetch takes over 120 seconds (`PULL_FORWARD_WAIT`).
+Its builder gets a nudge through `swarm.sh tell <slug> nudge`, queued while the builder is busy, that names the new head and says to run `git pull --ff-only origin <branch>` before its next push.
+`merge` prints `nudged: <slug>'s builder to pull <new> into its worktree (<why>): <tell's line>`, or a warning when the tell fails.
+A worktree that already holds the new head is left alone, and so is a PR with no story worktree (a board PR, a lead's PR).
+Each refusal still ends with its pull-first text.
+Between v0.30.3 and v0.31.1, 7 of the 35 merges stalled here without it: #914 four times, #987 three times, and #964, #970, #974, #992 and #997.
+The review agent refused to start on a worktree behind the PR's head, and the lead pulled the worktree or told the builder by hand.
+
 **Waiting for the new head.** Once it has a new head, `merge` waits for that head's CI itself, with
 `swarm.sh wait-pr`'s own loop: every 20 seconds (`MERGE_POLL`), for up to 30 minutes
 (`MERGE_CI_SECONDS`), it reads the head's check runs and commit statuses, and the runs of each workflow

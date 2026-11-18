@@ -13,7 +13,7 @@ FINDINGS_LOG_NAME="findings.tsv"
 # of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
 FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic split-critic escaped"
 # Why a finding was declined (log-finding --declined <reason>); deferred is one the round cap held back
-# from round 3, or one of demote_kinds' kinds held back before it.
+# from round 2, or one of demote_kinds' kinds held back before it.
 FINDING_REASONS="out-of-scope nit wrong deferred"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets

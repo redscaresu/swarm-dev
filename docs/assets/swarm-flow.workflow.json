@@ -175,7 +175,7 @@
       "col": 5,
       "type": "security",
       "label": "Review agent",
-      "sublabel": "with codex; capped at round 3",
+      "sublabel": "with codex; capped at round 2",
       "width": 140
     },
     {
