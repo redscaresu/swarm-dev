@@ -985,7 +985,9 @@ so readers ignore any they do not know.
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
-the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
+the PR with a reason; none is silenced or dismissed.
+GitHub's runner-migration notice (a runner image such as `ubuntu-latest` moving to a new version) is not about the PR and is not a finding, so it is neither fixed nor rebutted.
+findings also reads the PR's diff and body. A
 test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
 `it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
 mutation run. findings prints each test without one as `rules-unchecked`, with the command that
