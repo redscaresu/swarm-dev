@@ -41,8 +41,9 @@ lint:
 	@shellcheck $(SHELLCHECK_FILES)
 
 # Run scripts/lint over LINT_FILES (every tests/*.sh, the helpers the tests source too, and every
-# bin/lib/*.py, for a clock read outside bin/lib/clock.py): it prints file:line: for each finding and
-# fails if there is one. CI runs it beside shellcheck.
-LINT_FILES ?= tests/*.sh bin/lib/*.py
+# bin/lib/*.py, for a clock read outside bin/lib/clock.py; a pattern no file matches is left out, so the
+# lint is never handed its name): it prints file:line: for each finding and fails if there is one. CI
+# runs it beside shellcheck.
+LINT_FILES ?= $(wildcard tests/*.sh bin/lib/*.py)
 check:
 	@python3 scripts/lint $(LINT_FILES)
