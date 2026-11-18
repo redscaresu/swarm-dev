@@ -267,6 +267,10 @@ check "the brief waits for green with wait-pr on the PR, naming the project, bef
   "$(has "Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr ${PR}\` in the background and wait for it to exit, never a loop of your own" "${flat}")|$(awk '/ wait-pr / && !w { w = NR } / codex-review / && !c { c = NR } END { print (w && c && w < c) ? "yes" : "no" }' <<< "${brief}")|$(has "After each nudge, wait for the builder's fix with \`${sw} wait --stall --past <HEAD before the tell> s1\`, as above, then wait for green again on the head it pushed." "${flat}")"
 check "the brief triages check-run notes and code-scanning alerts before the head counts green" "yes|yes|yes|yes" \
   "$(has "Exit 0: the head counts green only once you have triaged what \`${sw} findings svc 1\` prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning alerts." "${flat}")|$(has "Nudge the builder with each real one. Rebut the rest with a reason in the PR (\`gh pr comment ${PR} --body" "${flat}")|$(has "Never dismiss an alert." "${flat}")|$(has "\`${sw} tell s1 nudge ${p}/.swarm/reviews/s1.nudge.md\` (never findings, which count as a review round)" "${flat}")"
+# GitHub's runner-migration notice sits on every check of every PR. If the brief stops saying it is no
+# finding, review agents go back to rebutting and logging it on each PR, and this goes red.
+check "the brief says GitHub's runner-migration notice is no finding, to nudge, rebut or log" "yes" \
+  "$(has "GitHub's runner-migration notice (a runner image such as \`ubuntu-latest\` moving to a new version) is not about the PR and is not a finding: never nudge, rebut or log it." "${flat}")"
 check "a red head or a conflict is a nudge naming the check or the base, and with the ladder off no step-up, running or done, is named" "yes|0|0" \
   "$(has "Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in." "${flat}")|$(grep -c 'stepped up' <<< "${brief}" || true)|$(grep -c 'stepping up' <<< "${brief}" || true)"
 # The green step ends: two nudges or two red heads at most, then a findings file the agent sends the

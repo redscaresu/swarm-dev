@@ -1533,7 +1533,7 @@ EOF
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: it never
 # edits the code, the story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
 # and code-scanning alerts, each real one, red check or conflict sent to the builder as a
-# nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
+# nudge, GitHub's runner-migration notice none of them, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), and no
 # other reviewer, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding
@@ -1698,6 +1698,8 @@ background and wait for it to exit, never a loop of your own; it prints the head
   alerts. Nudge the builder with each real one. Rebut the rest with a reason in the PR
   (\`gh pr comment $2 --body '<the reason>'\`), unless a comment there already rebuts it: scanners
   often flag a name, not a value. Never dismiss an alert.
+  GitHub's runner-migration notice (a runner image such as \`ubuntu-latest\` moving to a new
+  version) is not about the PR and is not a finding: never nudge, rebut or log it.
 - Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in.${ladder}
 - Its other exit 2s print why. On a timeout or no check runs, read the checks once (\`gh pr checks $2\`):
   nudge the builder when a workflow never started, else run wait-pr again. On a gh error, run it again.
