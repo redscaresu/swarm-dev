@@ -8,8 +8,14 @@
 # broken: a value cut off and piped straight in, kept in a variable or given to a helper too, a
 # list's items piped with no brackets, and lines after a $(...) whose heredoc or comment holds a '.
 # #515's stray \} is flagged too, and in a printf format. A line that says "# vacuous-test: ok" is
-# let through. make check runs it over LINT_FILES and fails on a finding.
+# let through. make check runs it over LINT_FILES (every tests/*.sh) and fails on a finding.
 # The fixture holds only JSON that parses, so this file passes the lint too; sed breaks the copies.
+# grep-q-pipe: a fixture that pipes into grep -q in each shape (a -q in a cluster, --quiet, |&, grep on
+# the line after the pipe or a \ continuation, a bash -c string, a stub heredoc's body, a "$(...)", a -q
+# after an option's argument or a redirect) is flagged at each of those lines and no other: not ||, a
+# here-string, a grep with no -q, a -q that is -e's argument, a comment (in a "$(...)" too), or a line
+# or heredoc marked "# grep-q-pipe: ok" (in a "$(...)" too). Its heredoc's << says so, so this file
+# passes the lint too.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -118,5 +124,63 @@ rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${bad515}" 2>&1)" || rc=$?
 check "make check runs the lint over LINT_FILES, and fails on a finding" make_flags
 rc=0; make -s -C "${REPO}" check LINT_FILES="${good}" > /dev/null 2>&1 || rc=$?
 check "and passes when there is none" [ "${rc}" = 0 ]
+
+pipes="${tmp}/pipes_test.sh"
+cat > "${pipes}" <<'FIXTURE'  # grep-q-pipe: ok, the fixture's text
+out="$(swarm.sh next | grep -q ready && echo yes)"
+if git log | grep -Eq '^fix'; then :; fi
+ps -p "${pid}" -o command= | grep --quiet marker
+swarm.sh status |
+  grep -qx done
+swarm.sh status \
+  | grep -Fq done
+swarm.sh status | \
+  grep -q done
+check "done" bash -c "tail -1 '${f}' | grep -qF done"
+swarm.sh status |& grep -q done
+grep -q ready "${f}" || grep -q done "${f}"
+grep -q ready <<< "$(swarm.sh next)"
+swarm.sh next | grep -x ready > /dev/null
+# never write swarm.sh next | grep -q ready
+echo x # nor | grep -q y
+cat > "${stub}" <<'EOF'
+ps -o command= -p "$PPID" | grep -q queued
+EOF
+cat > "${doc}" <<'EOF'  # grep-q-pipe: ok, a doc's text
+run `ls | grep -q x`
+EOF
+has "ls | grep -q x" "${doc}"  # grep-q-pipe: ok, a doc's text
+swarm.sh next | grep -c ready
+swarm.sh next | grep -e ready -q
+swarm.sh next | grep -e -q > /dev/null
+out="$(date  # nor swarm.sh next | grep -q ready
+)"
+want="$(cat <<'EOF'  # grep-q-pipe: ok, a doc's text
+run `ls | grep -q x`
+EOF
+)"
+out="$(swarm.sh next | grep -q ready)"
+swarm.sh next | grep 2>/dev/null -q ready
+swarm.sh next | grep ready 2>&1 > /dev/null
+FIXTURE
+lint "${pipes}"
+pipe_lines="$(sed -n 's/^[^:]*:\([0-9]*\): grep-q-pipe: .*/\1/p' <<< "${out}" | paste -sd' ' -)"
+check "each pipe into grep -q is flagged at grep's line, and nothing else is" \
+  [ "${rc}|${pipe_lines}" = "1|1 2 3 5 7 9 10 11 18 25 33 34" ]
+
+# make_flags_pipe — make check failed, and printed a grep-q-pipe finding.
+make_flags_pipe() { [ "${rc}" != 0 ] && grep -q "^${pipes}:1: grep-q-pipe: a pipe into grep -q returns 141" <<< "${out}"; }
+rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${pipes}" 2>&1)" || rc=$?
+check "make check fails on a test file that pipes into grep -q" make_flags_pipe
+# By default make check lints every tests/*.sh, so a helper the tests source is linted too: a copy of
+# the Makefile and the lint, with a helper (not a *_test.sh) that pipes into grep -q.
+mkdir -p "${tmp}/repo/scripts" "${tmp}/repo/tests"
+cp "${REPO}/Makefile" "${tmp}/repo/"
+cp "${LINT}" "${tmp}/repo/scripts/lint"
+# shellcheck disable=SC2016 # the helper's text, written as it is
+printf '%s\n' 'logged() { events | grep -q -- "$1"; }' > "${tmp}/repo/tests/a_helper.sh"  # grep-q-pipe: ok, the fixture's text
+rc=0; out="$(make -s -C "${tmp}/repo" check 2>&1)" || rc=$?
+check "make check's default lints a helper the tests source, not only *_test.sh" \
+  [ "${rc}|$(grep -c '^tests/a_helper.sh:1: grep-q-pipe' <<< "${out}")" = "2|1" ]
 
 [ "${fails}" -eq 0 ] || { echo "${fails} check(s) failed"; exit 1; }

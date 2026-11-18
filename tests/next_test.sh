@@ -660,7 +660,7 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
   && printf '%s\tk\to/r#1\tstill open\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#2\tlogged as filed\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" "$(date +%F)" > .swarm/findings.tsv \
   && bash "${SWARM}" log-finding --filed --reviewer lead k o/r#2 "logged as filed" >/dev/null)
 out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
-if tail -1 "${dir}/.swarm/findings.tsv" | grep -q $'\tlogged as filed\tfiled\tlead$'; then echo "ok   log-finding --filed writes a filed row"
+if tail -1 "${dir}/.swarm/findings.tsv" | grep $'\tlogged as filed\tfiled\tlead$' > /dev/null; then echo "ok   log-finding --filed writes a filed row"
 else echo "FAIL log-finding --filed wrote: $(tail -1 "${dir}/.swarm/findings.tsv")"; fails=$((fails + 1)); fi
 idle_project "with no git, a finding logged as filed is not offered" "idle: \"$(basename "${dir}")\""$'\n'"  out-of-scope finding: $(date +%F) k o/r#1: still open"
 rm -rf "${dir}"

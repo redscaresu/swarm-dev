@@ -82,9 +82,9 @@ cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "agent list") [ ! -f "$F/listfail" ] || exit 1
     # With childfail, a queued tell's own delivery (its tell's file is a swarm-tell-queued copy) finds no agents.
-    if [ -f "$F/childfail" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then exit 1; fi
+    if [ -f "$F/childfail" ] && ps -o command= -p "$PPID" | grep swarm-tell-queued > /dev/null; then exit 1; fi
     # With childreplace, a newer tell replaces it on its way (its .sending goes) as its delivery fails.
-    if [ -f "$F/childreplace" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then rm -f "$F"/proj/.swarm/tells/b1.findings.sending.*; exit 1; fi
+    if [ -f "$F/childreplace" ] && ps -o command= -p "$PPID" | grep swarm-tell-queued > /dev/null; then rm -f "$F"/proj/.swarm/tells/b1.findings.sending.*; exit 1; fi
     awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents"

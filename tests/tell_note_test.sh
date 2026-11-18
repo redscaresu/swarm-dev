@@ -228,9 +228,9 @@ for how in busy:1:ok prompt:1:ok othertell:2:ok sidechain:2:ok toolresult:2:ok n
       "$(grep -qx "told b1" <<< "${out}" && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5; sub(/ ~~ .*/, "", o) } END { print o }' "${p}/.swarm/events.tsv")"
   else
     check "findings to a builder whose session never shows them, herdr idle throughout: the tell fails, not taken up" yes \
-      "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | grep -q '^b1: the brief was not taken up: herdr sent it the brief twice' && echo yes || echo no)"
+      "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | grep '^b1: the brief was not taken up: herdr sent it the brief twice' > /dev/null && echo yes || echo no)"
     check "findings herdr sent and never saw taken up count a round: the failure line ends in round= and verdict=findings" yes \
-      "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | no_version | grep -qE ' ~~ round=[0-9]+ verdict=findings$' && echo yes || echo no)"
+      "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | no_version | grep -E ' ~~ round=[0-9]+ verdict=findings$' > /dev/null && echo yes || echo no)"
   fi
 done
 

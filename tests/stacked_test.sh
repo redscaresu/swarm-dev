@@ -164,7 +164,7 @@ check "story refuses a story whose build exists, saying so, and starts no second
 # sign_commits = true: the merge of the second parent passes -S. git signs with a throwaway SSH key
 # here and commit.gpgsign is unset, so only -S can sign it; two's merge above, made with it off, is not signed.
 ssh-keygen -q -t ed25519 -N '' -C stacked-test -f "${ROOT}/signkey"
-merge_signed() { git -C "${ROOT}/svc-wt/$1" cat-file commit HEAD | grep -q '^gpgsig ' && echo signed || echo unsigned; }
+merge_signed() { git -C "${ROOT}/svc-wt/$1" cat-file commit HEAD | grep '^gpgsig ' > /dev/null && echo signed || echo unsigned; }
 item "${b}" stories/two-signed.md "status: blocked" "kind: code" "repo: svc" "depends_on: [p, q]"
 run unblock >/dev/null || true
 printf '%s\n' "sign_commits = true" > "${p}/.claude/swarm/config"

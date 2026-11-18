@@ -281,7 +281,7 @@ check "an item merged, a PR unread: reconcile does not pull, names the PR, and l
   "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(val "${ROOT}/bw/docs/stories/h.md" status) $(val "${ROOT}/bw/docs/stories/h.md" prs)|$(has "merged: h, not pulled yet; it stays in review until reconcile pulls ${ROOT}/bw" "${out}")|$(git -C "${ROOT}/bw" status --porcelain --untracked-files=no)"
 # Nothing behind: no pull was due, so an unread PR holds nothing back, and reconcile says nothing of it.
 setup_behind bv; at bv review g "${U}/99" >/dev/null
-check "no pull due, a PR unread: no not-pulling note" "no" "$(if at bv reconcile | grep -q "not pulling"; then echo yes; else echo no; fi)"
+check "no pull due, a PR unread: no not-pulling note" "no" "$(if at bv reconcile | grep "not pulling" > /dev/null; then echo yes; else echo no; fi)"
 # Offline: the fetch fails, so reconcile cannot tell it is behind, says so, and exits 0.
 setup_behind bf ahead; git -C "${ROOT}/bf" remote set-url origin "${ROOT}/missing.git"
 out="$(at bf reconcile; echo "exit $?")"

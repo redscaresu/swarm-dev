@@ -49,7 +49,7 @@ has refuses-carried 'or when an epic on origin already names it: .* An epic name
 has carried-origin 'git ls-tree -r --name-only origin/<base> -- .<board>/epics/. \| while read -r f; do git show "origin/<base>:\$f" \| awk'
 # The loop's front-matter awk and the hld: pattern round 4 checked against slug_list, as a fixed
 # string: a quoted heredoc, so nothing in it is escaped twice.
-want=$(cat <<'EOF'
+want=$(cat <<'EOF'  # grep-q-pipe: ok, the command's text
 awk '/^---$/ && ++n == 2 { exit } n == 1' | grep -qE "^hld: *\[?[\"']?<name>[\"']?\]?[[:space:]]*(#.*)?\$" && echo "$f" done where `<name>` is `$1` with each `.` written `\.`
 EOF
 )
