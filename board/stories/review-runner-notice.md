@@ -1,5 +1,6 @@
 ---
 kind: code
+fix: true
 status: ready
 depends_on: []
 touches: [bin/lib/build.sh:review brief runner-notice line]
