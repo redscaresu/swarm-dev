@@ -167,8 +167,8 @@ Repeat until a step below says stop:
      gone), or prints `auth` or `stuck: ...`, not each time it idles on its own background work.
      `wait` nudges a conductor only to resume a turn that stopped on an API error. When it returns,
      go back to 1. Never
-     close a conductor that has not reported, unless the restart rule under "Three more rules for
-     the lead" says to.
+     close a conductor that has not reported, unless the restart rule under "More rules for the
+     lead" says to.
 
      `next` itself starts a conductor for ready work that has none, and prints what it did after
      the why. A `started: <conductor> (swarm.sh conduct <arg>)` line is a conductor now working:
@@ -478,7 +478,7 @@ Repeat until a step below says stop:
 
      If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
      API error three times in a row, and `wait` already told it to carry on each time), restart the
-     agent as the restart rule under "Three more rules for the lead" says. Do the same for
+     agent as the restart rule under "More rules for the lead" says. Do the same for
      `stuck: model error (<line>)` (exit 4: the provider refused the model the session asks for, so
      `wait` sent no resume). If it prints `stuck: no output for <N>m
      (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it shows, and stop
@@ -571,7 +571,7 @@ Repeat until a step below says stop:
      printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: wait for it. Before you stop, start the next independent epic's
-     plan, as the planning rule under "Three more rules for the lead" says; stop once no other
+     plan, as the planning rule under "More rules for the lead" says; stop once no other
      plan can start. On approval, finish the command and go on.
      When its why says a `later` epic's dependencies are done (offered before the gate), run it
      unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`, so `next` offers it no more:
@@ -786,7 +786,7 @@ the user merges it, even when they ask you to, since `swarm.sh merge` refuses it
 HLD granting `release` covers every story merged since the last tag. A `costs: money` PR, or one stacked on one,
 is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
 
-Three more rules for the lead:
+More rules for the lead:
 
 - Plan epics whose plans do not depend on each other at the same time, not one after another.
   Do not wait for one epic's approval or build before planning the next independent one: once a
@@ -833,5 +833,18 @@ Three more rules for the lead:
   through its session log, a test suite running in its pane and a background task its session
   waits on. Do not use
   `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
+- Make the routine calls yourself, without asking the user first.
+  These are routine: restart a dead or stuck agent (as the restart rule above says), start review agents and conductors, nudge and resume agents, open finish and board PRs for stale story files, re-scope held stories, and throttle or restore load (the test cap, build holds).
+  Log each one as it happens, as a `lead-hand` line in the form above.
+  Ask the user only for what is theirs: a merge `swarm.sh merge` holds for a protected path or dropped lines, a `kind: lead` story's **You:** steps, anything that spends money or touches credentials, and a change to their own settings files (`~/.claude/settings.json`, `~/.codex/config.toml`).
+- A force-push to a `story/*` branch the swarm owns (a story's PR branch) is a routine call too, in one form only: `git push --force-with-lease=<branch>:<old-head> origin <new-head>:<branch>`, naming the branch and both SHAs.
+  Never `--force`, never a bare `--force-with-lease`, and never any other branch.
+  Before you push, run `git fetch origin` and make both checks, where `<old-head>` is the SHA `git rev-parse origin/<branch>` prints after the fetch.
+  The lease is pinned to that SHA, since another agent's fetch can move `origin/<branch>` after your checks.
+  The PR's diff is unchanged: `git diff-tree -r --ignore-submodules=none "$(git merge-base origin/<base> <old-head>)" <old-head>` and the same for `<new-head>` print the same.
+  It lists each changed path's mode and blob SHA, so no diff tool, text conversion or submodule setting can hide a change, as it can from `git diff`.
+  Every commit you push is signed: `git log --format='%G? %h' origin/<base>..<new-head>` shows `G` or `U` (a good signature) on each line.
+  If either check fails, do not push: send the builder findings, or list it for the user.
+  Log the push the same way, with the PR URL, both SHAs and why.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

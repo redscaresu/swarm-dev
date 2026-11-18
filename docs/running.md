@@ -41,7 +41,10 @@ in the [reference](reference.md).
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and does the
 stories no agent may: real cloud, credentials and anything hard to undo. Your steps in those are
-marked **You:**. The board is plain Markdown in your repo, so a run can stop anywhere and the next
+marked **You:**.
+It makes the routine calls without asking you: restarting a stuck agent, starting reviews and conductors, throttling load, and a `--force-with-lease` push to a story branch once the PR's diff is unchanged and every commit is signed.
+It logs each one with `swarm.sh intervene`, and still asks you about held merges, **You:** steps, money, credentials and your own settings files ([the lead's rules](../commands/swarm.md)).
+The board is plain Markdown in your repo, so a run can stop anywhere and the next
 `/swarm-dev:swarm` picks up where it left off.
 
 ## Every stop, and what to do
