@@ -23,7 +23,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 # stop_waiter <project> [name] — kill <name>'s (conduct-e's) close_when_idle waiter by its pid file, so none outlives the test.
 stop_waiter() { local pid; pid="$(cat "$1/.swarm/closing/${2:-conduct-e}.pid" 2>/dev/null)" || return 0; [[ ! "${pid}" =~ ^[0-9]+$ ]] || kill "${pid}" 2>/dev/null || true; }
-trap 'stop_waiter "${ROOT}/m/proj"; stop_waiter "${ROOT}/m/proj" conduct-a-very-long-epic-slug-fo; rm -rf "${ROOT}"' EXIT
+trap 'stop_waiter "${ROOT}/m/proj"; stop_waiter "${ROOT}/m/proj" conduct-a-very-long-epic-slug-fo; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The waiter looks every 0.2 s here, not every 5.
 export SWARM_CLOSE_IDLE_POLL=0.2

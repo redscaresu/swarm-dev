@@ -26,7 +26,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 PIDS=()
 # The waiters left running when the file ends early are killed, then the temp dir goes.
-cleanup() { [[ ${#PIDS[@]} -eq 0 ]] || kill "${PIDS[@]}" 2>/dev/null || true; rm -rf "${ROOT}"; }
+cleanup() { [[ ${#PIDS[@]} -eq 0 ]] || kill "${PIDS[@]}" 2>/dev/null || true; stop_test_group; rm -rf "${ROOT}"; }
 trap cleanup EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; URL=https://github.com/o/r/pull/7; CACHE="${P}/.swarm/poll-cache"

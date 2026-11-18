@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TZ=UTC
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}" "${ROOT}/projects"

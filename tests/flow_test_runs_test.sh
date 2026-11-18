@@ -21,7 +21,7 @@ export TZ=UTC
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'touch "${dir}/goA" "${dir}/goD" 2>/dev/null; wait; rm -rf "${dir}"' EXIT
+trap 'touch "${dir}/goA" "${dir}/goD" 2>/dev/null; wait; stop_test_group; rm -rf "${dir}"' EXIT
 export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 export HOME="${dir}/home"   # its runs are top-level: a cap in the real ~/.swarm/test-cap would gate them
 fails=0

@@ -12,7 +12,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 P="${ROOT}/proj"
@@ -173,7 +173,7 @@ citem stories/c-lead.md 'The lead runs it.' 'status: ready' 'kind: lead'
 # The live pids are this test's own sleeps, off its stdout so no pipe waits on them, killed on exit.
 sleep 300 >/dev/null 2>&1 & live1=$!; sleep 300 >/dev/null 2>&1 & live2=$!; sleep 300 >/dev/null 2>&1 & live3=$!
 sleep 300 >/dev/null 2>&1 & live4=$!
-trap 'kill "${live1}" "${live2}" "${live3}" "${live4}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'kill "${live1}" "${live2}" "${live3}" "${live4}" 2>/dev/null; stop_test_group; rm -rf "${ROOT}"' EXIT
 sh -c 'exit 0' & dead=$!; wait "${dead}" || true
 marker() { printf '%s\t%s\t%s\n' "$(( $(date +%s) - $2 * 60 ))" "${4:-main}" "${ROOT}/repo-wt/$3" > "${S}/codex-review.$1"; }   # <pid> <minutes ago> <worktree> [base]
 marker "${live1}" 7 cs-one; marker "${live2}" 3 epic-beta; marker "${dead}" 2 dead-one; marker "${live3}" 12 old-one

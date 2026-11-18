@@ -25,7 +25,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 pids=()
-trap 'for p in "${pids[@]+"${pids[@]}"}"; do kill "${p}" 2>/dev/null || true; done; { wait; } 2>/dev/null; chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'for p in "${pids[@]+"${pids[@]}"}"; do kill "${p}" 2>/dev/null || true; done; { wait; } 2>/dev/null; stop_test_group; chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export HOME="${ROOT}/home"
 mkdir -p "${HOME}"
 fails=0 fin=""

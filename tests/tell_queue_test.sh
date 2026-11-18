@@ -66,7 +66,7 @@ until_ok() { local i; for ((i = 0; i < 300; i++)); do "$@" && return 0; sleep 0.
 # go of the queue's lock, which the next case may take itself.
 settle() { local i; for ((i = 0; i < 300; i++)); do compgen -G "${Q}/*.later" >/dev/null || compgen -G "${Q}/*.lock" >/dev/null || return 0; sleep 0.2; done; }
 # Emptied first, so a check still running ends at its next look.
-trap 'rm -f "${Q}"/*.findings "${Q}"/*.nudge "${Q}"/*.resume; settle; rm -rf "${ROOT}"' EXIT
+trap 'rm -f "${Q}"/*.findings "${Q}"/*.nudge "${Q}"/*.resume; settle; stop_test_group; rm -rf "${ROOT}"' EXIT
 export HOME="${ROOT}/home" CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/claude-config/projects"
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 mkdir -p "${HOME}" "${ROOT}/bin" "${CLAUDE_PROJECTS_DIR}/p"

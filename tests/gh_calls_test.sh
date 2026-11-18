@@ -16,7 +16,7 @@ unset SWARM_GH_VIA SWARM_GH_CALLER SWARM_GH_LOG SWARM_AGENT
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'rm -rf "${dir}"' EXIT
+trap 'stop_test_group; rm -rf "${dir}"' EXIT
 export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 check() { # <name> <output> <exact expected output>

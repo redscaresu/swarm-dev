@@ -36,6 +36,7 @@ REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
+PULL_FORWARD_WAIT=120   # how long pull_forward's fetch into a builder's worktree, and its tell to the builder, may each take
 DROPPED_FETCH_WAIT=120  # how long dropped-lines' fetch of a PR's head and base may take (SWARM_DROPPED_FETCH_WAIT, for tests)
 DROPPED_GIT_MIN=2.36    # the oldest git with show --remerge-diff, which dropped_lines.py reads
 PR_COMMITS_MAX=250      # the most commits GitHub lists for one PR (pulls/<n>/commits): dropped_hold sees no further
@@ -634,11 +635,12 @@ merge_base_update() {
 }
 
 # base_rounds — merge_pr's moved-base step for a story PR on the direct path, on its locals repo, n,
-# head, base, url and lock: while base_moved finds code on the base that head lacks, merge_base_update
-# has GitHub merge the base in, head becomes the new head, and base_wait waits for its green. Then
+# head, base, url, branch and lock: while base_moved finds code on the base that head lacks, merge_base_update
+# has GitHub merge the base in, head becomes the new head, pull_forward brings the builder's worktree
+# to it (or nudges the builder), and base_wait waits for its green. Then
 # base_pr_now reads the PR again and base_moved runs again, right before gh pr merge. A head an earlier
 # merge run made this way (base_merged) gets the same wait first, after merge_pr's own check on the head,
-# which has read its expected workflows as wait-pr does. A base that has moved again after MERGE_BASE_ROUNDS rounds refuses,
+# which has read its expected workflows as wait-pr does; merge_pr has run pull_forward for it already. A base that has moved again after MERGE_BASE_ROUNDS rounds refuses,
 # naming them. It returns with head the one to merge, or with BASE_LANDED set when the PR merged
 # elsewhere meanwhile.
 base_rounds() {
@@ -661,6 +663,7 @@ base_rounds() {
     old="${head}"
     merge_base_update "${repo}" "${n}" "${head}" "${base}" "${BASE_BEHIND}" "${merged}"
     head="${BASE_NEW}"
+    pull_forward "${old}" "${head}" "${branch}"
     base_wait "${old}" || return 0
     waited=1
   done
@@ -711,6 +714,50 @@ base_pr_now() {
 # pull_first — what each refusal after a base merge tells the builder: GitHub's merge commit is on the
 # PR's branch but not in the builder's worktree, so a push from there would be refused.
 pull_first() { echo "the builder pulls its branch (git pull --ff-only) before it pushes: GitHub's merge commit is not in its worktree"; }
+
+# pull_forward <old> <new> <branch> — after GitHub merged the base into story MERGE_TARGET's PR (its
+# head <new>, merge_base_update's `base-merged <new> from <old>`, this run's or an earlier one's), bring
+# the builder's worktree along, so its next push is not refused and a review agent can start on <new>;
+# merge_pr's local base names the base. A target with no story file or no worktree (an epic's PR, a
+# lead's) is left as it is, and so is a worktree that already holds <new>. One with nothing uncommitted
+# (git status --porcelain, as review_at_head reads it) at <old> fetches origin's <branch> and
+# fast-forwards to <new> (git merge --ff-only), printing a `pulled:` line. Any other worktree, and a
+# fetch or fast-forward that fails (a fetch past PULL_FORWARD_WAIT too), is left as it is: its builder is
+# told to pull (swarm.sh tell <slug> nudge, which queues it for a busy builder), with a `nudged:` line,
+# or a warning when the tell fails. It never fails, so merge goes on, or refuses, as before.
+pull_forward() {
+  local old="$1" new="$2" branch="$3" slug="${MERGE_TARGET}" story src wt at why="" out rc=0 msg
+  story="${BOARD}/stories/${slug}.md"
+  [[ -f "${story}" ]] || return 0
+  src="$(repo_dir "$(fm "${story}" repo)")" || return 0
+  wt="$(worktree_for "${src}" "${slug}")"
+  [[ -d "${wt}" ]] || return 0
+  at="$(git -C "${wt}" rev-parse HEAD 2>/dev/null)" || at=""
+  ! git -C "${wt}" merge-base --is-ancestor "${new}" HEAD 2>/dev/null || return 0
+  if [[ -n "$(git -C "${wt}" status --porcelain 2>/dev/null)" ]]; then
+    why="it has uncommitted changes"
+  elif [[ "${at}" != "${old}" ]]; then
+    why="it is at ${at:0:7}, not ${old:0:7}"
+  elif ! out="$(within "${PULL_FORWARD_WAIT}" git -C "${wt}" fetch -q origin "${branch}" </dev/null 2>&1)"; then
+    why="git fetch origin ${branch} failed: ${out##*$'\n'}"
+  elif ! out="$(git -C "${wt}" merge -q --ff-only "${new}" </dev/null 2>&1)"; then
+    why="git merge --ff-only ${new:0:7} failed: ${out##*$'\n'}"
+  else
+    echo "pulled: ${slug}'s worktree ${wt} is now at ${new:0:7}, fast-forwarded from ${old:0:7} to GitHub's merge of ${base}"
+    return 0
+  fi
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-pull.XXXXXX")" \
+    || { echo "warning: ${slug}'s worktree lacks ${new:0:7} (${why}), and its builder was not told: mktemp failed"; return 0; }
+  printf '%s\n' "swarm.sh merge had GitHub merge ${base} into your PR's branch ${branch}: its head is now ${new} (${old:0:7} with ${base} merged in), which your worktree lacks, and merge left your worktree as it is: ${why}." \
+    "Before your next push, run git pull --ff-only origin ${branch}; a push without it is refused. Commit your changes first if git refuses to pull over them, and if your branch has commits of its own since ${old:0:7}, run git pull --no-rebase origin ${branch} instead." > "${msg}"
+  out="$(SWARM_PROJECT="${PROJECT_DIR}" within "${PULL_FORWARD_WAIT}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" nudge "${msg}" </dev/null 2>&1)" || rc=$?
+  rm -f "${msg}"
+  if [[ ${rc} -eq 0 ]]; then
+    echo "nudged: ${slug}'s builder to pull ${new:0:7} into its worktree (${why}): ${out##*$'\n'}"
+  else
+    echo "warning: ${slug}'s worktree lacks ${new:0:7} (${why}), and telling its builder failed (exit ${rc}: ${out##*$'\n'}); it pulls origin's ${branch} before its next push"
+  fi
+}
 
 # base_ci <owner/repo> <pr> <old> <new> <base> — wait for green on <new>, the head merge_base_update made
 # of <old> with <base> merged in, with wait-pr's own loop (wait_pr --head <new>, in a subshell, its lines
@@ -1113,7 +1160,9 @@ short_shas() {
 # head's CI never ran with them. Then merge_base_update has GitHub merge the base into the PR's branch,
 # checks the new head (GitHub made it, its parents are the old head and a commit on the base, and every
 # file it changes is that commit's version of a file the PR left alone), logs base-merged <new head> and prints a base merged:
-# line. It refuses on a conflict (a 422 while the head has not moved), any other failed request, a
+# line. pull_forward then fast-forwards the story's worktree to the new head, or nudges its builder to
+# pull it, before the wait, so neither a refusal nor a merge leaves the worktree behind unsaid; a head
+# an earlier merge run made this way gets it before merge's check of the head's CI. It refuses on a conflict (a 422 while the head has not moved), any other failed request, a
 # request GitHub does not answer in time, a head that never moves, and a new head that fails a check or
 # cannot be read. base_ci then waits up to MERGE_CI_SECONDS for green on the new head, and base_moved
 # checks the base again: a base that gained more code is merged in and waited on again, up to
@@ -1139,7 +1188,7 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" branch="" from="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -1212,6 +1261,15 @@ merge_pr() {
       fi
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
+  fi
+  # A head an earlier merge run made by merging the base in (base_merged): the story's worktree is brought
+  # to it before any refusal below, a red or pending head's included.
+  if [[ -z "${only}" ]]; then
+    branch="story/${MERGE_TARGET}"; [[ "${headref}" == - ]] || branch="${headref}"
+    if base_merged "${MERGE_TARGET}" "${head}"; then
+      from="$(base_merged_from "${MERGE_TARGET}" "${head}")"
+      [[ -z "${from}" ]] || pull_forward "${from}" "${head}" "${branch}"
+    fi
   fi
   # With the base, number and file count, as wait-pr passes them: a workflow the PR's pull_request should
   # start, with no run on the head yet, is pending, not green. ci_gate's "not waited on:" line joins the

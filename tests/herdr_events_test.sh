@@ -13,7 +13,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 sock_dir="$(mktemp -d /tmp/swarm-ev.XXXXXX)"
 SOCK="${sock_dir}/h.sock"
 server=""
-trap '[[ -z "${server}" ]] || kill "${server}" 2>/dev/null; rm -rf "${ROOT}" "${sock_dir}"' EXIT
+trap '[[ -z "${server}" ]] || kill "${server}" 2>/dev/null; stop_test_group; rm -rf "${ROOT}" "${sock_dir}"' EXIT
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 export PATH="${STUB_BIN}:${PATH}"

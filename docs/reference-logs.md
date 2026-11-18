@@ -962,7 +962,7 @@ Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage or rate limit, an unreachable codex or a timeout), `code-review` (round 1's `/code-review`, in rows from before the review agent ran codex alone), `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. A finding declined as `deferred` that a later round or fix finds real, and fixes, is logged the same way, against the PR it was deferred on, with its line copied exactly from the deferred row's text, so the two rows match. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
-reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, or one of the kinds `demote_kinds` lists held back before it, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
+reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 2, or one of the kinds `demote_kinds` lists held back before it, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
 and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it.
@@ -985,7 +985,9 @@ so readers ignore any they do not know.
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
-the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
+the PR with a reason; none is silenced or dismissed.
+GitHub's runner-migration notice (a runner image such as `ubuntu-latest` moving to a new version) is not about the PR and is not a finding, so it is neither fixed nor rebutted.
+findings also reads the PR's diff and body. A
 test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
 `it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
 mutation run. findings prints each test without one as `rules-unchecked`, with the command that

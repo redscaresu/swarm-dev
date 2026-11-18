@@ -17,7 +17,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 # BIN is in every stub process's command line and in no other's: the marker pgrep -f looks for.
 BIN="${ROOT}/bin"; P="${ROOT}/proj"; LIMIT=2; GRACE=3
-trap 'pkill -KILL -f "${BIN}/" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
+trap 'pkill -KILL -f "${BIN}/" 2>/dev/null || true; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 # The stub's child: one process with its own path in its command line, so pgrep -f can tell it. Not a

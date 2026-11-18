@@ -31,7 +31,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+trap 'stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 U="https://github.com/o/r/pull"
