@@ -264,7 +264,7 @@ Repeat until a step below says stop:
      (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
      failing checks, or, if you leave it, list it in your report with the reason:
      `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
-     base, have a builder in the story's worktree merge the base in and push; on a gh error or
+     base, have a builder in the story's worktree pull its branch, merge the base in and push; on a gh error or
      the timeout, run wait-pr once more, and if it ends the same way, list the story in your
      report with the reason. On no check runs, or an expected workflow that never started (it
      names the workflow), read the checks once with `gh pr checks <PR URL>`: have a builder fix a
@@ -360,7 +360,8 @@ Repeat until a step below says stop:
      otherwise tell the user it waits on their merge. A
      `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
      a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
-     Send its builder a file asking it to merge the base in and push, with
+     Send its builder a file asking it to pull its branch first (`git pull --ff-only origin story/<slug>`),
+     since the PR's head may be GitHub's merge of the base, then merge the base in and push, with
      `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background. With `--idle` the
      wait exits 0 only when it prints `idle` or `done`, once the builder's turn is over. A wait that times out or prints anything but `idle` or `done` (`stuck:`, `auth`, `waiting`, `gone`) sends nothing: deal with what it printed, then send the file again the same way. If no builder is open, start one in the
      story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
@@ -384,7 +385,9 @@ Repeat until a step below says stop:
      why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
-     nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     nudge.
+     A why that quotes a line from the agent's `swarm.sh merge` goes by **Your own story merges**, below step 3.
+     The line goes once a review agent starts on the story again or it leaves the board. A
      `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` line means every agent
      open in that plan's tab has written its output, so the step they ran is over. Run the exit
      (`/swarm-dev:plan-hld <hld>` for an HLD's plan). It reuses those outputs and goes on to the
@@ -763,6 +766,44 @@ Repeat until a step below says stop:
      `/epic <title>`. Otherwise suggest `/epic <title>` for the next piece of work.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
+
+**Your own story merges.**
+These steps cover every story merge you run yourself: `swarm.sh merge --head <sha> <PR URL>` on the `unmerged:`, `no-agent:` and `no-review:` exits and for a line with more than one PR, and `swarm.sh merge <PR URL>` for a lead story's PR.
+Run the merge in the background (Bash run_in_background) and act on what it prints when it exits.
+When the base gained code since the head's CI ran, merge has GitHub merge the base into the PR's branch and waits up to 30 minutes for that new head's CI, for 3 rounds at most, before it merges.
+A review agent's stop note, or a `stopped:` line's why, that quotes one of these lines from the agent's own merge goes the same way, except where a step says the agent has acted already.
+A lead story's PR has no builder and no review agent, and none may start on it: where a step below sends the builder, pull the PR's branch, fix it and push yourself.
+Where a step starts a review agent, read the new head's diff yourself, then run `swarm.sh review <slug> <PR URL>` again and the merge once its checks are green.
+
+- `base merged: <PR URL> is now <new> ...`: GitHub merged the base in.
+  The new head needs no review, since its only new content is the base's.
+  Leave merge running until it exits.
+- `already merged: <PR URL> merged while this run waited ...`: the PR merged elsewhere, by another `swarm.sh merge` or by hand, and merge reconciles the board.
+  When merge then fails with `merge: reconcile failed after the merge; run swarm.sh reconcile`, run `swarm.sh reconcile` yourself.
+  This run did not wait for CI on the base, so start no story that waits on this one until CI on the base is green.
+- `base merged, red:`, `base merged, conflict:`, or a refusal that ends `merge origin/<base> in, push, and merge the new head`: merge merged nothing, and only the builder can go on.
+  Send the story's builder a file naming the red check or the base to merge in, telling it to pull its branch first (`git pull --ff-only origin story/<slug>`), then re-run the tests and push.
+  The PR's head may be GitHub's merge commit, which the builder's worktree lacks.
+  Send it with `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background; with no builder open, start one as the `kept:` arm says.
+  Once the next `swarm.sh wait <slug>` on it returns, start `swarm.sh review-agent <slug> <PR URL>` on the head it pushed.
+  For a line in a review agent's stop note, that agent has nudged the builder already: only start the review agent on the new head.
+- A refusal that ends `run merge --head <sha> <PR URL> again`: GitHub did not merge the base in, and nothing is known to conflict.
+  Run that merge once more, in the background.
+  If it refuses the same way again, or the line came in a review agent's stop note (that agent has run the merge twice), have the builder merge the base in and push, as for a conflict.
+- `base merged, head moved:` or `base merge unchecked:`: the PR's head is one nobody reviewed.
+  Start `swarm.sh review-agent <slug> <PR URL>` on it, as for a review file's `head moved:` line.
+  When review-agent refuses because the worktree is behind the PR's head, send the builder a file telling it to pull that head (`git pull --ff-only origin story/<slug>`), with `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background.
+  With no builder open, start one as the `kept:` arm says first, and start the review agent again once the next `swarm.sh wait <slug>` on it returns.
+  The story stays in review meanwhile: tell the user not to merge the PR until the new review passes.
+- `base merged, timed out:`, `base merged, no check runs:`, `base merged, no workflow run:`, `base merged, unread:`, `base merged, still moving:`, or a merge lock that merge could not take again: the line names the next step, `wait-pr --head <new> <PR URL>, then merge --head <new> <PR URL>`.
+  Run that `swarm.sh wait-pr` in the background, and on exit 0 run that `swarm.sh merge`; for `still moving:`, wait until the base is quiet first.
+  When the wait exits 1 (red), or 2 on a conflict with the base or a head that moved, go by the `base merged, red:`, `base merged, conflict:` or `base merged, head moved:` step above.
+  On any other exit 2, run the wait once more.
+  If it ends the same way twice, tell the user, quoting the line.
+- `cannot tell whether <base> moved past <sha>'s CI: <why>`, with no step after it: merge could not read the compare.
+  Run the merge once more, in the background, and if it refuses the same way, tell the user, quoting the line.
+- `held:`: the user merges the PR.
+  Tell them it waits on their merge.
 
 Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
 count it:
