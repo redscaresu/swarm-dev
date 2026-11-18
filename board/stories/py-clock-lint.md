@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 depends_on: []
 touches: [scripts/lint:python clock]
 ---

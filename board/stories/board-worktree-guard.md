@@ -15,3 +15,5 @@ Refuse board-reading commands run from a _board-* worktree, naming the main chec
 - story --strict run from a fixture _board-x worktree is refused; from the main checkout it runs (shown on a worktree copy, quoted in the PR)
 - Docs that state the behaviour say so
 - scripts/select-tests.sh --run passes
+
+**Folded into the v0.32 Python rewrite (the user, 2026-11-18):** not built in bash. The v0.32 HLD names this as a requirement of the command it ports, with this story's Done when as the test the Python version must pass; this file goes when that plan absorbs it.
