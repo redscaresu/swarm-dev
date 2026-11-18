@@ -76,7 +76,7 @@ check "red main: main-red <sha> <checks>" logged "^main-red ${M} .*e2e (failure)
 check "red main: writes the fix-main story, kind code and ready" grep -qx 'kind: code' "${FM}"
 check "red main with no Actions run: the story says it found no FAIL line" grep -qF "no FAIL line" "${FM}"
 check "red main: the fix-main story is git-ignored in the main checkout, so git status there shows no board edit" \
-  bash -c "git -C '${P}' check-ignore -q '${FM}' && ! git -C '${P}' status --porcelain --untracked-files=all | grep -q fix-main"
+  bash -c "git -C '${P}' check-ignore -q '${FM}' && ! git -C '${P}' status --porcelain --untracked-files=all | grep fix-main > /dev/null"
 check "red main: the fix-main story's touches are the whole repo, not empty" \
   bash -c "grep -qx 'touches: \[\.\]' '${FM}' && ! grep -qx 'touches: \[\]' '${FM}'"
 # A failed Actions job: once its run has completed (in progress on the first read), its FAIL line,
@@ -171,7 +171,7 @@ check "CI output in the fix-main story: fenced, called data, no control characte
 fresh; red_main "o/r main"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"
 chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
 check "a fix-main story that cannot be written: the older fix kept, no main-red for the new one, said so" \
-  bash -c "[ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && ! cut -f2,3 '${P}/.swarm/events.tsv' | tr '\t' ' ' | grep -qx 'main-red ${M}' \
+  bash -c "[ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && ! cut -f2,3 '${P}/.swarm/events.tsv' | tr '\t' ' ' | grep -x 'main-red ${M}' > /dev/null \
     && ! grep -q retired '${P}/.swarm/events.tsv' && grep -qF 'main red, and no fix-main story: cannot write' '${ROOT}/out'"
 # Keys ignore the repo's case, and match as text: o/r.x is not o/rxx.
 fresh; red_main "o/r main"; item s "status: review" "prs: https://github.com/O/R/pull/7"; merge "https://github.com/O/R/pull/7"

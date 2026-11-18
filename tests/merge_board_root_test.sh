@@ -217,7 +217,7 @@ merge() {
 EVENT_AWK="$(PROJECT_DIR="${ROOT}" bash -c 'source "$1/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${SWARM%/swarm.sh}/lib")"
 events() { awk -F'\t' "${EVENT_AWK}"'{ print $2 " " $3 " " outcome($5) }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }
-logged() { events | grep -q -- "$1"; }
+logged() { events | grep -- "$1" > /dev/null; }
 # and_logged <pattern> <command>... — the command succeeds and events.tsv has a line matching
 # <pattern>: one check, so a miss counts as a FAIL and never ends the file under set -e.
 and_logged() { local p="$1"; shift; "$@" && logged "${p}"; }
@@ -284,7 +284,7 @@ checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${
 wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
 INBOX="${P}/.swarm/inbox/conduct-e.md"
 # no_conduct_line — events.tsv has no conduct line: no conductor start was even tried (a refused one logs it too).
-no_conduct_line() { ! events | grep -q '^conduct '; }
+no_conduct_line() { ! events | grep '^conduct ' > /dev/null; }
 merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 is "board at the root, a merge that readies r1: exits 0" 0 "${rc}"
 check "board at the root, a merge that readies r1: notes conduct-e of r1 alone" \

@@ -73,7 +73,7 @@ check "from a priced pane, bravo's frame shows bravo's own cost (\$${cb})" has "
 item "${B}" epics/bravo-mobile.md "Bravo mobile" "status: active" "depends_on: [bravo-ui, bravo-docs]"
 fb="$(frame_of bravo "$(frames)")"
 check "the waiting epic's row names its depends_on" grep -qE '⏸ bravo-mobile .* waits on bravo-ui, bravo-docs' <<< "${fb}"
-check "the waiting epic is not under 'no open story'" bash -c "! grep 'no open story' <<< \"\$1\" | grep -q bravo-mobile" _ "${fb}"
+check "the waiting epic is not under 'no open story'" bash -c "! grep 'no open story' <<< \"\$1\" | grep bravo-mobile > /dev/null" _ "${fb}"
 check "the quiet epic with no depends_on is still under 'no open story'" has "1 active epic with no open story: bravo-docs" "${fb}"
 # An epic whose stories are all done is never planned, so it waits on nothing, as next reads it.
 item "${B}" epics/bravo-old.md "Bravo old" "status: active" "depends_on: [bravo-ui]"
@@ -93,7 +93,7 @@ case "\$1 \$2" in
 esac
 STUB
 fb="$(frame_of bravo "$(PATH="${ROOT}/bin2:${PATH}" frames)")"
-check "the waiting epic's conductor is shown under it" bash -c "grep -A1 '⏸ bravo-mobile ' <<< \"\$1\" | grep -q '✓ conduct-bravo-mobile .*reported'" _ "${fb}"
+check "the waiting epic's conductor is shown under it" bash -c "grep -A1 '⏸ bravo-mobile ' <<< \"\$1\" | grep '✓ conduct-bravo-mobile .*reported' > /dev/null" _ "${fb}"
 check "with its conductor shown, the waiting epic's row names its depends_on" grep -qE '⏸ bravo-mobile .* waits on bravo-ui, bravo-docs' <<< "${fb}"
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi

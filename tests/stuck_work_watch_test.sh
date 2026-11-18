@@ -66,7 +66,7 @@ fresh() { rm -rf "${P}/.swarm/lead" "${P}/.swarm/events.tsv"; mkdir -p "${P}/.sw
 fake() {
   "${ROOT}/fake/swarm.sh" "$@" & WAITER=$!
   local i
-  for ((i = 0; i < 100; i++)); do ! ps -p "${WAITER}" -o command= 2>/dev/null | grep -q "fake/swarm.sh $1" || return 0; sleep 0.1; done
+  for ((i = 0; i < 100; i++)); do ! ps -p "${WAITER}" -o command= 2>/dev/null | grep "fake/swarm.sh $1" > /dev/null || return 0; sleep 0.1; done
   echo "FAIL the fake swarm.sh $* never showed in ps"; fails=$((fails + 1))
 }
 # reads — how many pane reads herdr took since the last call.

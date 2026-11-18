@@ -245,7 +245,7 @@ bpr start x; echo again > "${WT}/board/stories/a.md"; git -C "${WT}" commit -qam
 reset_log; bpr "done" x
 refused "done with only an earlier use's merged PR" "no PR on board/x has its tip" "${before}"
 check "an earlier use's PR: the worktree stays" test -d "${WT}"
-check "an earlier use's PR: board/x keeps its commit" bash -c "git -C '${P}' log -1 --format=%s board/x | grep -qx again"
+check "an earlier use's PR: board/x keeps its commit" bash -c "git -C '${P}' log -1 --format=%s board/x | grep -x again > /dev/null"
 git -C "${P}" worktree remove --force "${WT}"; git -C "${P}" branch -q -D board/x
 
 # A locked worktree: done refuses before it removes anything, origin's branch included.
@@ -627,7 +627,7 @@ guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-
 # --- sign_commits = true: open's commit passes -S. git signs with a throwaway SSH key here, and
 # commit.gpgsign is off, so only -S can sign it; with sign_commits off the same commit is unsigned.
 ssh-keygen -q -t ed25519 -N '' -C board-pr-test -f "${ROOT}/signkey"
-signed() { git -C "$1" cat-file commit HEAD | grep -q '^gpgsig '; }
+signed() { git -C "$1" cat-file commit HEAD | grep '^gpgsig ' > /dev/null; }
 # sign_open <name> — start <name>, change a board file and open it, with signing set up for git.
 sign_open() {
   rm -f "${ROOT}/prs"; bpr start "$1"; echo "$1" > "${ROOT}/proj-wt/_board-$1/board/stories/a.md"
@@ -642,11 +642,11 @@ check "sign_commits = true: open's commit is signed" signed "${ROOT}/proj-wt/_bo
 printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
 sign_open unsig
 is "sign_commits off: open exits 0" 0 "${rc}"
-check "sign_commits off: open's commit is not signed" bash -c "! git -C '${ROOT}/proj-wt/_board-unsig' cat-file commit HEAD | grep -q '^gpgsig '"
+check "sign_commits off: open's commit is not signed" bash -c "! git -C '${ROOT}/proj-wt/_board-unsig' cat-file commit HEAD | grep '^gpgsig ' > /dev/null"
 
 # --- The docs send the lead's board edits through it.
 check "method.md § Who does what names swarm.sh board-pr" \
-  bash -c "sed -n '/^## Who does what/,/^## /p' '${REPO}/docs/method.md' | grep -q 'swarm.sh board-pr'"
+  bash -c "sed -n '/^## Who does what/,/^## /p' '${REPO}/docs/method.md' | grep 'swarm.sh board-pr' > /dev/null"
 check "commands/swarm.md names swarm.sh board-pr" grep -q 'swarm.sh board-pr' "${REPO}/commands/swarm.md"
 
 echo

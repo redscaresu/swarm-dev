@@ -375,7 +375,7 @@ check "with the rule in the user's settings, init prints no merge-rule step" "no
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
 rule_init absent '{"permissions": {"allow": ["Bash(swarm.sh status *)", "Bash(swarm.sh merge)", "Bash(swarm.sh merge --head *)"]}}' '{"permissions": {}}' ""
 check "with no rule that lets swarm.sh merge run, init names the rule, the user's file and the files it read, before the trust step" "yes|yes|yes" \
-  "$(has "${out}" "${STEP}")|$(has "${out}" "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${S_USER}, .claude/settings.json, .claude/settings.local.json).")|$(tail -1 <<< "${out}" | grep -q '^Last step: run claude once' && echo yes || echo no)"
+  "$(has "${out}" "${STEP}")|$(has "${out}" "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${S_USER}, .claude/settings.json, .claude/settings.local.json).")|$(tail -1 <<< "${out}" | grep '^Last step: run claude once' > /dev/null && echo yes || echo no)"
 rule_init local '{"permissions": {"allow": ["Bash(git status)"]}}' '{"permissions": {"allow": []}}' '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}}'
 check "with the rule only in .claude/settings.local.json, init prints no merge-rule step" "no" \
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
@@ -418,7 +418,7 @@ printf '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}, "autoMode": {"env
 printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${q}/.claude/settings.local.json"
 out="$(run "${q}" init || true)"
 check "with an empty autoMode.environment and one only in the project's settings, init prints the auto mode step and the --auto-mode-done command, before the trust step" "yes|yes" \
-  "$(has "${out}" "${AM_STEP}")|$(tail -1 <<< "${out}" | grep -q '^Last step: run claude once' && echo yes || echo no)"
+  "$(has "${out}" "${AM_STEP}")|$(tail -1 <<< "${out}" | grep '^Last step: run claude once' > /dev/null && echo yes || echo no)"
 printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${S_USER}"
 out="$(run "${q}" init || true)"
 check "with autoMode.environment in the user's settings, init prints no auto mode step" "no" "$(am_step "${out}")"

@@ -40,9 +40,9 @@ SHELLCHECK_FILES ?= bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/
 lint:
 	@shellcheck $(SHELLCHECK_FILES)
 
-# Run scripts/lint over LINT_FILES (every tests/*_test.sh, for JSON a test feeds that must parse, and
-# every bin/lib/*.py, for a clock read outside bin/lib/clock.py): it prints file:line: for each finding
-# and fails if there is one. CI runs it beside shellcheck.
-LINT_FILES ?= tests/*_test.sh bin/lib/*.py
+# Run scripts/lint over LINT_FILES (every tests/*.sh, the helpers the tests source too, and every
+# bin/lib/*.py, for a clock read outside bin/lib/clock.py): it prints file:line: for each finding and
+# fails if there is one. CI runs it beside shellcheck.
+LINT_FILES ?= tests/*.sh bin/lib/*.py
 check:
 	@python3 scripts/lint $(LINT_FILES)

@@ -175,7 +175,7 @@ check "the diff's fence is longer than the \`\`\` in a Markdown file it holds" "
 check "a stacked story's brief carries the Merge after note, and its diff starts at the parent's branch, so neither the parent's nor main's newer commits are in it" \
   "yes|yes|yes" "$(has 'with `Merge after https://github.com/o/proj/pull/4` in its body' "${brief}")|$(lacks PARENT-WORK "${brief}")|$(lacks MAIN-ONLY "${brief}")"
 check "it pastes the story as the board holds it, which the last builder may have deleted" "yes" \
-  "$(grep -A3 -x '### The story, as the board holds it' <<< "${brief}" | tail -2 | paste -sd' ' - | grep -qx -- '--- status: ready' && echo yes)"
+  "$(grep -A3 -x '### The story, as the board holds it' <<< "${brief}" | tail -2 | paste -sd' ' - | grep -x -- '--- status: ready' > /dev/null && echo yes)"
 # shellcheck disable=SC2016 # the backticks are the brief's, not a command
 check "it names the PR body's models line, with every model in order" "yes" "$(has 'models line: `Models: sonnet, opus`' "${brief}")"
 check "it logs one escalate line naming the trigger and both models" "1|ok (findings-3: sonnet -> opus)" \

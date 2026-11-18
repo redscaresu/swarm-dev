@@ -164,7 +164,7 @@ term_pid() {
 was="$(lines)"
 read -r code took <<< "$(term_pid tell s1 findings findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le "${AT_ONCE}"
-check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -qE \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$'"
+check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -E \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$' > /dev/null"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
 gone() { ! pgrep -f "sleep 37[.]$$\$" >/dev/null; }
 # 3 s, far under the 37 s the hang lasts: a sleep the TERM left running is still there, never one that

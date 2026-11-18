@@ -57,7 +57,7 @@ check "the calling repo has no board of its own" bash -c "! (cd '${G}' && env -u
 out="$(dash --project "${A}" --project "${B}")"
 check "alpha's frame is headed by its name" grep -q '^alpha  swarm-dev ' <<< "${out}"
 check "bravo's frame is headed by its name" grep -q '^bravo  swarm-dev ' <<< "${out}"
-check "alpha's frame comes first" bash -c "grep -n '^\(alpha\|bravo\)  swarm-dev ' <<< \"\$1\" | cut -d: -f2 | cut -c1-5 | tr '\n' ' ' | grep -qx 'alpha bravo '" _ "${out}"
+check "alpha's frame comes first" bash -c "grep -n '^\(alpha\|bravo\)  swarm-dev ' <<< \"\$1\" | cut -d: -f2 | cut -c1-5 | tr '\n' ' ' | grep -x 'alpha bravo ' > /dev/null" _ "${out}"
 fa="$(frame_of alpha "${out}")"; fb="$(frame_of bravo "${out}")"
 check "with no height set, alpha's frame runs past 20 lines" test "$(wc -l <<< "${fa}")" -gt 20
 check "alpha's frame lists alpha's epic" has epic-of-alpha "${fa}"
@@ -111,7 +111,7 @@ out="$(DASH_H=6 dash --project "${A}" --project "${B}")"
 check "with DASH_H=6, the frames and legend fit 6 lines" test "$(wc -l <<< "${out}")" -le 6
 check "with DASH_H=6, alpha's share starts with its header" grep -q '^alpha  swarm-dev ' <<< "$(sed -n 1p <<< "${out}")"
 check "with DASH_H=6, bravo's share starts with its header" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 3p <<< "${out}")"
-legend_at() { [ "$(grep -c '● working' <<< "$2")" -eq 1 ] && sed -n "$1p" <<< "$2" | grep -q '● working'; } # <line> <out>: once, there
+legend_at() { [ "$(grep -c '● working' <<< "$2")" -eq 1 ] && sed -n "$1p" <<< "$2" | grep '● working' > /dev/null; } # <line> <out>: once, there
 check "with DASH_H=6, the legend shows once, at the bottom" legend_at 5 "${out}"
 # At 160 columns each frame has a status bar at its foot; a 1-line share still shows the header.
 out="$(DASH_W=160 DASH_H=4 dash --project "${A}" --project "${B}")"
@@ -164,7 +164,7 @@ fo="$(awk '/^before  swarm-dev / { on = 1 } /^tailed  swarm-dev / { on = 0 } on'
 fn="$(awk '/^tailed  swarm-dev / { on = 1 } /● working/ { on = 0 } on' <<< "${out}" | sed 's/^tailed  /<project>  /')"
 check "a project that predates the tail and its tailed copy draw the same panel" test "${fo}" == "${fn}"
 check "the predating project's recent box shows the fixture's conduct zzgs row" \
-  bash -c "awk '/^╭─ recent/ { on = 1; next } on && /^╰/ { exit } on' <<< \"\$1\" | grep -qF '✗ conduct zzgs: conduct-zzgs: the pane'" _ "${fo}"
+  bash -c "awk '/^╭─ recent/ { on = 1; next } on && /^╰/ { exit } on' <<< \"\$1\" | grep -F '✗ conduct zzgs: conduct-zzgs: the pane' > /dev/null" _ "${fo}"
 
 # --watch off a terminal: a change to bravo's board prints both projects' frames on that tick.
 (cd "${G}" && exec env -u HERDR_ENV "${SWARM}" dash --watch 1 --project "${A}" --project "${B}" > "${ROOT}/watch.out" 2>&1) &

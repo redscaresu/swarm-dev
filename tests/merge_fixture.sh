@@ -304,7 +304,7 @@ merge() {
 EVENT_AWK="$(PROJECT_DIR="${ROOT}" bash -c 'source "$1/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${REPO}/bin/lib")"
 events() { awk -F'\t' "${EVENT_AWK}"'{ print $2 " " $3 " " outcome($5) }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }
-logged() { events | grep -q -- "$1"; }
+logged() { events | grep -- "$1" > /dev/null; }
 # and_logged <pattern> <command>... — the command succeeds and events.tsv has a line matching
 # <pattern>: one check, so a miss counts as a FAIL and never ends the file under set -e.
 and_logged() { local p="$1"; shift; "$@" && logged "${p}"; }

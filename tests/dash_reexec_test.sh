@@ -80,10 +80,10 @@ check "another install's version change does not re-exec" bash -c "! grep -qF '$
 rmdir "${P}/sub"
 installed 0.2.0 0.2.0
 check "the version swap re-execs 0.2.0's swarm.sh within 10s" within 10 marked "${ROOT}/a.out"
-check "the re-exec'd frame still shows the tree" bash -c "sed -n '/${MARK}/,\$p' '${ROOT}/a.out' | grep -qF 'agents by workspace and tab'"
+check "the re-exec'd frame still shows the tree" bash -c "sed -n '/${MARK}/,\$p' '${ROOT}/a.out' | grep -F 'agents by workspace and tab' > /dev/null"
 check "the re-exec'd script watches the same project, its start directory gone" grep -qF "${MARK} project=${P}" "${ROOT}/a.out"
 check "the re-exec keeps the PID" alive "${A}"
-check "the PID runs 0.2.0's swarm.sh" bash -c "ps -o args= -p '${A}' | grep -qF '${T}/0.2.0/bin/swarm.sh'"
+check "the PID runs 0.2.0's swarm.sh" bash -c "ps -o args= -p '${A}' | grep -F '${T}/0.2.0/bin/swarm.sh' > /dev/null"
 kill "${A}" 2>/dev/null || true
 
 # A copy that is not the installPath (a dev checkout) never jumps to the installed copy.
@@ -123,7 +123,7 @@ installed 0.2.0 0.2.0
 check "the two-project watch re-execs within 10s" within 10 marked "${ROOT}/d.out"
 check "the re-exec'd watch draws the first project" within 5 grep -qxF "${MARK} project=${P}" "${ROOT}/d.out"
 check "the re-exec'd watch draws the second project" within 5 grep -qxF "${MARK} project=${P2}" "${ROOT}/d.out"
-check "the re-exec'd script keeps both --project flags" bash -c "ps -o args= -p '${D}' | grep -qF -- '--project ${P} --project ${P2}'"
+check "the re-exec'd script keeps both --project flags" bash -c "ps -o args= -p '${D}' | grep -F -- '--project ${P} --project ${P2}' > /dev/null"
 kill "${D}" 2>/dev/null || true
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi

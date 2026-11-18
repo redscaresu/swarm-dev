@@ -249,7 +249,7 @@ shell_files() {
   git -C "$1" ls-files bin hooks | while IFS= read -r f; do
     case "${f}" in
       *.sh) echo "${f}" ;;
-      *) if head -n 1 "$1/${f}" | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)'; then echo "${f}"; fi ;;
+      *) if head -n 1 "$1/${f}" | grep -E '^#!.*[/ ](ba)?sh([[:space:]]|$)' > /dev/null; then echo "${f}"; fi ;;
     esac
   done
 }
@@ -268,7 +268,7 @@ elif [[ -n "${found}" ]]; then
   echo "${found}"; fails=$((fails + 1))
 else echo "ok   no loose match in bin/ or hooks/"; fi
 
-cat > "${tmp}/loose.sh" <<'EOF'
+cat > "${tmp}/loose.sh" <<'EOF'  # grep-q-pipe: ok, loose-match's fixture text
 grep -qE "^${name}"$'\t' "${list}"
 [[ "${urls}" == *"${url}"* ]] && echo hit
 awk -v p="$1" '$1 ~ p { print }' "${f}"
@@ -319,7 +319,7 @@ awk -v p="$1" '{ s = "it'\''s" } $1 ~ p' "${f}"
 [[ $x =~ (foo ${v}) ]]
 [[ $x =~ $re ]]
 EOF
-cat > "${tmp}/tight.sh" <<'EOF'
+cat > "${tmp}/tight.sh" <<'EOF'  # grep-q-pipe: ok, loose-match's fixture text
 grep -qxF -- "${name}" "${list}"
 grep -q '^head moved:' "${f}"
 [[ "${urls}" == *"${url}"* ]] && echo hit   # loose-match: ok a fixture
