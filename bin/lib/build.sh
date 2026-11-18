@@ -199,7 +199,7 @@ no new round. <n> is 0 for a finding on a plan or a board PR.
 it is real but not worth the change, wrong when it is mistaken, and deferred when the round cap held
 it back (from review round ${CAP_ROUND}) or demote_kinds did (a kind it lists, before that round).
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
-\`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), code-review for /code-review's, ci for the PR review bot's or a
+\`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's
 own reading keeps the conductor's old value), and lead only for one from the lead's own reading.
 When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
@@ -1062,7 +1062,7 @@ review_next() {
   [[ -z "${REVIEW_FROM}" ]] \
     || lead="Review round ${round} of story ${slug} again: ${pr}'s head moved from ${REVIEW_FROM} to ${REVIEW_HEAD} with no findings sent since this round started, so the round stays ${round};"
   echo "${lead} review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line. If the worktree moved, write neither: follow the new head as your brief says, with the green step on it, then review-agent --next again."
-  review_round_line "${round}" "${pr}"
+  review_round_line "${round}"
   echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` in the background and act on its exit as your brief's dropped-lines check says."
 }
 
@@ -1215,8 +1215,8 @@ recheck_hunks() {
 
 CAP_ROUND=3   # the review round from which the round cap holds findings back (review_round_line)
 
-# review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
-# codex and, when the PR changes code, /code-review on round 1; codex alone after it. Then whether the
+# review_round_line <round> — what review round <round> runs, for review_brief and review_next:
+# codex alone, on every round. Then whether the
 # round may run tests (review_verify): with full, round 1 may run the project's tests for the changed files
 # and check the builder's mutation proofs, leaving the worktree clean; any other round, and every round
 # with ci, reads the diff and trusts CI, its line naming which of the two it is. From round CAP_ROUND on,
@@ -1225,13 +1225,7 @@ CAP_ROUND=3   # the review round from which the round cap holds findings back (r
 # Before CAP_ROUND, demote_kinds (when set) does the same for the kinds it lists; from CAP_ROUND on the
 # cap line covers them, so it prints no line of its own there.
 review_round_line() {
-  if [[ "$1" == 1 ]]; then
-    echo "This is review round 1 of the story. When the PR
-changes code (not only docs, board files or a dependency bump), state the touches and Done when
-above, then run \`/code-review $2\`."
-  else
-    echo "This is review round $1 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
-  fi
+  echo "This is review round $1 of the story: run codex alone."
   local trust="read the diff and trust CI for the tests; run no local test suite and no mutation run."
   if [[ "${CFG_review_verify:-ci}" != full ]]; then
     echo "Tests (review_verify = ci): ${trust}"
@@ -1541,8 +1535,8 @@ EOF
 # and code-scanning alerts, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
-# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), /code-review on round 1 when the PR
-# changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding
+# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), and no
+# other reviewer, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding
 # (from round CAP_ROUND, the round cap, and before it for demote_kinds' kinds: only a regression or a line
 # now false is to fix, the rest deferred), logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
@@ -1577,7 +1571,7 @@ EOF
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
   local fix="One that is real and inside the story is to fix: the builder fixes it, never you."
-  cr="$(review_round_line "$6" "$2")"
+  cr="$(review_round_line "$6")"
   # From the round cap on, the round line above narrows what is to fix (review_round_line); before it,
   # demote_kinds narrows it for the kinds it lists.
   local defer="the round cap holds back (from
@@ -1745,8 +1739,8 @@ reviews in its place), longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage or rate limit it prints early may be
 followed by a fallback's review. If it ends on codex's usage or rate limit or on "codex skipped: ...",
 do not run it again: you report \`codex skipped: usage limit\`, \`codex skipped: rate limit\` or
-\`codex skipped: timed out\`, or \`codex skipped: unreachable\` when codex could not reach its provider, and in a round
-with no \`/code-review\`, you read the diff yourself in codex's place, so the round is never a pass
+\`codex skipped: timed out\`, or \`codex skipped: unreachable\` when codex could not reach its provider, and
+you read the diff yourself in codex's place, so the round is never a pass
 on no review at all. When it prints
 \`reviewed by fallback <model>: codex usage limit\` (or \`codex rate limit\`, \`codex unreachable\` or
 \`codex timeout\`), a fallback agent reviewed in codex's place: report
@@ -1779,7 +1773,7 @@ this first review, then the round \`review-agent --next\` prints.
 Then write the review with the Write tool, in one go.
 Its first line is \`head: $5\`; when codex was skipped, its second is \`codex skipped: <why>\`.
 Under a \`## Findings\` heading,
-one line per finding to fix: its reviewer (codex, fallback or code-review), file:line, and the finding; with
+one line per finding to fix: its reviewer (codex or fallback), file:line, and the finding; with
 none, say so. Under a \`## Handled by the review agent\` heading, the same for each finding you
 declined, with its reason, and for each point a reviewer raised that only a change to a file
 outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or

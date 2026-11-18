@@ -193,7 +193,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   The refusal names the rule.
   A red head, a held PR or a moved head with more than clean merges of the base is still refused before `gh pr merge` runs, and an accepted head goes through these reads like any other.
   Off, `swarm.sh merge` never passes `--admin` and reads none of these
-- `review_verify` (default `ci`): what a story's review agent may run besides codex and `/code-review`.
+- `review_verify` (default `ci`): what a story's review agent may run besides codex.
   `ci`: every round reads the diff and trusts CI for the tests, with no local test run and no mutation run.
   `full`: round 1 may also run the project's tests for the files the PR changes (as its `AGENTS.md` or Makefile selects them, never the whole suite) and check the builder's mutation proofs: each FAIL line in the PR body names a test the diff adds or changes, and a proof it runs again breaks the fix only in a copy of the worktree.
   It deletes any file the tests wrote, so the worktree is clean for its end-of-review check.
