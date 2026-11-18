@@ -8,7 +8,7 @@
 # broken: a value cut off and piped straight in, kept in a variable or given to a helper too, a
 # list's items piped with no brackets, and lines after a $(...) whose heredoc or comment holds a '.
 # #515's stray \} is flagged too, and in a printf format. A line that says "# vacuous-test: ok" is
-# let through. make check runs it over LINT_FILES and fails on a finding.
+# let through. make check runs it over LINT_FILES (every tests/*.sh) and fails on a finding.
 # The fixture holds only JSON that parses, so this file passes the lint too; sed breaks the copies.
 # grep-q-pipe: a fixture that pipes into grep -q in each shape (a -q in a cluster, --quiet, |&, grep on
 # the line after the pipe or a \ continuation, a bash -c string, a stub heredoc's body, a "$(...)", a -q
@@ -172,5 +172,15 @@ check "each pipe into grep -q is flagged at grep's line, and nothing else is" \
 make_flags_pipe() { [ "${rc}" != 0 ] && grep -q "^${pipes}:1: grep-q-pipe: a pipe into grep -q returns 141" <<< "${out}"; }
 rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${pipes}" 2>&1)" || rc=$?
 check "make check fails on a test file that pipes into grep -q" make_flags_pipe
+# By default make check lints every tests/*.sh, so a helper the tests source is linted too: a copy of
+# the Makefile and the lint, with a helper (not a *_test.sh) that pipes into grep -q.
+mkdir -p "${tmp}/repo/scripts" "${tmp}/repo/tests"
+cp "${REPO}/Makefile" "${tmp}/repo/"
+cp "${LINT}" "${tmp}/repo/scripts/lint"
+# shellcheck disable=SC2016 # the helper's text, written as it is
+printf '%s\n' 'logged() { events | grep -q -- "$1"; }' > "${tmp}/repo/tests/a_helper.sh"  # grep-q-pipe: ok, the fixture's text
+rc=0; out="$(make -s -C "${tmp}/repo" check 2>&1)" || rc=$?
+check "make check's default lints a helper the tests source, not only *_test.sh" \
+  [ "${rc}|$(grep -c '^tests/a_helper.sh:1: grep-q-pipe' <<< "${out}")" = "2|1" ]
 
 [ "${fails}" -eq 0 ] || { echo "${fails} check(s) failed"; exit 1; }

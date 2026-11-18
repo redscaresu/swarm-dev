@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/lint [file...] — the repo's lints over shell test files (tests/*_test.sh by default); make
+"""scripts/lint [file...] — the repo's lints over shell test files (tests/*.sh by default); make
 check runs it. It prints file:line: and the problem for each finding, and exits 1 when there is one.
 
 vacuous-test: JSON a test feeds to a hook or helper must parse, or the code it meant to exercise never
@@ -473,7 +473,7 @@ def lint_file(path):
 
 def main(argv):
     tests = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "tests")
-    paths = argv or sorted(os.path.relpath(p) for p in glob.glob(os.path.join(tests, "*_test.sh")))
+    paths = argv or sorted(os.path.relpath(p) for p in glob.glob(os.path.join(tests, "*.sh")))
     findings = [f for p in paths for f in lint_file(p)]
     for f in findings:
         print(f)

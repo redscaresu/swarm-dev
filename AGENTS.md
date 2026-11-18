@@ -188,7 +188,7 @@ Before you open a PR:
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
-make check                                  # scripts/lint over tests/*_test.sh
+make check                                  # scripts/lint over tests/*.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
                                             # it never runs the full suite: it names each changed file that would select every test,
                                             # which CI's full run covers, and runs the tests for the rest
@@ -207,8 +207,9 @@ map does not know. CI's sharded run is the gate: `test` is the required check, a
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
-- In a test, never pipe into `grep -q`: under `pipefail` the pipeline returns 141 once grep's input
-  passes 64 KB, since grep exits at its first match and the writer gets SIGPIPE.
+- In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
+  returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
+  gets SIGPIPE.
   Write `grep -q <pattern> <<< "$(...)"`, or drop the `-q` and send grep's output to `/dev/null`.
   `make check` fails such a line; one that only quotes the pipe (a doc's text) says
   `# grep-q-pipe: ok, <why>` on its line or its heredoc's `<<` line.
