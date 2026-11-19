@@ -2,9 +2,9 @@
 board_dir = board
 # The lead is a Claude session: dash puts what it can do in its own queue, apart from the user's.
 lead = session
-# ship-gates (2026-11-19): merge = human until the user has merged protected-go-paths, docs-gate-go and
-# patch-gate-port; lead-close-window sets it back to agent.
-merge = human
+# The conductor merges its own green, reviewed PRs through swarm.sh merge (head pinned) and keeps going.
+# ship-gates' three code PRs are held for the user by their costs: money line (2026-11-19).
+merge = agent
 # The Sonnet trial is closed (user, 2026-11-15): 5 of 189 code builds ran on Sonnet, and the
 # escalate_ladder mixes step-ups into the same builds, so the planned comparison could not be read.
 sonnet_share = 0
