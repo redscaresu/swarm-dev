@@ -2,7 +2,7 @@
 title: swarm-dev v0.32: Go rewrite
 date: 2026-11-18
 status: agreed
-grants: [stories]
+grants: [epics, stories]
 ---
 
 # swarm-dev v0.32: Go rewrite
@@ -61,14 +61,21 @@ and over), so they say nothing about bash against Go.
    under the same stubs, and their stdout, stderr, exit codes, files written and calls to the
    stubs are the same. Each port PR runs it against the tree just before the port. Each stage's
    end runs it against the v0.31.2 tree, where the only differences allowed are the ones the
-   `fix: true` stories since then made, each named.
-3. Each rule has one implementation at any time, with two named exceptions (§ Exceptions to one
+   `fix: true` stories since then made, each named, and the entries on the stage's allow list.
+   The allow list names each change a stage makes on purpose (the wider holds, the patch gate's
+   new cases, the wrapper's lines). Each entry cites its merged story and the exact lines, and the
+   user agrees the list at the stage's exit.
+3. Each rule has one implementation at any time, with three named exceptions (§ Exceptions to one
    implementation).
 4. The lead's machine runs each port from the prerelease ref. Every other machine gets the ports
-   when a stage ends.
+   when a stage ends. For each stage's trial the user's second Mac switches to
+   `swarm-dev@swarm-dev-pre`, and back to `swarm-dev@swarm-dev` once the stable ref moves, which
+   also checks that stable updates work.
 5. A user installs and updates as today. Go is needed on a user's machine only as the fallback.
    The wrapper checks the binary's checksum and its build attestation before it runs it.
-6. The 12 folded stories and the 4 deferred items land, each after the port of its command.
+6. The 12 folded stories and 3 of the 4 deferred items land, each after the port of its command.
+   The fourth, `dropped-lines` skipping a story PR's own story file, is fixed in bash before the
+   freeze (the user, 2026-11-19).
 7. No command is slower than its bash. The check runs in CI on a fixed fixture under stubs, and
    reports wall time and process starts per command before and after its port.
 8. The names stay: `swarm.sh`, the hook paths in `hooks/hooks.json`, every setting and field.
@@ -188,7 +195,7 @@ The release-ref spike tested each step of this section (§ Before this is agreed
   check (`bin/swarm.sh:128`) reads the same ref.
 - There are two refs. Port patches move the prerelease ref. The stable ref, which every other
   machine installs, moves when a stage ends: the lead moves it once the user has cleared the
-  stage's exit story (§ Stages). To roll back, the ref is moved back and the sessions restarted,
+  stage's exit epic (§ Stages). To roll back, the ref is moved back and the sessions restarted,
   which rolls the hooks back too.
 - The lead's machine runs the prerelease. A branch that never moves, `pre-marketplace`, holds a
   `marketplace.json` named `swarm-dev-pre` whose plugin source is the prerelease ref. The lead
@@ -228,9 +235,12 @@ The release-ref spike tested each step of this section (§ Before this is agreed
   `.git` still runs the code under test. A stage 1 test proves it: such a copy with broken Go goes
   red.
 - A hook never downloads and never builds.
-- A hook with no binary keeps today's rule for a missing `python3`: a command that says merge is
-  refused, with a line saying the guard cannot run, and the rest pass. `lead-stop.sh` allows the
-  stop.
+- A hook with no binary refuses a command that says merge, and every command the guard refuses
+  today because it loses work (`git reset --hard`, a checkout over uncommitted changes and the
+  rest), each with a line saying the guard cannot run. The rest pass. `lead-stop.sh` allows the
+  stop. The user chose this on 2026-11-19: after Claude Code updates the plugin by itself, hooks
+  run with no binary until a `swarm.sh` call fetches it, and the rules that keep work from being
+  lost must not lapse in that window.
 - The guard's bash fast path goes, so every Bash tool call starts the binary. On the lead's Mac
   on 2026-11-19 (load about 1.5, a binary fetched with `gh release download`, 20 starts each) a
   Go hello-world took 3.8 ms a start, `/bin/bash -c true` 3.4 ms and `python3 -c pass` 17.7 ms.
@@ -264,7 +274,11 @@ who calls whom.
    hundreds of times per command. A test runs the bash and the Go over every board file and config
    fixture and compares the output.
 2. The wrapper's own rules: it reads the version from `plugin.json`, and a hook with no binary
-   refuses a command that says merge.
+   refuses a command that says merge or loses work.
+3. A shared Python module (`report.py`, `events_outcome.py`, `clock.py`, `panes.py`,
+   `touches_rows.py`) keeps its Python copy until its last Python importer is ported, under a test
+   that runs both over the same input and compares the output. Each helper imports several of
+   them, so no helper could be ported in one PR otherwise.
 
 ### Tests
 
@@ -303,7 +317,7 @@ still say "Python rewrite" and have no `fix:` or `epic:`; the plan rewrites each
 
 | Command | Folded stories | Deferred on 2026-11-18 |
 |---|---|---|
-| `merge` | [merge-refuse-red-base](../stories/merge-refuse-red-base.md), [protected-hold-grant](../stories/protected-hold-grant.md) | `dropped-lines` skips a story PR's own story file (3 of the 8 v0.31.2 PRs were held by it) |
+| `merge` | [merge-refuse-red-base](../stories/merge-refuse-red-base.md), [protected-hold-grant](../stories/protected-hold-grant.md) | none: `dropped-lines` skipping a story PR's own story file (3 of the 8 v0.31.2 PRs were held by it) is fixed in bash before the freeze, as [dropped-lines-own-story-file](../stories/dropped-lines-own-story-file.md) |
 | `next` | [next-origin-tags](../stories/next-origin-tags.md), [next-starts-gaps](../stories/next-starts-gaps.md) | |
 | `story` | [board-worktree-guard](../stories/board-worktree-guard.md) | |
 | `wait --lead` and the lead's stop hook | [lead-stop-wakes](../stories/lead-stop-wakes.md), [lead-queue-failed-read](../stories/lead-queue-failed-read.md) | no `conflict:` line while GitHub is still working out whether a PR merges (2 of 2 such lines that day were false); a builder left idle on an ended background run with uncommitted edits is noticed |
@@ -335,10 +349,17 @@ the patch gate refuses a patch that carries anything else.
 
 ### Stages
 
-Each stage ends on a `kind: lead` story that the next stage's epics depend on. In it the user
-runs the new version on their machines, reads the stage's differential run against v0.31.2 and
-the CI speed figures, and says go. The lead then moves the stable ref. The user agrees each epic
-through `/epic`, since `epics` is not granted.
+Each stage ends on an exit epic holding one `kind: lead` story. The exit epic depends on every
+other epic of its stage, and the next stage's epics depend on the exit epic. In the exit story the
+user runs the new version on their machines, reads the stage's differential run against v0.31.2 and
+the CI speed figures, and says go. The lead then moves the stable ref. Under the `epics` grant
+every epic goes active at plan time, but each stage's epics name the previous stage's exit epic
+in `depends_on`. The exit epic is written by the same plan PR, so it exists from the start, and an
+open epic holds its dependants' planning until every story in it is done or in review (`dep_holds`,
+`bin/lib/board.sh`). The exit story has no PR, so it never goes to review: it goes from ready to
+done only when the user says go, and the lead marks it done in a board PR. A dependency on the exit story itself would not hold: that story does not
+exist until the exit epic is planned, and a slug that names nothing counts as met. So none of a
+later stage's epics is planned into stories or built until the user has said go at that exit.
 
 | Stage | Ships as | Contents |
 |---|---|---|
@@ -397,7 +418,9 @@ through `/epic`, since `epics` is not granted.
   them, so the loop could then be ported before stage 1 had proved the build.
 - The HLD could carry all four grants. `merge` and `release` are read only under `merge = human`,
   so here they would only keep PRs merging and patches shipping after the user flipped that
-  setting to stop a bad run. `epics` would make every stage's epics active at plan time.
+  setting to stop a bad run.
+- The user could agree each epic through `/epic`. The plan has about 50 epics, and the stage
+  exits already give the user a stop before each stage starts.
 - The port could make commands faster as it goes. The stubbed tests would then change with the
   port, which gives up the unchanged-tests check.
 - A few vetted libraries would mean less code. They also mean more supply chain to watch, and a
@@ -411,7 +434,7 @@ through `/epic`, since `epics` is not granted.
   fix it. Helpers and readers go first, each port is small, and only the lead's machine runs a port
   before its stage ends. The user's other boards on that machine run it too. To roll back, the lead moves the prerelease ref back and restarts the sessions.
   docs/lead-by-hand.md lists the steps the lead can still take by hand.
-- Only v0.32.0 has a retro, so the loop's ports ship without one. The stage exit stories are
+- Only v0.32.0 has a retro, so the loop's ports ship without one. The stage exit epics are
   where the user looks before the loop starts and before it reaches other machines.
 - Behaviour that no test pins can be lost unseen. The differential run, the inventory and the
   reviewer's reading of the deleted bash are the three checks on it.
@@ -446,16 +469,21 @@ through `/epic`, since `epics` is not granted.
 
 ### Grants
 
-Set by the user on 2026-11-19, after the review: `stories` only.
+Set by the user on 2026-11-19: `stories` after the review, then `epics` once the plan came to
+about 50 epics.
 
+- `epics`: /plan-hld writes the epics `active` and opens the board PR without asking. Each
+  stage's epics depend on the previous stage's exit epic (§ Stages), so nothing in a later stage
+  is planned or built before the user says go at the earlier stage's exit.
 - `stories`: /plan-epic writes each epic's stories and opens the board PR without asking. At 80
   to 100 stories the user cannot read each one.
 - The carve-out: the board PR lists for the user any story that touches the guard, `merge` or the
-  release gates, sets `fix:` or `port:`, or names `env:`, and waits for the user's go on those.
-  The reason is that `fix:` and `port:` decide what ships as a patch, and `env:` hands an agent a
-  variable. Nothing in the code enforces the carve-out. The lead holds it, and the user clears
-  each listed story by agreeing it on the board PR.
-- `epics`, `merge` and `release` are not carried. The user agrees each epic. `merge` and
+  release gates, or names `env:`, and waits for the user's go on those. The reason is that those
+  stories change what checks a merge or ship, and `env:` hands an agent a variable. The user
+  narrowed it on 2026-11-19: after stage 1 nearly every story sets `fix:` or `port:`, so listing
+  those would have stopped on about 220 stories. Nothing in the code enforces the carve-out. The
+  lead holds it, and the user clears each listed story by agreeing it on the board PR.
+- `merge` and `release` are not carried. `merge` and
   `release` are read only under `merge = human`, so on this board they would do nothing but keep
   PRs merging and patches shipping after the user flipped that setting to stop a bad run.
 
@@ -464,10 +492,12 @@ Set by the user on 2026-11-19, after the review: `stories` only.
 - Before this is agreed: the spikes below, all answered on 2026-11-19.
 - Before the first port story: the 8 active epics are finished or closed and the 6 ready lead
   stories cleared.
-- Before v0.32.0: its retro, as the retro gate asks.
+- Before v0.32.0: its retro, as the retro gate asks. It records that the test-speed work the
+  v0.31.0 retro sent to v0.32 (the git wrapper's cost, lazy-loading of libs, a fake clock, shared
+  fixtures) moves to v0.33 (the user, 2026-11-19).
 - The stages follow in the order of § Stages. Every port can ship to the prerelease ref on its
   own.
-- Each stage ends on its exit story. For it the lead records the differential run against
+- Each stage ends on its exit epic. For its exit story the lead records the differential run against
   v0.31.2, the CI fixture's wall time and process starts per command, and the lines of bash and
   Python and the `python3` calls that are left. Once the user says go, the lead moves the stable
   ref. At the end of stage 4 those three counts are zero outside the wrappers and `scripts/`.
