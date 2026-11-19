@@ -1282,6 +1282,24 @@ is "dropped lines in a file named 'x | y.md': recorded whole, beside the other P
 fresh; rm "${S}"; pr_head "${DROP}"; merge --board "${URL}"
 refused "dropped lines: a --board PR" "merge: held: ${URL} (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
 check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs 'dropped base lines' '${P}/.swarm/board-state'"
+# A story PR deletes its own story file: main gains docs/stories/s.md, OWNS's branch deletes it, main adds
+# `fix: true` to it (as board PR #1002 did), and OWNS's merge of main keeps the deletion. merge passes
+# --story s, so that line is no drop and it merges. In a repo gh does not name the project's, or as a
+# --board PR, with no story, the line holds it.
+wg -C "${W}" checkout -q main; mkdir -p "${W}/docs/stories"; wput docs/stories/s.md 'status: ready' x
+wg -C "${W}" checkout -q -b ownstory; wg -C "${W}" rm -q docs/stories/s.md; wg -C "${W}" commit -qm 'the story is done'
+wg -C "${W}" checkout -q main; wput docs/stories/s.md 'status: ready' 'fix: true' x; wg -C "${W}" push -q "${OR}" main
+wg -C "${W}" checkout -q ownstory; wg -C "${W}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+rm -f "${W}/docs/stories/s.md"; wg -C "${W}" add -A; wg -C "${W}" commit -q --no-edit; OWNS="$(wg -C "${W}" rev-parse HEAD)"
+fresh; pr_head "${OWNS}"; merge "${URL}"
+is "dropped lines: a story PR whose head deletes its own story file, a base line of it gone with it: exits 0" 0 "${rc}"
+check "dropped lines: a story PR whose head deletes its own story file: merged" merged
+fresh; echo '{"nameWithOwner":"o/board"}' > "${FX}/origin"; pr_head "${OWNS}"; merge "${URL}"
+refused "dropped lines: the same story PR in a repo that is not the board's (gh names the project's o/board)" \
+  "merge: held: s (dropped base lines: 1, first docs/stories/s.md: fix: true); ${HELD_TAIL}"
+fresh; rm "${S}"; pr_head "${OWNS}"; merge --board "${URL}"
+refused "dropped lines: the same head as a --board PR" \
+  "merge: held: ${URL} (dropped base lines: 1, first docs/stories/s.md: fix: true); ${HELD_TAIL}"
 
 # --- Hold fields: each hold for the user writes its kind as the merge line's hold= field, which flow's
 # merges section counts by; a refusal that is no hold has no field. fields() is events_outcome.py's reader.

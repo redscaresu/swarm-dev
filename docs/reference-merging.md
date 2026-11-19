@@ -282,6 +282,11 @@ that had merged their parent's branch while stacked
 [#956](https://github.com/redscaresu/swarm-dev/pull/956) and
 [#905](https://github.com/redscaresu/swarm-dev/pull/905)); each time, the lead had the builder
 rebuild the branch as one commit on the base.
+A story PR deletes its own story file, so on a story PR no line of that file counts when the PR's head deletes it.
+A line the base added to the file after the branch was cut, such as a board PR setting a field, goes with the file and is no drop.
+Counting such a line held 3 of the 8 v0.31.2 story PRs ([#1003](https://github.com/redscaresu/swarm-dev/pull/1003), [#1006](https://github.com/redscaresu/swarm-dev/pull/1006) and [#1008](https://github.com/redscaresu/swarm-dev/pull/1008)), and each was cleared by a commit that put the file back.
+The story's own file still counts when the head keeps it, and so does every other story's file.
+A `--board` PR, or one an epic lists, counts every file.
 A line the PR's own merge drops while the base still has it still
 prints. A line the PR's head still holds does not count, so a commit that puts a dropped line back
 clears the hold on the next `swarm.sh merge`. After reading every merge, the check counts the line's
@@ -1178,9 +1183,12 @@ On a board outside the project's repo, git holds no retro file or story history 
 
 ## Commands
 
-**`swarm.sh dropped-lines <owner/repo> <n> <head> <base>`**
+**`swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <head> <base>`**
 Print the lines of `<base>` that PR `<n>`'s own merge commits dropped.
 It changes nothing and logs nothing.
+With `--story <slug>` naming the PR's own story, no line of `<board>/stories/<slug>.md` counts when `<head>` deletes that file.
+That holds only when the board is in the project's repo and gh names that repo `<owner/repo>`; a story PR in another repo counts the file as any other.
+`swarm.sh merge` passes `--story` for a story PR.
 It works in the clone of `<owner/repo>` (the project, or `<repos_dir>/<name>`), whose origin must be that repo.
 It checks that gh lists `<head>` among the PR's commits, fetches `refs/pull/<n>/head` and `<base>` into refs of its own, and checks that the fetched commit is `<head>`.
 Then it scans each merge on `<head>`'s first-parent chain since the fetched `<base>`, with `git show --remerge-diff`, for a line the base side had that the merge dropped and the PR's own commits had not removed.
