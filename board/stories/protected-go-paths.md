@@ -1,18 +1,17 @@
 ---
 kind: code
-status: blocked
+status: ready
 epic: ship-gates
-depends_on: [lead-open-window]
-needs: lead-open-window (the user's merge of the merge = human PR, so this PR's review agent hands it to the user)
+depends_on: []
 touches: [bin/lib/board.sh:protected_paths own-repo list, bin/lib/board.sh:pr_hld protected check, bin/lib/merge.sh:protected_hold own-repo paths, bin/lib/merge.sh:merge header comment, bin/swarm.sh:usage merge line, tests/merge_protected_hold_test.sh:own-repo cases, tests/grants_test.sh:own-repo cases, docs/reference-merging.md:protected-path hold (§ Merging), docs/reference-planning.md:grants none sentence (§ Commands), docs/reference-planning.md:protected-path sentence (§ Writing an HLD), docs/method.md:merge policy note]
 estimate_lines: 220
 risk: high
+costs: money
 ---
 
 # In swarm-dev's own repo, hold a PR that touches the four protected Go packages or .claude-plugin/
 
-Uses lead-open-window's **You:** step: with `merge = human` on main, this PR's review agent hands it
-to the user.
+Its `costs: money` line holds its PR for the user's merge (see the note below).
 
 This story fixes the four package paths for every later epic: `internal/guard/`, `internal/merge/`,
 `internal/release/` and `internal/agentenv/`. Those are the names port-guard, port-merge,
@@ -50,6 +49,8 @@ changes: leave them, and say so in the PR.
 More than two mutation proofs, so use the worktree copy (AGENTS.md). Nothing here holds a live PR
 before v0.32.0 is installed, so the review agent does not look for a live hold.
 
+
+**Why `costs: money`:** this story spends no money. The user chose on 2026-11-19 to hold it for their merge this way, under `merge = agent`, so that the rest of the board keeps merging while they are away. v0.31.3 has no other way to hold one PR in bash files for the user: `swarm.sh merge` holds a `costs: money` PR for the user whatever the merge setting. `flow` will count it as a costly story; that is expected.
 **Done when:**
 - In tests/merge_protected_hold_test.sh, with the PR in the plugin's own repo and `merge = agent`,
   `swarm.sh merge` holds a story PR that touches each of internal/guard/x.go, internal/merge/x.go,
