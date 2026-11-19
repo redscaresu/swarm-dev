@@ -1,18 +1,17 @@
 ---
 kind: code
-status: blocked
+status: ready
 epic: ship-gates
-depends_on: [lead-open-window]
-needs: lead-open-window (the user's merge of the merge = human PR, so this PR's review agent hands it to the user)
+depends_on: []
 touches: [bin/lib/merge.sh:release_docs Go tree in the own repo, bin/lib/merge.sh:release_check release_docs call, tests/merge_rules_test.sh:docs gate Go cases, docs/reference-merging.md:--release docs check (§ Merging), AGENTS.md:release paragraph (Working on this repository), commands/swarm.md:release arm docs gate]
 estimate_lines: 140
 risk: high
+costs: money
 ---
 
 # In swarm-dev's own repo, the release docs gate counts the Go tree
 
-Uses lead-open-window's **You:** step: with `merge = human` on main, this PR's review agent hands it
-to the user.
+Its `costs: money` line holds its PR for the user's merge (see the note below).
 
 Split from the patch gate (patch-gate-port) so that each PR changes one behaviour.
 
@@ -35,6 +34,8 @@ New cases drive `swarm.sh merge --release` from outside, with merge_rules_test.s
 (:84-116, the plugin's repo read from plugin.json as at :318). More than two proofs, so use the
 worktree copy.
 
+
+**Why `costs: money`:** this story spends no money. The user chose on 2026-11-19 to hold it for their merge this way, under `merge = agent`, so that the rest of the board keeps merging while they are away. v0.31.3 has no other way to hold one PR in bash files for the user: `swarm.sh merge` holds a `costs: money` PR for the user whatever the merge setting. `flow` will count it as a costly story; that is expected.
 **Done when:**
 - In the plugin's own repo, `merge --release` refuses a bump when only cmd/x/main.go changed since
   the tag, and does the same for internal/guard/x.go and for go.mod, one case each, naming the path;

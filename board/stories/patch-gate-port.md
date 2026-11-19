@@ -2,17 +2,17 @@
 kind: code
 status: blocked
 epic: ship-gates
-depends_on: [lead-open-window, docs-gate-go]
-needs: lead-open-window (the user's merge of the merge = human PR); docs-gate-go (it rewords AGENTS.md's release paragraph, which this story's patch sentence sits beside)
+depends_on: [docs-gate-go]
+needs: docs-gate-go (it rewords AGENTS.md's release paragraph, which this story's patch sentence sits beside)
 touches: [bin/lib/board.sh:non_fix_change tests-only and port: passes, bin/lib/board.sh:release_memo rule in the key, bin/lib/merge.sh:release_retro pass line, tests/next_test.sh:patch gate port and tests-only cases, tests/next_test.sh:old refusal text, tests/merge_rules_test.sh:patch refusal text, tests/merge_rules_test.sh:retro gate pass text, tests/non_fix_test.sh:rule2 cache pin and refusal text, templates/docs/stories/README.md:port field, board/stories/README.md:port field, docs/reference-merging.md:Releases fix rule (§ Releases), docs/reference-merging.md:§ The retro gate patch rule, AGENTS.md:patch rule (Rules that are not negotiable), AGENTS.md:release paragraph (Working on this repository), commands/swarm.md:release arm patch gate, commands/plan-epic.md:story fields port]
 estimate_lines: 260
 risk: high
+costs: money
 ---
 
 # In swarm-dev's own repo, the patch gate passes a tests-only PR and a port: true story's PR
 
-Uses lead-open-window's **You:** step (`merge = human` on main, so the review agent hands this PR to
-the user). Builds after docs-gate-go: both reword AGENTS.md's release paragraph, on adjacent lines.
+Its `costs: money` line holds its PR for the user's merge (see the note below). Builds after docs-gate-go: both reword AGENTS.md's release paragraph, on adjacent lines.
 
 Today a patch ships only when every change since the tag is from a `fix: true` story or a fix-main
 build (non_fix_change, bin/lib/board.sh:1586). The Go rewrite ships ports and test rewrites as
@@ -60,6 +60,8 @@ New cases drive swarm.sh from outside: next_test.sh's expect_release and merged_
 bin/lib itself, only gets its cache pin and refusal text updated. More than two proofs, so use the
 worktree copy.
 
+
+**Why `costs: money`:** this story spends no money. The user chose on 2026-11-19 to hold it for their merge this way, under `merge = agent`, so that the rest of the board keeps merging while they are away. v0.31.3 has no other way to hold one PR in bash files for the user: `swarm.sh merge` holds a `costs: money` PR for the user whatever the merge setting. `flow` will count it as a costly story; that is expected.
 **Done when:**
 - In the own repo, `swarm.sh next` prints a patch release for each of: a story PR with neither
   `fix:` nor `port:` whose whole diff is under tests/, with its own story file deleted; a

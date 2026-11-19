@@ -32,7 +32,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Your part:**
 - Lead: cut the last v0.31.x patch before the first PR merges, with the dropped-lines fix in it (story dropped-lines-own-story-file, outside this plan; HLD:76-78). None can ship after that merge until v0.32.0, and the swarm runs the installed version, so a fix that misses the patch holds stage 1's PRs falsely until then.
-- Lead: once the epic's board PR has merged and before its first build starts, set merge = human in .claude/swarm/config; set it back to agent once all three code PRs are merged. .claude/ is a protected path, so you merge those two small PRs too. PRs of the old active epics also wait on you meanwhile.
+- Changed on 2026-11-19, the user's choice: the three code stories carry `costs: money`, so `swarm.sh merge` holds each for the user under merge = agent, and the rest of the board keeps merging. The merge = human window (#1024) was opened, then closed again the same day. Earlier plan: once the epic's board PR has merged and before its first build starts, set merge = human in .claude/swarm/config; set it back to agent once all three code PRs are merged. .claude/ is a protected path, so you merge those two small PRs too. PRs of the old active epics also wait on you meanwhile.
 - You merge the three code PRs (HLD:297-298): protected-go-paths, docs-gate-go and patch-gate-port. The release gates were split in two so that each PR changes one behaviour.
 - Carve-out (HLD:480-485): all three code stories are listed, since they change merge's holds and the release gates. You clear them on the board PR.
 

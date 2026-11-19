@@ -2,34 +2,27 @@
 kind: lead
 status: blocked
 epic: ship-gates
-depends_on: [lead-open-window, protected-go-paths, docs-gate-go, patch-gate-port]
-needs: lead-open-window (the merge = human line in .claude/swarm/config, set back here); protected-go-paths, docs-gate-go and patch-gate-port (their merged PRs, checked for the epic's Done when)
-touches: [.claude/swarm/config:merge]
+depends_on: [protected-go-paths, docs-gate-go, patch-gate-port]
+needs: protected-go-paths, docs-gate-go and patch-gate-port (their merged PRs, checked for the epic's Done when)
+touches: [board/stories:ship-gates costs check]
 estimate_lines: 4
 risk: high
 ---
 
-# The user merges the three code PRs, then merge = agent comes back
+# The user merges the three code PRs, each held for them by its costs: money line
 
-Closes the window lead-open-window opened. This story turns ready once the three story PRs have
-merged.
+Closes ship-gates. The user chose on 2026-11-19 to hold the three code PRs with `costs: money`
+under `merge = agent`, not with a `merge = human` window, so the rest of the board keeps merging while
+they are away. `merge = agent` came back in its own PR that day.
 
-**You:** merge protected-go-paths', docs-gate-go's and patch-gate-port's PRs, each once its review
-agent hands it over under `merge = human` (HLD:297-299).
+**You:** merge protected-go-paths', docs-gate-go's and patch-gate-port's PRs, each once
+`swarm.sh merge` holds it for you (`held: <slug> costs money`).
 
-1. Lead: check that each was handed over and then merged by the user. gh runs as the user's login
-   for agents too, so mergedBy cannot tell them apart. Read .swarm/events.tsv for the review agent's
-   handover, and for no agent's `merge <slug> ok`.
-2. Lead: open a PR that sets `merge = agent` back in .claude/swarm/config.
-
-**You:** merge it. .claude/ is protected.
-
-3. Lead: pull the main checkout and check that `swarm.sh config merge` prints `agent` there.
-4. Lead: tell the user that go-module, port-inventory and port-checks can now be planned.
+1. Lead: check that each was held and then merged by the user. gh runs as the user's login for
+   agents too, so mergedBy cannot tell them apart. Read .swarm/events.tsv for each PR's
+   `costs money` hold, and for no agent's `merge <slug> ok`.
+2. Lead: tell the user that go-module, port-inventory and port-checks can now be planned.
 
 **Done when:**
 - gh pr view shows the three story PRs merged
-- .swarm/events.tsv shows each PR handed to the user by its review agent before it merged, and no
-  merge of it by an agent
-- `git show origin/main:.claude/swarm/config` has `merge = agent`, on a commit after the three
-  merges, and `swarm.sh config merge` prints `agent` in the pulled main checkout
+- .swarm/events.tsv shows each PR held for the user before it merged, and no merge of it by an agent
