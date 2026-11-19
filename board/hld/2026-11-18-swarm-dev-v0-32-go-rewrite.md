@@ -195,7 +195,7 @@ The release-ref spike tested each step of this section (§ Before this is agreed
   check (`bin/swarm.sh:128`) reads the same ref.
 - There are two refs. Port patches move the prerelease ref. The stable ref, which every other
   machine installs, moves when a stage ends: the lead moves it once the user has cleared the
-  stage's exit story (§ Stages). To roll back, the ref is moved back and the sessions restarted,
+  stage's exit epic (§ Stages). To roll back, the ref is moved back and the sessions restarted,
   which rolls the hooks back too.
 - The lead's machine runs the prerelease. A branch that never moves, `pre-marketplace`, holds a
   `marketplace.json` named `swarm-dev-pre` whose plugin source is the prerelease ref. The lead
@@ -349,13 +349,15 @@ the patch gate refuses a patch that carries anything else.
 
 ### Stages
 
-Each stage ends on an exit epic holding one `kind: lead` story, and the next stage's epics depend on that exit epic. In it the user
-runs the new version on their machines, reads the stage's differential run against v0.31.2 and
+Each stage ends on an exit epic holding one `kind: lead` story. The exit epic depends on every
+other epic of its stage, and the next stage's epics depend on the exit epic. In the exit story the
+user runs the new version on their machines, reads the stage's differential run against v0.31.2 and
 the CI speed figures, and says go. The lead then moves the stable ref. Under the `epics` grant
 every epic goes active at plan time, but each stage's epics name the previous stage's exit epic
 in `depends_on`. The exit epic is written by the same plan PR, so it exists from the start, and an
-open epic holds its dependants' planning until its stories are done or in review (`dep_holds`,
-`bin/lib/board.sh`). A dependency on the exit story itself would not hold: that story does not
+open epic holds its dependants' planning until every story in it is done or in review (`dep_holds`,
+`bin/lib/board.sh`). The exit story has no PR, so it never goes to review: it goes from ready to
+done only when the user says go, and the lead marks it done in a board PR. A dependency on the exit story itself would not hold: that story does not
 exist until the exit epic is planned, and a slug that names nothing counts as met. So none of a
 later stage's epics is planned into stories or built until the user has said go at that exit.
 
@@ -432,7 +434,7 @@ later stage's epics is planned into stories or built until the user has said go 
   fix it. Helpers and readers go first, each port is small, and only the lead's machine runs a port
   before its stage ends. The user's other boards on that machine run it too. To roll back, the lead moves the prerelease ref back and restarts the sessions.
   docs/lead-by-hand.md lists the steps the lead can still take by hand.
-- Only v0.32.0 has a retro, so the loop's ports ship without one. The stage exit stories are
+- Only v0.32.0 has a retro, so the loop's ports ship without one. The stage exit epics are
   where the user looks before the loop starts and before it reaches other machines.
 - Behaviour that no test pins can be lost unseen. The differential run, the inventory and the
   reviewer's reading of the deleted bash are the three checks on it.
@@ -473,15 +475,14 @@ about 50 epics.
 - `epics`: /plan-hld writes the epics `active` and opens the board PR without asking. Each
   stage's epics depend on the previous stage's exit epic (§ Stages), so nothing in a later stage
   is planned or built before the user says go at the earlier stage's exit.
-
 - `stories`: /plan-epic writes each epic's stories and opens the board PR without asking. At 80
   to 100 stories the user cannot read each one.
 - The carve-out: the board PR lists for the user any story that touches the guard, `merge` or the
   release gates, or names `env:`, and waits for the user's go on those. The reason is that those
   stories change what checks a merge or ship, and `env:` hands an agent a variable. The user
   narrowed it on 2026-11-19: after stage 1 nearly every story sets `fix:` or `port:`, so listing
-  those would have stopped on about 220 stories. Nothing in the code enforces the carve-out. The lead holds it, and the user clears
-  each listed story by agreeing it on the board PR.
+  those would have stopped on about 220 stories. Nothing in the code enforces the carve-out. The
+  lead holds it, and the user clears each listed story by agreeing it on the board PR.
 - `merge` and `release` are not carried. `merge` and
   `release` are read only under `merge = human`, so on this board they would do nothing but keep
   PRs merging and patches shipping after the user flipped that setting to stop a bad run.
@@ -496,7 +497,7 @@ about 50 epics.
   fixtures) moves to v0.33 (the user, 2026-11-19).
 - The stages follow in the order of § Stages. Every port can ship to the prerelease ref on its
   own.
-- Each stage ends on its exit story. For it the lead records the differential run against
+- Each stage ends on its exit epic. For its exit story the lead records the differential run against
   v0.31.2, the CI fixture's wall time and process starts per command, and the lines of bash and
   Python and the `python3` calls that are left. Once the user says go, the lead moves the stable
   ref. At the end of stage 4 those three counts are zero outside the wrappers and `scripts/`.
