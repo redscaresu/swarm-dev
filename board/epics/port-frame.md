@@ -17,6 +17,7 @@ Stage 4 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any new command or setting
 
 **Constraints:**
+- hooks/lead-session.sh goes here, with the bash that sources it (bin/lib/lifecycle.sh, lead_project and lead_rename's workspace label), not in port-hooks (codex).
 - Port rules P1 to P6 and P8. No stage: line.
 - This is the last seam between the two languages. The frame stayed bash, in one copy, while any command was bash (contradiction 15).
 - About 600 lines of bin/swarm.sh are left by now (the header and usage, find_project, load_config's callers, dispatch, timed, main): two or three port stories after one tests-only story.

@@ -19,7 +19,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Port rules P1 to P6 and P8.
 - hooks/ is protected: the user merges every PR that changes a hook file.
 - lead-stop.sh allows the stop on any error (hooks/lead-stop.sh:26,34) and calls `swarm.sh _step`, Go since port-next. agent-state.sh runs under sh and backgrounds `herdr pane report-agent` (hooks/agent-state.sh:6-24).
-- hooks/lead-session.sh is a wrapper since port-agent-starts. It goes when the two hooks that source it are ported.
+- hooks/lead-session.sh is a wrapper since port-agent-starts. It stays after this epic: bin/lib/lifecycle.sh still sources it for lead_project, which lead_rename checks before it labels the lead's workspace, and that stays bash until port-frame. port-frame deletes it (codex).
 - The shim is first on PATH for every swarm.sh call and every agent (bin/swarm.sh:229-233), and it becomes a process start of the binary per gh call: CI's speed fixture counts it. Its log trim is at bin/gh-shim/gh:113-121.
 - Hooks load when a session starts, so an old session keeps the bash hooks until it restarts. Both write the same event lines.
 - The wrappers run on bash 3.2, and agent-state's under sh.
