@@ -349,11 +349,15 @@ the patch gate refuses a patch that carries anything else.
 
 ### Stages
 
-Each stage ends on a `kind: lead` story that the next stage's epics depend on. In it the user
+Each stage ends on an exit epic holding one `kind: lead` story, and the next stage's epics depend on that exit epic. In it the user
 runs the new version on their machines, reads the stage's differential run against v0.31.2 and
 the CI speed figures, and says go. The lead then moves the stable ref. Under the `epics` grant
-every epic goes active at plan time, but each stage's epics depend on the previous stage's exit
-story, so none of them is planned into stories or built until the user has said go at that exit.
+every epic goes active at plan time, but each stage's epics name the previous stage's exit epic
+in `depends_on`. The exit epic is written by the same plan PR, so it exists from the start, and an
+open epic holds its dependants' planning until its stories are done or in review (`dep_holds`,
+`bin/lib/board.sh`). A dependency on the exit story itself would not hold: that story does not
+exist until the exit epic is planned, and a slug that names nothing counts as met. So none of a
+later stage's epics is planned into stories or built until the user has said go at that exit.
 
 | Stage | Ships as | Contents |
 |---|---|---|
@@ -467,8 +471,8 @@ Set by the user on 2026-11-19: `stories` after the review, then `epics` once the
 about 50 epics.
 
 - `epics`: /plan-hld writes the epics `active` and opens the board PR without asking. Each
-  stage's epics depend on the previous stage's exit story, so nothing in a later stage is planned
-  or built before the user says go at the earlier stage's exit.
+  stage's epics depend on the previous stage's exit epic (§ Stages), so nothing in a later stage
+  is planned or built before the user says go at the earlier stage's exit.
 
 - `stories`: /plan-epic writes each epic's stories and opens the board PR without asking. At 80
   to 100 stories the user cannot read each one.
