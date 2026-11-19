@@ -833,8 +833,13 @@ base_accepted_from() {
     END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
-# dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
-# only: it changes nothing on the board, and main logs nothing for it. It stops unless gh lists <head>
+# dropped_lines [--story <slug>] <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits
+# dropped, read only: it changes nothing on the board, and main logs nothing for it. --story names the
+# PR's own story: when the board is in the project's repo and gh names that repo <owner/repo>
+# (origin_repo), dropped_lines.py gets that story's file there (<board>/stories/<slug>.md) as
+# `--own <path>`, and counts no line of it when <head> deletes it, as a story PR does (v0.31.2's holds
+# on #1003, #1006 and #1008, each a line a board PR added to the file). A story PR in another repo, or
+# one gh cannot name the project's repo for, counts that file as any other. It stops unless gh lists <head>
 # among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most 250). Then
 # pr_fetch fetches the PR's head and <base> into refs of this run's own in <owner/repo>'s clone, kept
 # through the scan so git cannot prune what it reads, and deleted on exit by swarm.sh's trap; the
@@ -850,10 +855,16 @@ base_accepted_from() {
 # `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src shas out tip merges m p ver rc=0 keep=() args=()
+  local story="" repo n head base url src shas out tip merges m p ver rc=0 keep=() args=() own=()
   local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+  local usage="dropped-lines: usage: swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <40-character head SHA> <base>"
+  if [[ "${1:-}" == --story ]]; then
+    story="${2:-}"; [[ "${story}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "${usage}"
+    shift 2
+  fi
+  repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}"
   [[ $# -eq 4 && "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "${n}" =~ ^[0-9]+$ && "${head}" =~ ^[0-9a-f]{40}$ \
-     && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"
+     && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "${usage}"
   url="https://github.com/${repo}/pull/${n}"
   shas="$(within "${limit}" gh api --paginate "repos/${repo}/pulls/${n}/commits?per_page=100" --jq '.[].sha' < /dev/null 2>&1)" || rc=$?
   [[ ${rc} -ne 142 ]] || die "dropped-lines: gh did not list ${url}'s commits within ${limit}s"
@@ -869,12 +880,18 @@ dropped_lines() {
   [[ ${#keep[@]} -gt 0 ]] || return 0
   ver="$(remerge_git)" \
     || die "dropped-lines: git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which the scan of ${url}'s merges reads: update git"
+  # The story's file is in the PR's repo only when that repo is the board's (origin_repo); when gh cannot
+  # say, it counts as any other file.
+  if [[ -n "${story}" && ${BOARD_IN_REPO} == 1 ]] && out="$(origin_repo)" \
+     && [[ "${out}" == "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" ]]; then
+    own=(--own "$(board_rel)stories/${story}.md")
+  fi
   args=("${keep[@]}")
   for m in "${keep[@]}"; do
     p="$(merged_parent "${repo}" "${m}")" || die "dropped-lines: ${p}"
     [[ -z "${p}" ]] || args+=(--merged "${p}")
   done
-  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${args[@]}")" || rc=$?
+  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" ${own[@]+"${own[@]}"} "${args[@]}")" || rc=$?
   case ${rc} in
     0) [[ -z "${out}" ]] || echo "${out}" ;;
     1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: dropped_lines.py exited 1 with no dropped line: ${out:-it printed nothing}"
@@ -1008,7 +1025,8 @@ dropped_refs_drop() {
 # another head (the PR moved: the merge, pinned with --match-head-commit, refuses it), and otherwise
 # holds the PR unchecked.
 # Otherwise it runs dropped_lines in a subshell of its own, which exits as swarm.sh dropped-lines does
-# and drops the refs it fetched. An exit 1 with `<sha7> <file>: <text>` lines holds the PR, <n> counting
+# and drops the refs it fetched; on the story route, for a story's file, with --story <slug>, so a line of
+# the story's own file that the PR's head deletes is no drop. An exit 1 with `<sha7> <file>: <text>` lines holds the PR, <n> counting
 # only those lines: `held: <slug> (dropped base lines: <n>, first <file>: <text>); ...`. Any other
 # failure, an exit 1 with no such line too, holds it as `dropped base lines unchecked: <why>`, except a
 # head that moved (refs/pull/<n>/head is another commit, or gh no longer lists the head), which is
@@ -1016,7 +1034,7 @@ dropped_refs_drop() {
 # (dropped_note), and a pass drops the record; --board records nothing, since no item is in review.
 # Either hold's merge line carries hold=dropped-lines; the refusal for a moved head carries none.
 dropped_hold() {
-  local out rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" tmp lines k what now why=""
+  local out rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" tmp lines k what now why="" story=()
   # dropped_lines' two lines for a moved head: the fetched refs/pull/<n>/head, and gh's list.
   local moved_ref='\(refs/pull/[0-9]+/head\) is ([0-9a-f]{40}), not [0-9a-f]{40}: the PR moved'
   local moved_list="^[0-9a-f]{40} is not among .+'s commits as gh lists them: the PR's head moved\$"
@@ -1037,9 +1055,10 @@ dropped_hold() {
   fi
   if [[ -z "${why}" ]]; then
     tmp="$(mktemp "${TMPDIR:-/tmp}/swarm-dropped.XXXXXX")" || merge_fail "cannot make a temp file for the scan of ${url}'s merges"
+    [[ "${f}" != "${BOARD}/stories/"* ]] || story=(--story "${MERGE_TARGET}")
     # In the background, so set -e holds inside it, with swarm.sh dropped-lines' trap: a die exits 2.
     ( DROPPED_FOUND=""; trap 'rc=$?; dropped_refs_drop; [[ ${rc} -eq 0 || -n "${DROPPED_FOUND}" ]] || exit 2' EXIT
-      set -e; dropped_lines "${repo}" "${n}" "${head}" "${base}" ) > "${tmp}" 2> "${tmp}.err" &
+      set -e; dropped_lines ${story[@]+"${story[@]}"} "${repo}" "${n}" "${head}" "${base}" ) > "${tmp}" 2> "${tmp}.err" &
     rc=0; wait $! || rc=$?
     lines="$(grep -E '^[0-9a-f]{7} .+: ' "${tmp}" || true)"
     # The why: its die line, else the last line it printed (dropped_lines.py's reason).

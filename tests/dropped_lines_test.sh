@@ -281,7 +281,7 @@ check "the same merge with --merged naming another commit of the parent's branch
   "merge ${M:0:7} is unchecked: neither parent is on main, so it is not a merge of main (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
   "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr^)")"
 check "a --merged with no SHA after it: the usage line, exit 2" \
-  "usage: dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
+  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
   "$(scan "${R}" main child --merged)"
 # The merge of pr drops six, which main and pr's branch both still hold, and child's clean merge of main
 # keeps it out.
@@ -499,10 +499,59 @@ M="$(printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "$
 check "a dropped line the head holds more copies of than the base, short of what it owes: it prints" \
   "${M:0:7} f: ${OWN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
+# --own <path>, the PR's own story file: a story PR deletes it, and a line the base added to it after the
+# branch was cut (#1002's `fix: true`, which held #1003, #1006 and #1008) goes with the file.
+# story_repo <name> — new_repo <name> with board/stories/s.md and t.md on main before pr branches off; pr
+# deletes s.md and replaces f's three with three-pr, main adds `fix: true` to s.md and t.md and replaces
+# three with three-main and main-added. Leaves pr checked out; prints the repo's path.
+story_repo() {
+  local d; d="$(new_repo "$1")"; mkdir -p "${d}/board/stories"
+  printf '%s\n' 'status: ready' x > "${d}/board/stories/s.md"; printf '%s\n' 'status: ready' y > "${d}/board/stories/t.md"
+  git -C "${d}" add -A; git -C "${d}" commit -qm stories; git -C "${d}" branch -f pr main
+  printf '%s\n' 'status: ready' 'fix: true' x > "${d}/board/stories/s.md"; printf '%s\n' 'status: ready' 'fix: true' y > "${d}/board/stories/t.md"
+  conflict "${d}" three-pr; git -C "${d}" rm -q board/stories/s.md; git -C "${d}" commit -qm 'the story is done'
+  echo "${d}"
+}
+# own_merge <repo> [<file to delete>...] — pr merges main, f resolved to stdin, keeping the deletion of s.md and
+# deleting each file given; prints the merge's SHA
+own_merge() {
+  local d="$1" x; shift
+  git -C "${d}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+  cat > "${d}/f"; for x in board/stories/s.md "$@"; do rm -f "${d}/${x}"; done
+  git -C "${d}" add -A; git -C "${d}" commit -q --no-edit; git -C "${d}" rev-parse HEAD
+}
+R="$(story_repo ownstory)"; M="$(lines three-pr three-main main-added | own_merge "${R}")"
+check "own story file: the head deletes it, a line main added to it is no drop with --own: exit 0" \
+  "exit 0" "$(scan "${R}" main pr --own board/stories/s.md)"
+check "own story file: the same with no --own (a PR with no story): the line prints, exit 1" \
+  "${M:0:7} board/stories/s.md: fix: true"$'\n'"exit 1" "$(scan "${R}" main pr)"
+check "own story file: --own naming another story's file: the line prints, exit 1" \
+  "${M:0:7} board/stories/s.md: fix: true"$'\n'"exit 1" "$(scan "${R}" main pr --own board/stories/t.md)"
+R="$(story_repo ownother)"; M="$(lines three-pr three-main | own_merge "${R}")"
+check "own story file deleted, and the merge drops a base line of another file: that line prints, exit 1" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main pr --own board/stories/s.md)"
+R="$(story_repo ownt)"; M="$(lines three-pr three-main main-added | own_merge "${R}" board/stories/t.md)"
+check "own story file deleted, and the merge deletes another story's file: each of its base lines prints, exit 1" \
+  "${M:0:7} board/stories/t.md: status: ready"$'\n'"${M:0:7} board/stories/t.md: fix: true"$'\n'"${M:0:7} board/stories/t.md: y"$'\n'"exit 1" \
+  "$(scan "${R}" main pr --own board/stories/s.md)"
+# The head keeps its own story file: pr changes s.md's status, main adds `fix: true` below it, and the
+# resolution keeps pr's status alone.
+R="$(new_repo ownkept)"; mkdir -p "${R}/board/stories"; printf '%s\n' 'status: ready' x | put "${R}" board/stories/s.md
+git -C "${R}" branch -f pr main; printf '%s\n' 'status: ready' 'fix: true' x | put "${R}" board/stories/s.md
+on "${R}" pr; printf '%s\n' 'status: review' x | put "${R}" board/stories/s.md
+git -C "${R}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+printf '%s\n' 'status: review' x > "${R}/board/stories/s.md"; git -C "${R}" add -A; git -C "${R}" commit -q --no-edit
+M="$(git -C "${R}" rev-parse HEAD)"
+check "own story file kept by the head, a base line of it dropped: it prints with --own, exit 1" \
+  "${M:0:7} board/stories/s.md: fix: true"$'\n'"exit 1" "$(scan "${R}" main pr --own board/stories/s.md)"
+check "an --own with no path after it: the usage line, exit 2" \
+  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
+  "$(scan "${R}" main pr --own)"
+
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
-# commits (${tmp}/commits.json) and the PRs that hold a commit (${tmp}/pulls.json, a 404 while it is
-# absent), honouring --jq, and logs each call.
+# commits (${tmp}/commits.json), the PRs that hold a commit (${tmp}/pulls.json) and repo view's name for P's
+# origin (${tmp}/origin.json), each a 404 while its file is absent, honouring --jq, and logs each call.
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "${tmp}" && pwd -P)"; O="${ROOT}/acme/widget.git"; P="${ROOT}/widget"; URL7=https://github.com/acme/widget/pull/7
 mkdir -p "${ROOT}/acme" "${ROOT}/bin" "${ROOT}/oldgit"; git init -q --bare "${O}"
@@ -512,6 +561,7 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 q="."; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
 case "$*" in
   *"/pulls/7/commits"*) jq -r "${q}" "${FX}/commits.json" ;;
+  "repo view"*) [ -f "${FX}/origin.json" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }; cat "${FX}/origin.json" ;;
   *"/commits/"*"/pulls"*) [ -f "${FX}/pulls.json" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
                           jq -r "${q}" "${FX}/pulls.json" ;;
   *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
@@ -544,11 +594,12 @@ pull() {
 }
 
 # dl <head> [<owner/repo>] — swarm.sh dropped-lines <owner/repo> (acme/widget) 7 <head> main, its stdout
-# and stderr, then `exit <code>`; GITPATH, when set, goes first on PATH.
+# and stderr, then `exit <code>`; GITPATH, when set, goes first on PATH, and DL_STORY, when set, is passed
+# as --story <DL_STORY>.
 dl() {
   local out rc=0
   out="$(cd "${P}" && env -u HERDR_ENV SWARM_PROJECT="${P}" PATH="${GITPATH:+${GITPATH}:}${ROOT}/bin:${PATH}" \
-    bash "${SWARM}" dropped-lines "${2:-acme/widget}" 7 "$1" main 2>&1)" || rc=$?
+    bash "${SWARM}" dropped-lines ${DL_STORY:+--story "${DL_STORY}"} "${2:-acme/widget}" 7 "$1" main 2>&1)" || rc=$?
   printf '%sexit %s' "${out:+${out}$'\n'}" "${rc}"
 }
 
@@ -582,7 +633,10 @@ check "dropped-lines: a recorded base-merged update, refs/pull/7/head another co
 check "dropped-lines: a repo whose origin is not <owner/repo>: exit 2 naming both" \
   "swarm: dropped-lines: ${P}'s origin is ${O} (acme/widget), not elsewhere/widget"$'\n'"exit 2" "$(dl "${DROP}" elsewhere/widget)"
 check "dropped-lines: a die (a head that is no SHA) exits 2, not 1" \
-  "swarm: dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"$'\n'"exit 2" "$(dl nothex)"
+  "swarm: dropped-lines: usage: swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <40-character head SHA> <base>"$'\n'"exit 2" "$(dl nothex)"
+check "dropped-lines: a --story that is no slug: the usage line, exit 2" \
+  "swarm: dropped-lines: usage: swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <40-character head SHA> <base>"$'\n'"exit 2" \
+  "$(DL_STORY=../s dl "${DROP}")"
 # A stop before merge.sh is sourced: outside any swarm project, the EXIT trap has no dropped_refs_drop.
 check "dropped-lines: outside a swarm project, a stop at startup exits 2 with only its own line" \
   "swarm: not in a swarm project: no .claude/swarm/config above here and not in a git repo"$'\n'"exit 2" \
@@ -627,5 +681,27 @@ rm -f "${ROOT}/pulls.json"
 check "dropped-lines: the same, gh failing on that list: exit 2 naming the merge" \
   "swarm: dropped-lines: gh cannot list the PRs that hold ${PAR:0:7}, merge ${PM:0:7}'s second parent: gh: Not Found (HTTP 404)"$'\n'"exit 2" \
   "$(dl "${KID}")"
+
+# --story <slug>: P's board is docs/ (the default), in P's own repo. On W, main gains docs/stories/s.md,
+# story branch own (off main) deletes it, main adds `fix: true` to it, and own's merge of main keeps the
+# deletion (OWNM).
+on "${W}" main; mkdir -p "${W}/docs/stories"; printf '%s\n' 'status: ready' x | put "${W}" docs/stories/s.md
+git -C "${W}" checkout -q -b own main; git -C "${W}" rm -q docs/stories/s.md; git -C "${W}" commit -qm 'the story is done'
+on "${W}" main; printf '%s\n' 'status: ready' 'fix: true' x | put "${W}" docs/stories/s.md; git -C "${W}" push -q "${O}" main
+on "${W}" own; git -C "${W}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+rm -f "${W}/docs/stories/s.md"; git -C "${W}" add -A; git -C "${W}" commit -q --no-edit; OWNM="$(git -C "${W}" rev-parse HEAD)"
+pull "${OWNM}"; echo '{"nameWithOwner":"acme/widget"}' > "${ROOT}/origin.json"
+check "dropped-lines --story s: the head deletes docs/stories/s.md, main's new line in it is no drop: exit 0" \
+  "exit 0" "$(DL_STORY=s dl "${OWNM}")"
+check "dropped-lines with no --story (a board or lead PR): the same line prints, exit 1" \
+  "${OWNM:0:7} docs/stories/s.md: fix: true"$'\n'"exit 1" "$(dl "${OWNM}")"
+check "dropped-lines --story t, another story: the same line prints, exit 1" \
+  "${OWNM:0:7} docs/stories/s.md: fix: true"$'\n'"exit 1" "$(DL_STORY=t dl "${OWNM}")"
+echo '{"nameWithOwner":"acme/board"}' > "${ROOT}/origin.json"
+check "dropped-lines --story s, the PR's repo not the board's (gh names P's origin acme/board): the line prints, exit 1" \
+  "${OWNM:0:7} docs/stories/s.md: fix: true"$'\n'"exit 1" "$(DL_STORY=s dl "${OWNM}")"
+rm -f "${ROOT}/origin.json"
+check "dropped-lines --story s, gh unable to name P's repo: the line prints, exit 1" \
+  "${OWNM:0:7} docs/stories/s.md: fix: true"$'\n'"exit 1" "$(DL_STORY=s dl "${OWNM}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

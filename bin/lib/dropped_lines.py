@@ -1,7 +1,7 @@
 import re, subprocess, sys
 from collections import Counter
 
-# dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...] — the base lines a PR's
+# dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...] — the base lines a PR's
 # own merge commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
 # <base>..<head>`, oldest first, and with merge SHAs given scans only those (full SHAs, matched
 # exactly). Each merge must have two parents, one an ancestor of <base> (the base side) and one not
@@ -74,6 +74,10 @@ from collections import Counter
 # events.tsv, state files and panes, as ci_data's lines do), and exits 1; with nothing dropped, it
 # prints nothing and exits 0. When it cannot check, it prints one line on stdout saying why and exits
 # 2, before printing any dropped line.
+# With --own <path>, the PR's own story file (merge.sh's dropped_lines), no line of that file prints when
+# <head> has no file at <path>: a story PR deletes its own story file, so a line the base added to it
+# after the branch was cut (a board PR setting a field) is gone with the file, not dropped. A head that
+# keeps the file counts its lines as any other file's.
 
 TEXT_CHARS = 300   # the most of a dropped line's text it prints (merge.sh's FIX_MAIN_LINE_CHARS)
 GIT_SECONDS = 120  # the longest one git call may run
@@ -304,7 +308,7 @@ def scan(m, pr, base_side, ours):
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
     counts = {}  # (file, text): its name in the merge, the merge's copies of text, those the PR side had removed
     for path, after, section, text in removed(out):
-        if not text.strip() or section not in (OUTSIDE, ours):
+        if not text.strip() or section not in (OUTSIDE, ours) or (OWN_GONE and OWN in (path, after)):
             continue
         base = copies(base_side, path, after)
         if base is None:
@@ -368,13 +372,19 @@ def extended(left, found):
             pool[head] -= 1
     return lines
 
-USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--merged <sha>]... [<merge sha>...]"
+USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"
 if len(sys.argv) < 4:
     stop(USAGE)
 REPO, BASE, HEAD = sys.argv[1:4]
 MERGED, wanted, rest = set(), set(), iter(sys.argv[4:])   # MERGED: second parents on a merged PR's branch
+OWN = None   # --own: the PR's own story file, as bytes, which removed() yields
 for arg in rest:
-    if arg == "--merged":
+    if arg == "--own":
+        own = next(rest, None)
+        if not own:
+            stop(USAGE)
+        OWN = own.encode()
+    elif arg == "--merged":
         sha = next(rest, None)
         if sha is None:
             stop(USAGE)
@@ -385,6 +395,12 @@ rc, out, err = git("rev-list", "--first-parent", "--merges", "--reverse", "--end
 if rc != 0:
     stop("cannot list the merges in %s..%s: %s" % (BASE, HEAD, err))
 merges = [m for m in out.decode().split() if not wanted or m in wanted]
+OWN_GONE = False   # whether <head> has no file at OWN, so its lines do not print
+if OWN is not None:
+    rc, out, err = git("--literal-pathspecs", "ls-tree", "--name-only", "-z", "--end-of-options", HEAD, "--", OWN)
+    if rc != 0:
+        stop("cannot tell whether %s has %s: %s" % (HEAD[:7], clean(OWN), err))
+    OWN_GONE = not out
 checks = [(m,) + sides(m, BASE) for m in merges]   # every merge is checkable before any line prints
 MERGE_BASE = None   # git merge-base <base> <head>: None with no common ancestor
 if checks:
