@@ -5,7 +5,7 @@ depends_on: []
 stage: v0.32.0
 ---
 
-# Before any Go lands, the merge holds and the release gates know the Go tree, and the user merges both PRs that teach them
+# Before any Go lands, the merge holds and the release gates know the Go tree, and the user merges the three PRs that teach them
 
 From v0.32.0, in swarm-dev's own repo, a PR that touches the Go package for the guard, merge, the release gates or the agents' environment, or `.claude-plugin/`, is held for the user. The docs gate counts the Go tree. The patch gate passes a tests-only PR and a `port: true` story's PR.
 
@@ -21,7 +21,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Constraints:**
 - stage: v0.32.0. The protected-paths story is the first story of the whole plan, and every other epic depends on this one, directly or through another (HLD:295).
-- The swarm runs the installed v0.31.2 until v0.32.0 is installed, so nothing this epic changes can hold a stage 1 PR. These two PRs are held by v0.31.2's own rule: with merge = human and no merge grant, `swarm.sh merge` refuses and the review agent hands the PR to the user (bin/lib/merge.sh:415-417; .claude/swarm/config:6). No dependent epic starts before both are merged and merge = agent is back. This resolves contradiction 6.
+- The swarm runs the installed v0.31.2 until v0.32.0 is installed, so nothing this epic changes can hold a stage 1 PR. These three PRs are held by v0.31.2's own rule: with merge = human and no merge grant, `swarm.sh merge` refuses and the review agent hands the PR to the user (bin/lib/merge.sh:415-417; .claude/swarm/config:6). No dependent epic starts before both are merged and merge = agent is back. This resolves contradiction 6.
 - The new paths hold only in the plugin's own repo (plugin_repo, bin/lib/merge.sh:2698). protected_paths' one regex holds its paths in every repo the plugin runs on, and pr_hld reads the same list (bin/lib/board.sh:2455-2464,2505), so adding to it would change other boards.
 - The first story fixes the four package paths (for example internal/guard, internal/merge, internal/release, internal/agentenv) and names cmd/, internal/ and go.mod for the docs gate. Later epics may not move them. The guard's parser, the environment allowlist, the gates and merge's decisions must live under them; go-layers checks their imports.
 - The gate reads `port:` and the tests/ entries of the story's touches at the base the PR merged onto, as it reads `fix:` today (bin/lib/board.sh:1558-1572), never from the PR's own commits or the checkout.
@@ -32,9 +32,9 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Your part:**
 - Lead: cut the last v0.31.x patch before the first PR merges, with the dropped-lines fix in it (story dropped-lines-own-story-file, outside this plan; HLD:76-78). None can ship after that merge until v0.32.0, and the swarm runs the installed version, so a fix that misses the patch holds stage 1's PRs falsely until then.
-- Lead: once the epic's board PR has merged and before its first build starts, set merge = human in .claude/swarm/config; set it back to agent once both PRs are merged. .claude/ is a protected path, so you merge those two small PRs too. PRs of the old active epics also wait on you meanwhile.
-- You merge both PRs (HLD:297-298).
-- Carve-out (HLD:480-485): both stories are listed, since they change merge's holds and the release gates. You clear them on the board PR.
+- Lead: once the epic's board PR has merged and before its first build starts, set merge = human in .claude/swarm/config; set it back to agent once all three code PRs are merged. .claude/ is a protected path, so you merge those two small PRs too. PRs of the old active epics also wait on you meanwhile.
+- You merge the three code PRs (HLD:297-298): protected-go-paths, docs-gate-go and patch-gate-port. The release gates were split in two so that each PR changes one behaviour.
+- Carve-out (HLD:480-485): all three code stories are listed, since they change merge's holds and the release gates. You clear them on the board PR.
 
 **Areas:**
 - bin/lib/board.sh (protected_paths, pr_hld, non_fix_change)
