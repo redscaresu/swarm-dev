@@ -3,6 +3,7 @@ title: swarm-dev v0.32: Go rewrite
 date: 2026-11-18
 status: agreed
 grants: [epics, stories]
+planned: 2026-11-19
 ---
 
 # swarm-dev v0.32: Go rewrite
@@ -558,3 +559,57 @@ The machine spike is answered, on both of the user's Macs (2026-11-19, from the 
    the whole machine runs the prerelease. The lead may try it in stage 1.
 
 ## Epics
+
+- [ship-gates](../epics/ship-gates.md)
+- [go-module](../epics/go-module.md)
+- [port-inventory](../epics/port-inventory.md)
+- [port-checks](../epics/port-checks.md)
+- [go-layers](../epics/go-layers.md)
+- [binary-wrapper](../epics/binary-wrapper.md)
+- [release-ci](../epics/release-ci.md)
+- [binary-fetch](../epics/binary-fetch.md)
+- [release-client](../epics/release-client.md)
+- [first-port](../epics/first-port.md)
+- [foundation-exit](../epics/foundation-exit.md)
+- [board-store](../epics/board-store.md)
+- [helpers-shared](../epics/helpers-shared.md)
+- [helpers-ci-gate](../epics/helpers-ci-gate.md)
+- [helpers-dropped-lines](../epics/helpers-dropped-lines.md)
+- [helpers-flow-queues](../epics/helpers-flow-queues.md)
+- [helpers-panes](../epics/helpers-panes.md)
+- [helpers-reports](../epics/helpers-reports.md)
+- [helpers-flow-reviews](../epics/helpers-flow-reviews.md)
+- [helpers-dash](../epics/helpers-dash.md)
+- [port-board-readers](../epics/port-board-readers.md)
+- [port-reports](../epics/port-reports.md)
+- [port-release-gates](../epics/port-release-gates.md)
+- [port-next](../epics/port-next.md)
+- [port-lead-queue-prs](../epics/port-lead-queue-prs.md)
+- [port-lead-queue-agents](../epics/port-lead-queue-agents.md)
+- [port-status](../epics/port-status.md)
+- [port-dash](../epics/port-dash.md)
+- [readers-exit](../epics/readers-exit.md)
+- [port-wait-agent](../epics/port-wait-agent.md)
+- [port-wait-pr](../epics/port-wait-pr.md)
+- [port-agent-starts](../epics/port-agent-starts.md)
+- [port-board-pr](../epics/port-board-pr.md)
+- [port-board-writers](../epics/port-board-writers.md)
+- [port-release](../epics/port-release.md)
+- [port-tell](../epics/port-tell.md)
+- [port-story](../epics/port-story.md)
+- [port-close](../epics/port-close.md)
+- [port-merge-base](../epics/port-merge-base.md)
+- [port-reconcile](../epics/port-reconcile.md)
+- [port-review-agent](../epics/port-review-agent.md)
+- [port-conduct](../epics/port-conduct.md)
+- [port-step-up](../epics/port-step-up.md)
+- [port-merge](../epics/port-merge.md)
+- [port-lead-wait](../epics/port-lead-wait.md)
+- [port-upgrade](../epics/port-upgrade.md)
+- [lead-wait-fixes](../epics/lead-wait-fixes.md)
+- [port-guard](../epics/port-guard.md)
+- [port-hooks](../epics/port-hooks.md)
+- [loop-exit](../epics/loop-exit.md)
+- [port-frame](../epics/port-frame.md)
+- [bash-retired](../epics/bash-retired.md)
+- [retire-exit](../epics/retire-exit.md)
