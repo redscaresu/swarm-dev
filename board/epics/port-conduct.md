@@ -17,6 +17,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Changing a brief's text, or how codex is called
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/epic_codex_test.sh, tests/pr_removes_story_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P8.
 - codex stays a subprocess found on PATH.
 - codex-review kills by PID only the tree it started (kill_tree, bin/swarm.sh:784).

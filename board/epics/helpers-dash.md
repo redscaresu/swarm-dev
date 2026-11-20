@@ -15,6 +15,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any change to what dash shows, or to its speed (HLD:90)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/lib_path_test.sh, tests/port_sites_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - dash_render.py is 1,060 lines in one module and imports panes, stall, report, events_outcome, clock, dash_age and dash_legend. It is one unit over the 300-line cap: its Go lands first as code dash does not run, in stories under the cap with Go tests, and the last story switches dash to it and deletes the Python (contradiction 18).
 - stall.py, dash_age.py and dash_legend.py are on no exception list (HLD:278-281), and dash_render.py imports all three. So none may run as Go while dash_render.py still runs. Their Go lands unrun beside dash_render's, and the one switch story moves dash, the three inline sites and stall_py's bash entry together and deletes those files and panes.py: contradiction 24.
