@@ -49,15 +49,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Put macOS's bash 3.2 first on PATH
-        if: steps.gate.outputs.board_only != 'true'
-        # PATH takes directories, so /bin/bash gets one of its own, ahead of the runner's Homebrew bash 5.
-        # $GITHUB_PATH puts it first for every later step: make test runs `bash scripts/test.sh`, and each
-        # test starts with #!/usr/bin/env bash.
-        run: |
-          mkdir "${RUNNER_TEMP}/bash32"
-          ln -s /bin/bash "${RUNNER_TEMP}/bash32/bash"
-          echo "${RUNNER_TEMP}/bash32" >> "${GITHUB_PATH}"
       - name: Run the Go tests
         if: steps.gate.outputs.board_only != 'true'
         run: go test ./...

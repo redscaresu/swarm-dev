@@ -46,7 +46,7 @@ build() { # <dir>
   for p in ${PLATFORMS}; do
     name="$(asset "${p}")"
     echo "build: ${p} -> ${out}/${name}" >&2
-    if ! CGO_ENABLED=0 GOOS="${p%/*}" GOARCH="${p#*/}" go build -o "${out}/${name}" ./cmd/swarm; then
+    if ! CGO_ENABLED=0 GOOS="${p%/*}" GOARCH="${p#*/}" go build -trimpath -o "${out}/${name}" ./cmd/swarm; then
       echo "build: ${p} failed; no ${CHECKSUMS} written" >&2
       return 1
     fi
