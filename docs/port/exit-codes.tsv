@@ -121,7 +121,7 @@ outcomes	0	the rows printed	bin/swarm.sh:main	tests/outcomes_test.sh
 outcomes	1	bad --since, no agents log or the logs could not be read; says why	bin/lib/reports.sh:outcomes_report	none
 plan-unasked	0	the later epic was marked planned unasked	bin/swarm.sh:main	none
 plan-unasked	1	more than one epic, no such epic, or the epic is not later	bin/lib/board.sh:plan_unasked	tests/next_test.sh
-policy	0	printed the model and effort for the role	bin/swarm.sh:main	none
+policy	0	printed the model and effort for the role	bin/swarm.sh:main	tests/roles_test.sh
 policy	1	the role is not a known one; lists the roles	bin/swarm.sh:policy	none
 reconcile	0	the board state was brought in line with the PRs	bin/swarm.sh:main	tests/epic_reconcile_test.sh,tests/reconcile_pull_test.sh
 reconcile	1	cannot create the .swarm folder	bin/lib/board.sh:reconcile	none
