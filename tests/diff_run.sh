@@ -22,10 +22,15 @@
 #   FX_CWD    the command's cwd (default ROOT)
 #   FX_GH, FX_HERDR  an executable that answers the gh or herdr shim's calls, such as the gh stub
 #             tests/merge_fixture.sh writes; with none, every call is unanswered
+#   FX_CALLS  the calls the command must make, each a "<tool> <args>" prefix of a calls:fg line as
+#             compared (such as "herdr agent list"); a tree's run that makes one of them in no line is
+#             red (MISSING), so a command that exits early in both trees cannot pass by making no call
+#             in either. A fixture that rightly makes no call names none.
 #
 # The command runs under env -i with only PATH, HOME, LANG, LC_ALL, TERM, USER, LOGNAME,
-# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), TMPDIR=ROOT/tmp and
-# CLAUDE_CONFIG_DIR=ROOT/claude-config, then FX_ENV, then three FX_ENV cannot override: PATH with the
+# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), TMPDIR=ROOT/tmp,
+# CLAUDE_CONFIG_DIR=ROOT/claude-config and CLAUDE_PLUGIN_ROOT=TREE (as Claude Code sets it for a hook
+# hooks/hooks.json runs), then FX_ENV, then three FX_ENV cannot override: PATH with the
 # shims first (before FX_ENV's PATH when it sets one), GH_CONFIG_DIR an empty directory, and
 # HERDR_BIN_PATH. So no GH_TOKEN or GITHUB_TOKEN of the caller's reaches it. It leads a process
 # group of its own; once it exits, the run waits up to --bound seconds for every other process in the
@@ -34,6 +39,8 @@
 # herdr one. Each logs its call, then runs FX_GH or FX_HERDR; with none, it says so on stderr and
 # exits 1. Neither ever runs a gh or herdr found on PATH, and a shim called again from inside a stub
 # (or from itself) refuses the call the same way, so no stub can loop back through it.
+# SWARM_FORBID_PROJECT, the checkout make test runs from, never names a fixture's project, since each
+# fixture root is a new directory, so a hook writes its events.tsv line there under make test too.
 #
 # Streams compared, each after the replacements and masks below:
 #   stdout, stderr, exit  the command's
@@ -49,11 +56,14 @@
 # each of a fixed shape: an ISO time stamp (2026-11-20T09:30:00Z) becomes <time>; a pid after "pid ",
 # "pid=" or "pid:", and the content of a file named pid, <pid>; a mktemp suffix after tmp. or
 # swarm-<name>. (bin/lib/merge.sh's names) <tmp>; and, in .swarm/run-times.tsv, the seconds column
-# (1.234) <seconds> and the load column (0.52, or -) <load>. A value of another shape is left as it is.
+# (1.234) <seconds> and the load column (0.52, or -) <load>; and in a calls stream, a herdr call's
+# value after --seq of 19 digits (agent-state.sh's time.time_ns()) <seq>. A value of another shape is
+# left as it is.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
-# diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
-# (RUNAWAY <fixture> ...) or --timeout (TIMEOUT <fixture> ...), and 2 on a bad argument or a
+# diff for each), a run did not make a named call (MISSING <fixture> ...), a process outlived the
+# bound (STUCK <fixture> ...), or a group passed --max-procs (RUNAWAY <fixture> ...) or --timeout
+# (TIMEOUT <fixture> ...), and 2 on a bad argument or a
 # fixture that fails to build on either tree (BUILD-FAIL <fixture> ... and its output).
 set -euo pipefail
 
@@ -169,8 +179,9 @@ written() {
   done | LC_ALL=C sort | while IFS=$'\t' read -r _ _ rec; do cat "${rec}"; done
 }
 
-# normalize <tree> <tree as given> <run dir> <version> [file] — stdin with the replacements and masks
-# above; with [file], stdin is that file's content, and its own masks apply.
+# normalize <tree> <tree as given> <run dir> <version> [file|stream] — stdin with the replacements and
+# masks above; with [file], stdin is that file's content, and its own masks apply; with a calls:<name>
+# stream, so do a call's.
 normalize() {
   DR_T="$1" DR_TL="$2" DR_R="$3/root" DR_D="$3" DR_V="$4" DR_F="${5-}" perl -pe '
     BEGIN { @r = sort { length($b->[0]) <=> length($a->[0]) } grep { length $_->[0] }
@@ -181,6 +192,7 @@ normalize() {
     s/\bpid([ =:])\d+\b/pid$1<pid>/g;
     s/\b(tmp|swarm-[a-z]+(?:-[a-z]+)*)\.[A-Za-z0-9]{6,}\b/$1.<tmp>/g;
     if ($f =~ m{/pid$}) { s/^\d+$/<pid>/ }
+    if ($f =~ /^calls:/ && /^herdr /) { s/(?<= --seq )\d{19}(?=\s|$)/<seq>/g }
     if ($f =~ m{/\.swarm/run-times\.tsv$}) {
       $nl = chomp; @c = split /\t/, $_, -1;
       $c[2] = "<seconds>" if @c > 2 && $c[2] =~ /^\d+\.\d{3}$/;
@@ -226,11 +238,11 @@ SHIM
 build() {
   # shellcheck disable=SC2034 # the fixture reads ROOT and TREE
   ROOT="$2" TREE="$3"
-  FX_CMD=(); FX_ENV=(); FX_STDIN=/dev/null; FX_CWD="$2"; FX_GH=""; FX_HERDR=""
+  FX_CMD=(); FX_ENV=(); FX_STDIN=/dev/null; FX_CWD="$2"; FX_GH=""; FX_HERDR=""; FX_CALLS=()
   cd "$2"
   "fx_$1"
   [[ ${#FX_CMD[@]} -gt 0 ]] || { echo "fx_$1 set no FX_CMD" >&2; return 1; }
-  declare -p FX_CMD FX_ENV FX_STDIN FX_CWD FX_GH FX_HERDR > "$4"
+  declare -p FX_CMD FX_ENV FX_STDIN FX_CWD FX_GH FX_HERDR FX_CALLS > "$4"
 }
 
 # watch_group <pid> <meta> — count <pid>'s group every 0.2 s while it has a member: past MAX_PROCS,
@@ -256,10 +268,10 @@ watch_group() {
 }
 
 # run_one <fixture> <a|b> — build and run <fixture> against tree <a|b>, leaving its streams in
-# ${WORK}/<fixture>.<a|b>/out/. Returns 2 when the build failed, 3 when a process outlived the bound
-# or watch_group killed the group.
+# ${WORK}/<fixture>.<a|b>/out/. Returns 2 when the build failed, 3 when a process outlived the bound,
+# watch_group killed the group or a named call was not made.
 run_one() {
-  local fx="$1" side="$2" tree tree_l dir root meta pid kind why rc=0 left="" i s v base_path envs=() FX_CMD FX_ENV FX_STDIN FX_CWD FX_GH FX_HERDR
+  local fx="$1" side="$2" tree tree_l dir root meta pid kind why rc=0 left="" i s v base_path missing="" envs=() FX_CMD FX_ENV FX_STDIN FX_CWD FX_GH FX_HERDR FX_CALLS
   if [[ "${side}" == a ]]; then tree="${TREE_A}" tree_l="${TREE_A_L}"; else tree="${TREE_B}" tree_l="${TREE_B_L}"; fi
   dir="${WORK}/${fx}.${side}"; root="${dir}/root"; meta="${dir}/meta"
   mkdir -p "${root}" "${meta}/shims" "${meta}/gh-config" "${dir}/out"
@@ -283,7 +295,7 @@ run_one() {
   base_path="${PATH}"
   for v in ${FX_ENV[@]+"${FX_ENV[@]}"}; do [[ "${v}" != PATH=* ]] || base_path="${v#PATH=}"; done
   for v in ${PASS_ENV}; do [[ -z "${!v+x}" ]] || envs+=("${v}=${!v}"); done
-  envs+=("TMPDIR=${root}/tmp" "CLAUDE_CONFIG_DIR=${root}/claude-config" ${FX_ENV[@]+"${FX_ENV[@]}"}
+  envs+=("TMPDIR=${root}/tmp" "CLAUDE_CONFIG_DIR=${root}/claude-config" "CLAUDE_PLUGIN_ROOT=${tree}" ${FX_ENV[@]+"${FX_ENV[@]}"}
     "PATH=${meta}/shims:${base_path}" "GH_CONFIG_DIR=${meta}/gh-config" "HERDR_BIN_PATH=${meta}/shims/herdr")
   snapshot "${root}" > "${meta}/before"
   # A background job starts with INT and QUIT ignored; perl puts them back, writes its pid (the group's
@@ -312,7 +324,12 @@ run_one() {
   v="$(version_of "${tree}")"
   written "${meta}/before" "${meta}/after" "${tree}" "${tree_l}" "${dir}" "${v}" > "${dir}/out/files"
   for s in ${STREAMS}; do
-    [[ "${s}" == files ]] || normalize "${tree}" "${tree_l}" "${dir}" "${v}" < "${meta}/${s}" > "${dir}/out/${s}"
+    [[ "${s}" == files ]] || normalize "${tree}" "${tree_l}" "${dir}" "${v}" "${s}" < "${meta}/${s}" > "${dir}/out/${s}"
+  done
+  # Each named call is the whole of a compared line, or that line's start up to a space.
+  for v in ${FX_CALLS[@]+"${FX_CALLS[@]}"}; do
+    awk -v c="${v}" '$0 == c || index($0, c " ") == 1 { f = 1 } END { exit !f }' "${dir}/out/calls:fg" && continue
+    echo "MISSING ${fx} (${side}): no call '${v}' in calls:fg"; missing=1
   done
   if [[ -n "${KEEP}" ]]; then mkdir -p "${KEEP}/${fx}/${side}" && cp "${dir}/out/"* "${KEEP}/${fx}/${side}/"; fi
   if [[ -s "${meta}/killed" ]]; then
@@ -321,6 +338,7 @@ run_one() {
   [[ ! -s "${meta}/stuck" ]] || {
     while IFS= read -r v; do echo "STUCK ${fx} (${side}): still running ${BOUND}s after the command exited: ${v}"; done < "${meta}/stuck"
     return 3; }
+  [[ -z "${missing}" ]] || return 3
 }
 
 echo "a: ${TREE_A}"
