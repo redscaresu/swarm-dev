@@ -837,7 +837,8 @@ else echo "FAIL an also: line with no blocked story depending on the lead story:
 # release: a fixture repo whose origin/HEAD is main, plugin.json says 1.2.0 and the local tag v1.2.0
 # is on origin/main; each setup runs after the tag, then the repo is pushed and fetched. herdr=1 runs
 # next with a stub herdr listing a working conductor. release_repo leaves the repo in rdir.
-# REL_GH's gh stands in for GitHub: repo view names o/r, and pr list --state merged lists one merged PR
+# REL_GH's gh stands in for GitHub: repo view names o/r (or the repo its nwo file names: OWN, a setup
+# step, below), and pr list --state merged lists one merged PR
 # per line of REL_PRS (<commit> <head>, numbered from 1). release_repo starts it with the tag's commit
 # as release/v1.2.0's merge (non_fix_change reads the first change's story at that base), and
 # merged_as adds to it. Any other call fails, as offline.
@@ -845,7 +846,7 @@ REL_GH="${STUB_BIN}/rel-gh"; REL_PRS="${REL_GH}/prs"; mkdir -p "${REL_GH}"
 cat > "${REL_GH}/gh" <<'GH'
 #!/bin/sh
 case "$1 $2" in
-  "repo view") echo '{"nameWithOwner":"o/r"}'; exit 0 ;;
+  "repo view") printf '{"nameWithOwner":"%s"}\n' "$(cat "$(dirname "$0")/nwo" 2>/dev/null || echo o/r)"; exit 0 ;;
   "pr list") case "$*" in *"--state merged"*)
     exec awk 'BEGIN { printf "[" } { printf "%s{\"number\":%d,\"headRefName\":\"%s\",\"mergeCommit\":{\"oid\":\"%s\"}}", (NR > 1 ? "," : ""), NR, $2, $1 } END { print "]" }' "$(dirname "$0")/prs" ;;
   esac ;;
@@ -855,7 +856,7 @@ GH
 chmod +x "${REL_GH}/gh"
 release_repo() { # <setup>...
   rdir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
-  : > "${REL_PRS}"
+  : > "${REL_PRS}"; rm -f "${REL_GH}/nwo"
   (
     cd "${rdir}" && git init -q && git init -q --bare origin.git && git remote add origin "${rdir}/origin.git"
     printf 'origin.git\n' > .git/info/exclude
@@ -1019,6 +1020,104 @@ expect_release "a board outside the repo: retro v1.3.0" "retro v1.3.0" 0 \
 rm -rf "${EXT_REL}"
 if [[ "${out}" == *"the board is outside the repo, so merge --release cannot read a retro file there: merge the release PR yourself"* ]]; then echo "ok   a board outside the repo: the why says to merge the release PR by hand"
 else echo "FAIL a board outside the repo: the why does not say to merge the release PR by hand: ${out}"; fails=$((fails + 1)); fi
+
+# The patch gate in the plugin's own repo (plugin.json's repository, which OWN makes the stub's repo view
+# name): there a change whose whole diff is under tests/, and one from a port: true story whose tests/
+# files are all in its touches at the base, are fixes too. In o/r the rule is as above.
+OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${SWARM%/bin/swarm.sh}/.claude-plugin/plugin.json")"
+OWN="echo '${OWN_REPO}' > '${REL_GH}/nwo'"
+BIN="echo x > bin/x"; TESTS_A="mkdir -p tests && echo x > tests/a_test.sh"; TESTS_B="mkdir -p tests && echo x > tests/b_test.sh"
+FIXMAIN="${COMMIT} && echo \"\$(git rev-parse HEAD) story/fix-main-abc1234\" >> '${REL_PRS}'"
+# planned <slug> [<front-matter line>]... — a setup step: write docs/stories/<slug>.md (kind: code, then
+# those lines) and commit it alone, as board/plan-<slug>'s merge: the base its story PR merges onto.
+planned() {
+  local s="$1" g=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false); shift
+  mkdir -p docs/stories
+  { echo ---; echo 'kind: code'; [[ $# -eq 0 ]] || printf '%s\n' "$@"; echo ---; } > "docs/stories/${s}.md"
+  "${g[@]}" add "docs/stories/${s}.md" && "${g[@]}" commit -q -m "Plan ${s}"
+  echo "$(git rev-parse HEAD) board/plan-${s}" >> "${REL_PRS}"
+}
+# story_pr <slug> — a setup step: commit everything the setup changed since as story/<slug>'s merge.
+story_pr() {
+  local g=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false)
+  "${g[@]}" add -A && "${g[@]}" commit -q -m "Merge story/$1"
+  echo "$(git rev-parse HEAD) story/$1" >> "${REL_PRS}"
+}
+# own_patch <name> <setup>... — in the plugin's own repo, next prints a bare release whose why names the patch.
+own_patch() {
+  local name="$1"; shift
+  expect_release "${name}" release 0 "${OWN}" "$@"
+  if [[ "${out}" == *", and every one is a fix: cut v1.2.1, a patch"* ]]; then echo "ok   ${name}: its why names the patch"
+  else echo "FAIL ${name}: its why names no patch: ${out}"; fails=$((fails + 1)); fi
+}
+# patch_refused <name> <why> <setup>... — next prints retro v1.3.0, its why naming origin/main's commit
+# (its sha7, then <why>) as no fix.
+patch_refused() {
+  local name="$1" why="$2" sha; shift 2
+  release_repo "$@"
+  sha="$(git -C "${rdir}" rev-parse --short=7 origin/main)"
+  release_next; rm -rf "${rdir}"
+  if [[ "${out%%$'\n'*}" == "retro v1.3.0" && "${out}" == *", and ${sha} ${why} is no fix, so the release is a minor"* ]]; then echo "ok   ${name}"
+  else echo "FAIL ${name}: want retro v1.3.0 naming '${sha} ${why}' as no fix, got: ${out}"; fails=$((fails + 1)); fi
+}
+own_patch "own repo: a story PR with neither field, its whole diff under tests/ and its story file deleted: a patch" \
+  "planned t1" "${TESTS_A}" "rm docs/stories/t1.md" "story_pr t1"
+own_patch "own repo: a port: true PR that changes bin/x and a tests/ file its touches list at the base: a patch" \
+  "planned p1 'port: true' 'touches: [bin/x:f, tests/a_test.sh:case a]'" "${BIN}" "${TESTS_A}" "rm docs/stories/p1.md" "story_pr p1"
+own_patch "own repo: a fix: true story: a patch" "${BIN}" "${FIX}"
+own_patch "own repo: a fix-main build: a patch" "${BIN}" "${FIXMAIN}"
+own_patch "own repo: fix: true and port: true, with a tests/ file its touches do not list: fix: true wins, a patch" \
+  "planned p7 'fix: true' 'port: true' 'touches: [bin/x]'" "${BIN}" "${TESTS_B}" "rm docs/stories/p7.md" "story_pr p7"
+patch_refused "own repo: a port: true PR that changes one tests/ file its touches do not list: no patch, naming it" \
+  "#3 story/p2: port: true, but it changes tests/b_test.sh, not in docs/stories/p2.md's touches before the merge" \
+  "${OWN}" "planned p2 'port: true' 'touches: [bin/x, tests/a_test.sh]'" "${BIN}" "${TESTS_A}" "${TESTS_B}" "rm docs/stories/p2.md" "story_pr p2"
+patch_refused "own repo: a port: true PR that adds the tests/ file to its own story's touches: no patch, as the base's touches count" \
+  "#3 story/p3: port: true, but it changes tests/b_test.sh, not in docs/stories/p3.md's touches before the merge" \
+  "${OWN}" "planned p3 'port: true' 'touches: [bin/x]'" "${BIN}" "${TESTS_B}" \
+  "printf -- '---\nkind: code\nport: true\ntouches: [bin/x, tests/b_test.sh]\n---\n' > docs/stories/p3.md" "story_pr p3"
+patch_refused "own repo: a port: true story whose touches name the tests/ file only under another repo: no patch" \
+  "#3 story/p4: port: true, but it changes tests/b_test.sh, not in docs/stories/p4.md's touches before the merge" \
+  "${OWN}" "planned p4 'port: true' 'touches: [bin/x, other: tests/b_test.sh]'" "${BIN}" "${TESTS_B}" "rm docs/stories/p4.md" "story_pr p4"
+patch_refused "own repo: a port: true PR whose base does not have its story (the PR adds it): no patch" \
+  "#2 story/p5: no docs/stories/p5.md before the merge" \
+  "${OWN}" "${BIN}" "${TESTS_B}" "printf -- '---\nkind: code\nport: true\ntouches: [bin/x, tests/b_test.sh]\n---\n' > docs/stories/p5.md" "story_pr p5"
+# Both sides of a rename count: renaming tests/old_test.sh, which its touches do not list, to the listed
+# tests/new_test.sh is no fix. The plan's merge adds tests/old_test.sh with the story, a tests-only fix.
+patch_refused "own repo: a port: true PR that renames an unlisted tests/ file to a listed one: no patch, naming the old side" \
+  "#3 story/p9: port: true, but it changes tests/old_test.sh, not in docs/stories/p9.md's touches before the merge" \
+  "${OWN}" "mkdir -p tests && echo old > tests/old_test.sh && git add tests" "planned p9 'port: true' 'touches: [bin/x, tests/new_test.sh]'" \
+  "${BIN}" "git mv tests/old_test.sh tests/new_test.sh" "rm docs/stories/p9.md" "story_pr p9"
+patch_refused "own repo: a story with neither field that changes bin/x: no patch, its line naming both fields" \
+  "#3 story/s9: docs/stories/s9.md had no fix: true or port: true before the merge" \
+  "${OWN}" "planned s9" "${BIN}" "rm docs/stories/s9.md" "story_pr s9"
+patch_refused "own repo: port: yes: no patch" "#3 story/p8: docs/stories/p8.md had port: yes before the merge, not true" \
+  "${OWN}" "planned p8 'port: yes' 'touches: [bin/x]'" "${BIN}" "rm docs/stories/p8.md" "story_pr p8"
+patch_refused "o/r: a story PR with neither field, its whole diff under tests/: no patch, as before" \
+  "#3 story/t2: docs/stories/t2.md had no fix: true before the merge" \
+  "planned t2" "${TESTS_A}" "rm docs/stories/t2.md" "story_pr t2"
+# port: true gets fix:'s base-to-merge check: a direct push (board-only, so no change of its own) that
+# edits the story file between its plan and its PR's merge makes the PR no fix.
+release_repo "${OWN}" "planned p6 'port: true' 'touches: [bin/x, tests/b_test.sh]'" "echo 'More scope.' >> docs/stories/p6.md && ${COMMIT}" \
+  "${BIN}" "${TESTS_B}" "rm docs/stories/p6.md" "story_pr p6"
+sha="$(git -C "${rdir}" rev-parse --short=7 origin/main)"; base="$(git -C "${rdir}" rev-parse --short=7 origin/main~2)"
+release_next; rm -rf "${rdir}"
+if [[ "${out%%$'\n'*}" == "retro v1.3.0" && "${out}" == *", and ${sha} #3 story/p6: docs/stories/p6.md changed between ${base} and the merge is no fix"* ]]; then
+  echo "ok   own repo: a port: true story edited between its plan and its PR's merge: no patch, naming the edit"
+else echo "FAIL own repo: a port: true story edited between its plan and its PR's merge: want retro v1.3.0 naming the edit, got: ${out}"; fails=$((fails + 1)); fi
+# The rule's version (NON_FIX_RULE) is in the non-fix cache file's name and the release memo's key, so
+# neither serves an answer kept under rule 1. Each saying every change since the tag is a fix, for the
+# same SHAs, is not read: next names s1, which is no fix.
+for kept in "the rule-1 non-fix cache file" "a release memo written before the rule's bump"; do
+  release_repo "${BIN}" "merged_as s1"
+  from="$(git -C "${rdir}" rev-parse 'refs/tags/v1.2.0^{commit}')"; to="$(git -C "${rdir}" rev-parse origin/main)"
+  if [[ "${kept}" == *cache* ]]; then
+    mkdir -p "${rdir}/.swarm/gh-cache/o--r/non-fix"; echo '""' > "${rdir}/.swarm/gh-cache/o--r/non-fix/rule1-docs%2F-${from}-${to}.json"
+  else printf '%s\no/r %s %s docs/\n' "$(date +%s)" "${from}" "${to}" > "${rdir}/.swarm/release-memo"; fi
+  release_next; rm -rf "${rdir}"
+  if [[ "${out%%$'\n'*}" == "retro v1.3.0" && "${out}" == *", and ${to:0:7} #3 story/s1: docs/stories/s1.md had no fix: true before the merge is no fix"* ]]; then
+    echo "ok   ${kept}, saying every change is a fix, is not read: next names s1"
+  else echo "FAIL ${kept}, saying every change is a fix, was read: want retro v1.3.0 naming s1, got: ${out}"; fails=$((fails + 1)); fi
+done
 
 # Stages: S is the lowest stage: above the tag (v1.2.0) among the board's epics and the epic files
 # deleted since it. The fixtures use an active stage epic with a story in review, which no other arm

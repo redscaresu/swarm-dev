@@ -19,6 +19,7 @@ Stage 4 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - The UI (v0.33)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/port_tests_list_test.sh, tests/select_tests_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1, P2, P5, P6 and P8. No stage: line.
 - scripts/select_tests.py walks bash call graphs (:52-53) and scripts/test-map.tsv's rows name bin/lib: both are cut down to the Go tree.
 - The 17 tests that run on every bin/ change (scripts/test-map.tsv:26) include scanners of bash text. Each is retired only where the agreed list (port-inventory) names the Go check that took over its rule.
