@@ -79,11 +79,16 @@ and over), so they say nothing about bash against Go.
    freeze (the user, 2026-11-19).
 7. No command is slower than its bash. The check runs in CI on a fixed fixture under stubs, and
    reports wall time and process starts per command before and after its port.
-8. The names stay: `swarm.sh`, the hook paths in `hooks/hooks.json`, every setting and field.
+8. The names stay: `swarm.sh`, the hook paths in `hooks/hooks.json`, every setting and field. One
+   exception: `swarm.sh dash`, the terminal dashboard, is deleted in bash during stage 1 and not
+   ported (the user, 2026-11-20). `status` stays.
 9. The packages that hold the rules start no process and touch no file themselves (§ Layers). A
    CI check fails an import that crosses that line.
 
 ## Non-goals
+
+- Porting `swarm.sh dash`, the terminal dashboard. It is deleted in bash during stage 1, with its
+  helpers and tests (story delete-dash), and v0.33's web UI replaces it.
 
 - The UI (v0.33) and the Lovable experience (v0.34).
 - A Kubernetes port, a replacement for herdr, or a second implementation of any of the four
@@ -579,7 +584,6 @@ The machine spike is answered, on both of the user's Macs (2026-11-19, from the 
 - [helpers-panes](../epics/helpers-panes.md)
 - [helpers-reports](../epics/helpers-reports.md)
 - [helpers-flow-reviews](../epics/helpers-flow-reviews.md)
-- [helpers-dash](../epics/helpers-dash.md)
 - [port-board-readers](../epics/port-board-readers.md)
 - [port-reports](../epics/port-reports.md)
 - [port-release-gates](../epics/port-release-gates.md)
@@ -587,7 +591,6 @@ The machine spike is answered, on both of the user's Macs (2026-11-19, from the 
 - [port-lead-queue-prs](../epics/port-lead-queue-prs.md)
 - [port-lead-queue-agents](../epics/port-lead-queue-agents.md)
 - [port-status](../epics/port-status.md)
-- [port-dash](../epics/port-dash.md)
 - [readers-exit](../epics/readers-exit.md)
 - [port-wait-agent](../epics/port-wait-agent.md)
 - [port-wait-pr](../epics/port-wait-pr.md)
