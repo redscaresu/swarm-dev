@@ -2881,7 +2881,7 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     why="$(release_grant "$1" "$2" "${was}" "${tag}")" || why="cannot tell which HLDs the stories merged since v${was} are under"
     [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET} waits on the user's merge (merge = human, and ${why})"
   fi
-  release_docs "${body}" "$2" "${was}" "${tag}"
+  release_docs "$1" "${body}" "$2" "${was}" "${tag}"
 }
 
 # release_retro <owner/repo> <base> <was> <new> — the retro gate, under either merge setting, reading git
@@ -3014,27 +3014,38 @@ release_tag() {
   echo "${tag}"
 }
 
-# release_docs <pr-body> <base> <version> [tag] — a release ships its docs: refuse when bin/, commands/ or
-# hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md and docs/
-# did not, naming the changed paths, unless docs_none finds a reason in the PR body. A change to
+# release_docs <owner/repo> <pr-body> <base> <version> [tag] — a release ships its docs: refuse when bin/,
+# commands/ or hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md
+# and docs/ did not, naming the changed paths, unless docs_none finds a reason in the PR body. In this
+# plugin's own repo (<owner/repo>, as the URL has it, lower-cased equals plugin_repo, as release_upgrade
+# compares them) RELEASE_GO_CODE counts as code too, its Go test files included; when plugin_repo
+# cannot answer it counts in every repo (fail closed), and the refusal says why. A change to
 # commands/*.md is the commands' own text, so it answers for itself, and only when nothing else in
 # the code changed. The board's own paths (board_paths) are not docs, even when the board is docs/.
 # [tag] is origin's tag as release_check read it; without one, origin's tag (release_tag) missing or
 # off origin/<base> refuses.
 release_docs() {
-  local tag="${4:-}" code docs p ex=()
-  ! docs_none <<< "$1" || return 0
-  [[ -n "${tag}" ]] || tag="$(release_tag "$2" "$3" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
-  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks)" \
-    || merge_fail "--release: git cannot diff v$3 with origin/$2"
+  local tag="${5:-}" code docs p own go=("${RELEASE_GO_CODE[@]}") why="" ex=()
+  ! docs_none <<< "$2" || return 0
+  [[ -n "${tag}" ]] || tag="$(release_tag "$3" "$4" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
+  if ! own="$(plugin_repo)"; then
+    why=" (the Go tree counts as code in every repo, as the plugin's plugin.json names no GitHub repository)"
+  elif [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]]; then
+    go=()
+  fi
+  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks ${go[@]+"${go[@]}"})" \
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
   [[ -n "${code}" ]] || return 0
   grep -qv '^commands/.*\.md$' <<< "${code}" || return 0
   while IFS= read -r p; do ex+=(":(exclude)${p%/}"); done < <(board_paths)
   docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
-    || merge_fail "--release: git cannot diff v$3 with origin/$2"
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
   [[ -z "${docs}" ]] || return 0
-  merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
+  merge_fail "--release: ${code//$'\n'/, } changed since v$4 but README.md, AGENTS.md and docs/ did not${why}: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
 }
+
+# The Go tree, which release_docs counts as code in this plugin's own repo.
+RELEASE_GO_CODE=(cmd internal go.mod)
 
 DOCS_NONE_FORMS="a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a \`\`\` block or a > quote)"
 # docs_none — true when stdin has a "Docs: none — <reason>" line (bulleted or not; —, - or --) whose

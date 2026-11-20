@@ -144,6 +144,36 @@ commit bin/y.sh README.md
 release_pr; merge --release "${URL}"
 is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
 git -C "${P}" config --unset remote.origin.tagOpt
+# In the plugin's own repo (plugin.json's repository, its URL in any case) the Go tree is code too:
+# cmd/, internal/ (Go test files included) and go.mod. In o/r it is not, unless plugin.json names no
+# repository: then plugin_repo cannot answer, and the Go tree is code in every repo.
+OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${REPO}/.claude-plugin/plugin.json")"
+OWN="https://github.com/${OWN_REPO}/pull/7"
+own_pr() { release_pr; echo "{\"nameWithOwner\":\"${OWN_REPO}\"}" > "${FX}/origin"; } # release_pr, in the plugin's own repo
+for f in cmd/x/main.go go.mod internal/guard/x_test.go internal/guard/x.go; do
+  retag; commit "${f}"
+  own_pr; merge --release "${OWN}"
+  refused "--release in the plugin's own repo with only ${f} changed" "--release: ${f} changed since v1.2.0 but README.md, AGENTS.md and docs/ did not: land a docs PR first"
+done
+own_pr; printf '"%s"\n' 'Docs: none \u2014 only the Go tree changed' > "${FX}/body"; merge --release "${OWN}"
+is "--release in the plugin's own repo with only internal/guard/x.go changed and a Docs: none line: exits 0" 0 "${rc}"
+commit docs/method.md
+own_pr; merge --release "${OWN}"
+is "--release in the plugin's own repo with internal/guard/x.go and docs/method.md changed: exits 0" 0 "${rc}"
+MIXED="https://github.com/$(awk -F/ '{ print toupper(substr($1, 1, 1)) substr($1, 2) "/" toupper(substr($2, 1, 1)) substr($2, 2) }' <<< "${OWN_REPO}")/pull/7"
+check "the mixed-case URL ${MIXED} is not ${OWN}" test "${MIXED}" != "${OWN}"
+retag; commit cmd/x/main.go
+own_pr; merge --release "${MIXED}"; refused "--release in the plugin's own repo, its URL in mixed case, with only cmd/x/main.go changed" "--release: cmd/x/main.go changed since v1.2.0"
+retag; commit internal/x.go
+release_pr; merge --release "${URL}"
+is "--release in o/r with only internal/x.go changed: exits 0" 0 "${rc}"
+# A copy of the plugin whose plugin.json names no repository.
+mkdir -p "${ROOT}/norepo"; cp -R "${REPO}/bin" "${REPO}/hooks" "${REPO}/.claude-plugin" "${ROOT}/norepo/"
+python3 -c 'import json, sys; d = json.load(sys.stdin); d.pop("repository"); print(json.dumps(d))' \
+  < "${REPO}/.claude-plugin/plugin.json" > "${ROOT}/norepo/.claude-plugin/plugin.json"
+release_pr; SWARM="${ROOT}/norepo/bin/swarm.sh" merge --release "${URL}"
+refused "--release in o/r with only internal/x.go changed and plugin.json naming no repository" \
+  "--release: internal/x.go changed since v1.2.0 but README.md, AGENTS.md and docs/ did not (the Go tree counts as code in every repo, as the plugin's plugin.json names no GitHub repository)"
 # With merge = human, --release merges only when every story deleted on main since the tag (main's
 # own commits, a merge's deletions against its first parent), read as it was just before, is under
 # an agreed HLD granting release: its epic as that commit had it, the HLD as origin's main has it. A
@@ -315,9 +345,8 @@ retag
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's
 # restore wrapper's SWARM_PROJECT (an external board's builder runs in a story repo with no config)
 # or else its cwd, and the user is asked to restart the lead in each.
-OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${REPO}/.claude-plugin/plugin.json")"
 HOME_DIR="$(cd "${REPO}" && pwd)"   # the plugin under test, the old version here
-OWN="https://github.com/${OWN_REPO}/pull/7"; NEW="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev/swarm-dev/1.3.0/bin/swarm.sh"
+NEW="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev/swarm-dev/1.3.0/bin/swarm.sh"
 mkdir -p "${NEW%/*}" "${ROOT}/proj2/.claude/swarm" "${ROOT}/proj3/.claude/swarm" "${ROOT}/story" "${CLAUDE_CONFIG_DIR}/swarm-dev/resume"
 git -C "${ROOT}/proj2" init -q; : > "${ROOT}/proj2/.claude/swarm/config"; : > "${ROOT}/proj3/.claude/swarm/config"; git -C "${ROOT}/story" init -q
 printf "env.update(SWARM_PROJECT='%s', SWARM_RESUME='x')\n" "${ROOT}/proj3" > "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/sess-3.py"
