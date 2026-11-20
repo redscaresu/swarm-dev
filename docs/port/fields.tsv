@@ -1,6 +1,7 @@
 # fields.tsv: the board front-matter fields the code reads, by file kind, and the functions that read each. The Go port is checked against it.
 # Drawn at 42239208, this story's base. bin/ and hooks/ have not changed since v0.31.3, so these are v0.31.3's fields. patch-gate-port's port: has not merged yet; it adds a row when it does.
-# Columns: kind, field, read_by. kind is story, epic, hld or retro.
+# Columns: kind, field, read_by. kind is story, epic, hld or retro: the kind of file the field belongs to.
+# A reader shared by stories and epics (dash_fields, story_elsewhere) is listed under the kind that has the field. Asked of an epic, a story field such as kind: or repo: reads as empty.
 # read_by is a space-separated list of <file>:<function>, each a function whose body reads the field: through fm, get_fm, get_fm_or_gone, fm_list, fm_text or retro_fm, an awk or sed over the front matter, or a Python reader.
 # For Python, <file>:__main__ is the file's if __name__ == "__main__": block. For Go, the function is a func or a method.
 # A field read only through a wrapper is listed under the wrapper. story_deps reads depends_on for stories and epics, and the epic readers that call it are not listed.
