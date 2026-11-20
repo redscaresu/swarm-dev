@@ -56,7 +56,8 @@ README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh
 tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh
 # The differential run's fixtures: diff_run.sh loads them by a glob, so no test names one, and
 # diff_run_test.sh builds every fixture on disk. removed_test.sh greps every tests/*.sh.
-tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/removed_test.sh
+# diff_run_hooks_test.sh runs the hook ones by name (one row: a path takes the first row it matches).
+tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh
 # A test helper: removed_test.sh greps every tests/*.sh.
 tests/*.sh	named tests/removed_test.sh
 tests/**	named
