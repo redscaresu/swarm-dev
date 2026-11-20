@@ -725,8 +725,9 @@ origin_nwo() {
 }
 
 # release_memo get|put <owner/repo> <from> <ref> — next's short-lived copy of non_fix_change's answer
-# for <from>..<ref>, in .swarm/release-memo. Its key is the repo, both refs resolved to SHAs (a moved
-# base is a new key) and the board's path (board_rel), which non_fix_change reads. put writes stdin
+# for <from>..<ref>, in .swarm/release-memo. Its key is the rule's version (NON_FIX_RULE, so a memo
+# written under an older rule is never read), the repo, both refs resolved to SHAs (a moved base is a
+# new key) and the board's path (board_rel), which non_fix_change reads. put writes stdin
 # with the time and the key to a file of its own, then renames it into place, so a reader never sees
 # half of one. get reads the file once and prints the answer while it is under NON_FIX_RETRY seconds
 # old and its key matches, else fails. An answer non_fix_change caches for good is kept here too,
@@ -734,8 +735,8 @@ origin_nwo() {
 NON_FIX_RETRY=300
 release_memo() {
   local f="${PROJECT_DIR}/.swarm/release-memo" key text at rest
-  key="$2 $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$3^{commit}" 2>/dev/null) $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$4^{commit}" 2>/dev/null) $(board_rel)"
-  [[ "${key}" =~ ^[^\ ]+\ [0-9a-f]{40,}\ [0-9a-f]{40,}\  && "${key}" != *$'\n'* ]] || return 1
+  key="rule${NON_FIX_RULE} $2 $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$3^{commit}" 2>/dev/null) $(git -C "${PROJECT_DIR}" rev-parse -q --verify "$4^{commit}" 2>/dev/null) $(board_rel)"
+  [[ "${key}" =~ ^rule[0-9]+\ [^\ ]+\ [0-9a-f]{40,}\ [0-9a-f]{40,}\  && "${key}" != *$'\n'* ]] || return 1
   if [[ "$1" == put ]]; then
     [[ -d "${f%/*}" ]] || return 0
     if ! { { date +%s; echo "${key}"; cat; } > "${f}.$$" && mv -f "${f}.$$" "${f}"; } 2>/dev/null; then rm -f "${f}.$$"; fi
@@ -1570,25 +1571,35 @@ staged_chain() {
 # to it there, adding fix: true or taking it away, makes the change no fix, and such an answer is not
 # cached, as it rests on gh's list being whole. So the board is read as the planner left it: a PR
 # cannot make its own feature a fix in any of its commits, and a PR that deleted its own file is read
-# too. Every other change prints one of
+# too. In this plugin's own repo (plugin_own; when plugin_repo cannot answer, the rule above alone) two
+# more changes are fixes, each judged as one commit, so a rebase merge's commits are judged one by one.
+# After the PR, shallow-edge and fix-main checks, a change whose diff from its first parent, the board's
+# files aside, is all under tests/ is a fix, whatever its head. And a story/<slug> change whose story
+# file's fix: is missing or empty and whose port: is true (trimmed as fix: is) passes the same base-to-merge check, then
+# needs every tests/ path it changes (both sides of a rename) to be a file of this repo's in that
+# file's touches, as touches_rows.py's entries() reads them (port_touches.py). fix: true wins over
+# port:, and fix: x (any other value) is refused whatever port: says. Every other change prints one of
 #   <sha7> #<n> <head>: <why>                its story is no fix, its file is missing, or its head is no story branch
 #   <sha7>: no merged PR has this commit     a direct push, a rebase merge's earlier commits, or a PR the list missed
-# It reads git at those commits alone, never the checkout or the board's state, so a local edit changes
-# nothing. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
+# It reads git at those commits alone, never the board's state, and the checkout only where entries()
+# looks there to tell a bare file from a part, so a local edit changes no answer it gives in another
+# repo. Exits 1, why on stderr, when the board is outside the repo (git holds no story history then),
 # <owner/repo> is not one, git cannot read <from> or <ref>, or gh fails, is cut or gives no list. A
 # caller counts exit 1 as a non-fix change. The answer is cached through gh_cache.py (GH_CACHE;
-# SWARM_GH_FRESH set skips the cached read) under <rule>, the board's path and both SHAs, written only
+# SWARM_GH_FRESH set skips the cached read) under NON_FIX_RULE, the board's path and both SHAs, written only
 # once git and gh both answered, no line says no merged PR, no read passed a commit no PR lists (gh's
 # search can lag a fresh merge) and no change sits at a shallow clone's edge, which prints whatever its
 # head: a merged commit's PR and a file at a commit never change, so next, which dash runs every frame,
 # pays one gh call per base move. A repo that merges PRs of several commits by rebase passes such
 # commits, so there it pays one per call.
+# NON_FIX_RULE: the rule's version, in the cache file's name and release_memo's key; a change to what
+# counts as a fix bumps it, so no answer kept under the old rule is read.
+NON_FIX_RULE=2
 non_fix_change() {
-  # rule: the rule's version, in the cache file's name; a change to what counts as a fix bumps it, so
-  # no answer cached under the old rule is read. limit: the most merged PRs the one gh pr list reads.
-  # wait: how long that call may take outside a report.
-  local rule=1 limit=1000 wait="${SWARM_NON_FIX_WAIT:-60}"
-  local repo="$1" from="" to="" rel q ex=() changes all day bound rc json map rows c base prev n head p txt v b at line out="" keep=1
+  # limit: the most merged PRs the one gh pr list reads. wait: how long that call may take outside a
+  # report. own: set in this plugin's own repo, where tests-only and port: true changes are fixes too.
+  local rule="${NON_FIX_RULE}" limit=1000 wait="${SWARM_NON_FIX_WAIT:-60}" own=""
+  local repo="$1" from="" to="" rel q ex=() changes all day bound rc json map rows c base prev n head p txt v at line why out="" keep=1
   [[ "${wait}" =~ ^[1-9][0-9]*$ ]] || wait=60
   [[ ${BOARD_IN_REPO} == 1 ]] || { echo "non_fix_change: the board is outside the repo, so git holds no story history to read" >&2; return 1; }
   [[ "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "non_fix_change: '${repo}' is not <owner>/<repo>" >&2; return 1; }
@@ -1649,6 +1660,7 @@ for p in prs:
          if ($1 in ch) print $1, ((NF > 2) ? p : last), p, (($1 in n) ? n[$1] " " h[$1] : "")
          if ($1 in n) last = $1 }' \
     <(printf '%s\n' "${map}") <(printf '%s\n' "${changes}") <(printf '%s\n' "${all}"))"
+  if plugin_own "${repo}"; then own=1; fi
   while read -r c base prev n head; do
     [[ -n "${c}" ]] || continue
     if [[ -z "${n}" ]]; then out+="${c:0:7}: no merged PR has this commit"$'\n'; keep=""; continue; fi
@@ -1657,6 +1669,9 @@ for p in prs:
     # between <from> and it, may hold non-fixes, so it prints whatever its head, and is not cached.
     if [[ "${prev}" == - ]]; then out+="${line} git cannot read the commit before it"$'\n'; keep=""; continue; fi
     [[ ! "${head}" =~ ^story/fix-main-[0-9a-f]{7}$ ]] || continue
+    # The own repo's tests-only change: nothing outside tests/ and the board changed, and tests/ did. A
+    # git that cannot answer (exit 128) leaves the change to the rules below.
+    if [[ -n "${own}" ]] && tests_only "${prev}" "${c}" ${ex[@]+"${ex[@]}"}; then continue; fi
     if [[ ! "${head}" =~ ^story/([a-z0-9-]+)$ ]]; then out+="${line} not a story or fix-main branch"$'\n'; continue; fi
     p="${rel}stories/${BASH_REMATCH[1]}.md"
     # No listed PR's commit to stand on: <from> may be one of this PR's own commits.
@@ -1671,20 +1686,60 @@ for p in prs:
     fi
     v="$(fm_text fix <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
     if [[ "${v}" == true ]]; then
-      # The base's answer stands when no commit after it touched the file, or one did and deleted it.
-      [[ "${prev}" != "${base}" ]] || continue
-      b="$(git -C "${PROJECT_DIR}" rev-list --first-parent --full-history "${base}..${prev}" -- "${p}" 2>/dev/null)" \
-        || { out+="${line} git cannot read ${p}'s history before the merge"$'\n'; continue; }
-      [[ -n "${b}" ]] || continue
-      [[ "${b}" == *$'\n'* ]] || git -C "${PROJECT_DIR}" rev-parse -q --verify "${b}:${p}" > /dev/null 2>&1 || continue
-      out+="${line} ${p} changed between ${base:0:7} and the merge"$'\n'
-    elif [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true ${at}"$'\n'
-    else out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} ${at}, not true"$'\n'; fi
+      why="$(story_moved "${p}" "${base}" "${prev}")"
+      [[ -z "${why}" ]] || out+="${line} ${why}"$'\n'
+      continue
+    fi
+    if [[ -n "${v}" ]]; then out+="${line} ${p} had fix: ${v//[[:cntrl:]]/} ${at}, not true"$'\n'; continue; fi
+    if [[ -z "${own}" ]]; then out+="${line} ${p} had no fix: true ${at}"$'\n'; continue; fi
+    v="$(fm_text port <<< "${txt}")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+    if [[ -z "${v}" ]]; then out+="${line} ${p} had no fix: true or port: true ${at}"$'\n'; continue; fi
+    if [[ "${v}" != true ]]; then out+="${line} ${p} had port: ${v//[[:cntrl:]]/} ${at}, not true"$'\n'; continue; fi
+    why="$(story_moved "${p}" "${base}" "${prev}")"
+    if [[ -n "${why}" ]]; then out+="${line} ${why}"$'\n'; continue; fi
+    # A port: true story's tests/ changes must all be files its touches list at the base.
+    if ! why="$(port_unlisted "${prev}" "${c}" "${txt}")"; then
+      out+="${line} port: true, but git cannot list the tests/ files it changes, or ${p}'s touches cannot be read"$'\n'; keep=""
+    elif [[ -n "${why}" ]]; then out+="${line} port: true, but it changes ${why//[[:cntrl:]]/}, not in ${p}'s touches ${at}"$'\n'; fi
   done <<< "${rows}"
   out="${out%$'\n'}"
   if [[ -n "${keep}" ]]; then non_fix_cache put "${rule}" "${repo}" "${rel}" "${from}" "${to}" <<< "${out}" || true; fi
   [[ -z "${out}" ]] || printf '%s\n' "${out}"
   return 0
+}
+
+# story_moved <story file> <base> <parent> — for non_fix_change: why the story file's fix: or port: at
+# <base> does not stand for a change whose first parent is <parent>, or nothing when it does. It stands
+# when <base> is <parent>, or no commit between them on the first-parent line touched the file, or the
+# one that did deleted it.
+story_moved() {
+  local b
+  [[ "$3" != "$2" ]] || return 0
+  b="$(git -C "${PROJECT_DIR}" rev-list --first-parent --full-history "$2..$3" -- "$1" < /dev/null 2>/dev/null)" \
+    || { echo "git cannot read $1's history before the merge"; return 0; }
+  [[ -n "${b}" ]] || return 0
+  [[ "${b}" == *$'\n'* ]] || git -C "${PROJECT_DIR}" rev-parse -q --verify "${b}:$1" > /dev/null 2>&1 < /dev/null || return 0
+  echo "$1 changed between ${2:0:7} and the merge"
+}
+
+# tests_only <parent> <change> [<exclude pathspec>...] — true when <change>'s diff from <parent>, past the
+# given excludes (board_excludes), changes files under tests/ and nothing else. False when git cannot
+# answer.
+tests_only() {
+  local a="$1" c="$2" rc=0; shift 2
+  git -C "${PROJECT_DIR}" diff-tree --quiet -r --no-renames "${a}" "${c}" -- . ':(exclude)tests/' "$@" < /dev/null > /dev/null 2>&1 || rc=$?
+  [[ ${rc} == 0 ]] || return 1
+  rc=0; git -C "${PROJECT_DIR}" diff-tree --quiet -r --no-renames "${a}" "${c}" -- tests/ < /dev/null > /dev/null 2>&1 || rc=$?
+  [[ ${rc} == 1 ]]
+}
+
+# port_unlisted <parent> <change> <story text> — the first tests/ path <change> changes from <parent>
+# (--no-renames, so both sides of a rename) that is no file of this repo's in the story's touches, as
+# port_touches.py reads them through touches_rows.py's entries(); nothing when every one is there.
+# Fails when git or port_touches.py cannot answer.
+port_unlisted() {
+  git -C "${PROJECT_DIR}" diff-tree -r -z --no-renames --name-only "$1" "$2" -- tests/ < /dev/null 2>/dev/null \
+    | python3 "${SWARM_HOME}/bin/lib/port_touches.py" "${PROJECT_DIR}" "${REPOS_DIR:-}" "$3"
 }
 
 # non_fix_cache get|put <rule> <owner/repo> <board rel> <from> <to> — non_fix_change's cached answer, through

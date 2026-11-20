@@ -148,6 +148,7 @@ Useful while it runs:
   patch release soon after it merges, so running projects get it. The lead cuts it, through the
   release arm below; a builder's story PR never bumps the version.
   It ships as a patch only when every change since the tag is from a `fix: true` story or a fix-main build.
+  In swarm-dev's own repo, a PR that changes only files under `tests/`, and a `port: true` story's PR whose changed `tests/` files are all in its `touches`, ship as a patch too.
   Otherwise `merge --release` refuses the patch, and the fix ships in the next minor, after its retro.
 - Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
   that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
@@ -290,3 +291,4 @@ line with everything merged since the last tag. `merge --release` refuses the bu
 the release PR body has a `Docs: none — <reason>` line.
 In swarm-dev's own repo, that check also counts `cmd/`, `internal/` and `go.mod` as code.
 It also refuses a minor bump with no done `<board>/retros/v<new>.md` on `main` covering it, and a patch bump while a change since origin's tag is not from a `fix: true` story or a fix-main build, under either merge setting ([§ The retro gate](docs/reference-merging.md#the-retro-gate)).
+In swarm-dev's own repo, that patch check also passes a change only under `tests/`, and a `port: true` story whose `touches` list every `tests/` file it changes.

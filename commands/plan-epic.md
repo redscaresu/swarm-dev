@@ -75,7 +75,7 @@ the lead that survey and any earlier plan too. One survey is enough for a
 one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
-`{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy, fix}], waves, contradictions}`.
+`{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy, fix, port}], waves, contradictions}`.
 `needs` names each `depends_on` story with what the story uses from it (the file, the function, or a `kind: lead` story's **You:** step), empty when it has none; the scope's opening line is written from it, so the two agree.
 `touches` entries are `file:part`, the part starting with the function or section name the story changes. Write a bare file only when the story changes the whole file: a bare file clashes only with the same bare file, so a bare file hides a clash with a story that names a part.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
@@ -128,7 +128,9 @@ did that. Without it, ask. (The small path has already written and committed the
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no `touches` part, `touches`, `estimate_lines`, `easy`, `fix: true` only on a story that fixes shipped behaviour, `risk` when
 high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open the board PR `scope-$1` with one `swarm.sh codex-review` pass, and `swarm.sh close
-scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
+scope-$1`.
+In swarm-dev's own repo, write `port: true` on a story that ports code or rewrites tests and changes no behaviour, and list in its `touches` every `tests/` file it changes: its PR then ships in a patch.
+Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and
 `swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not.
 The kind is a short kebab-case name for the class of mistake, and `<reason>` is `out-of-scope`, `nit` or `wrong`. Waves are then built with `swarm.sh story <slug>`.

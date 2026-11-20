@@ -266,7 +266,8 @@ check "--release reads the base's plugin.json at the commit it fetched" grep -q 
 push; retag
 # The retro gate, under either merge setting. A minor (1.2.0 to 1.3.0) needs a done docs/retros/v1.3.0.md
 # on origin's main covering it; a patch (1.2.0 to 1.2.1) needs every change since origin's v1.2.0 to come
-# from a fix: true story or a fix-main build, as non_fix_change reads the stub's merged PRs.
+# from a fix: true story or a fix-main build, as non_fix_change reads the stub's merged PRs (in the
+# plugin's own repo, a port: true story or a change only under tests/ too).
 # retro [front-matter line]... — origin's main gets docs/retros/v1.3.0.md with those lines; with none, loses it.
 retro() { if [[ $# -gt 0 ]]; then mkdir -p "${P}/docs/retros"; landed docs/retros/v1.3.0.md "$@"; else gone docs/retros/v1.3.0.md; fi; }
 # gate_refused <name> <text> — refused, as refused checks, naming <text>, and run its retro first.
@@ -326,6 +327,21 @@ check "the retro gate, merge = human, a grant and a fix-only patch: says so" sai
 release_pr; as_patch; merge --release "${URL}"
 is "the retro gate, a fix-only patch: exits 0" 0 "${rc}"
 check "the retro gate, a fix-only patch: merged" merged
+# In the plugin's own repo a port: true story's PR is a fix too, when every tests/ file it changes is a
+# file its touches list at the base. One tests/ file it does not list refuses the patch, naming it. The
+# pass line there names port: true and tests-only changes beside fix: true stories and fix-main builds.
+landed docs/stories/port-a.md "kind: code" "port: true" "touches: [bin/f.sh, tests/a_test.sh]"; retag
+c="$(squashed port-a bin/f.sh tests/a_test.sh tests/b_test.sh README.md)"; prs 1=release/v1.2.0=v1.2.0 9=story/port-a="${c}"
+own_pr; as_patch; merge --release "${OWN}"; refused "the retro gate in the plugin's own repo, a port: true patch with a tests/ file its touches do not list" \
+  "--release: v1.2.1 is a patch, but ${c:0:7} #9 story/port-a: port: true, but it changes tests/b_test.sh, not in docs/stories/port-a.md's touches before the merge: cut a minor after its retro"
+landed docs/stories/port-b.md "kind: code" "port: true" "touches: [bin/f.sh, tests/a_test.sh, tests/b_test.sh:case b]"; retag
+c="$(squashed port-b bin/f.sh tests/a_test.sh tests/b_test.sh README.md)"; prs 1=release/v1.2.0=v1.2.0 9=story/port-b="${c}"
+own_pr; as_patch; merge --release "${OWN}"
+is "the retro gate in the plugin's own repo, a port: true patch whose tests/ files its touches all list: exits 0" 0 "${rc}"
+check "the retro gate in the plugin's own repo, a port: true patch whose tests/ files its touches all list: merged" merged
+check "the retro gate in the plugin's own repo, a port: true patch: its pass line names port: true and tests-only changes" \
+  said "retro gate: v1.2.1 is a patch; every change since v1.2.0 is from a fix: true or port: true story, a fix-main build or a change only under tests/"
+retag   # the next patch's window starts after the port stories, which are no fix in o/r
 commit bin/g.sh README.md; c="$(gt rev-parse HEAD)"
 release_pr; as_patch; merge --release "${URL}"; refused "the retro gate, a patch with a commit no PR lists" \
   "--release: v1.2.1 is a patch, but ${c:0:7}: no merged PR has this commit: cut a minor after its retro"

@@ -2722,6 +2722,14 @@ m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/*$", u if isinstance
 sys.exit(m is None or print(m.group(1).lower()))' < "${SWARM_HOME}/.claude-plugin/plugin.json" 2>/dev/null
 }
 
+# plugin_own <owner/repo> — true when <owner/repo>, lower-cased, is this plugin's own repo (plugin_repo,
+# as release_docs compares them); false for any other repo, and when plugin_repo cannot answer, so a
+# rule for the own repo alone fails closed to the rule every repo has.
+plugin_own() {
+  local own
+  own="$(plugin_repo)" && [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]
+}
+
 # release_confirmed <owner/repo> <merge commit> <version> <base> — the tag v<version> is on <merge
 # commit>, or on a later commit of <base> (a later push's release run can tag first: release.yml runs
 # one at a time), and its GitHub release is published, waiting up to RELEASE_WAIT seconds for the
@@ -2890,7 +2898,9 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 # (release_tag, by its SHA, never the local tag) is on the base and every change from it to RELEASE_BASE
 # is a fix (non_fix_change, through release_changes, read fresh, not from its cache). RELEASE_TAG is set
 # to that tag's commit for a patch, else empty. On a pass it prints one line, which merge's output keeps;
-# otherwise it refuses, naming the retro file, the change that is no fix or the read that failed. Every
+# for a patch in this plugin's own repo (plugin_own) that line names the fixes non_fix_change takes
+# there alone, port: true stories and changes only under tests/, beside fix: true stories and fix-main
+# builds. Otherwise it refuses, naming the retro file, the change that is no fix or the read that failed. Every
 # refusal on a board outside the repo, where neither read can pass, says to merge the PR by hand.
 release_retro() {
   local a b c d out err rc=0 hand=""
@@ -2911,7 +2921,11 @@ release_retro() {
   [[ ${rc} == 0 ]] \
     || merge_fail "--release: v$4 is a patch, but the fixes since v$3 cannot be read (${err#failed: })${hand}"
   [[ -z "${out}" ]] || merge_fail "--release: v$4 is a patch, but ${out%%$'\n'*}: cut a minor after its retro${hand}"
-  echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true story or a fix-main build"
+  if plugin_own "$1"; then
+    echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true or port: true story, a fix-main build or a change only under tests/"
+  else
+    echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true story or a fix-main build"
+  fi
 }
 
 # release_grant <owner/repo> <base> <version> <tag> — why HLDs do not cover the release, or nothing
