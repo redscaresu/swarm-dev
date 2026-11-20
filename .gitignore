@@ -11,3 +11,7 @@ board/.obsidian/*
 
 # Python bytecode from bin/lib imports.
 __pycache__/
+
+# Go build outputs: go build ./... at the root writes ./swarm, scripts/build.sh writes dist/.
+/swarm
+/dist/

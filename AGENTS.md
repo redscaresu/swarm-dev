@@ -165,6 +165,8 @@ bin/swarm.sh          the entry point: usage, settings, the model policy, the co
 bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecycle, merge, reports)
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
+go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
+cmd/swarm/            the Go command, the module's only package; no command is ported yet
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),
@@ -174,6 +176,8 @@ scripts/              test.sh (the make test runner), select-tests.sh and select
                       changes map to), test-map.tsv (that map), lint (make check: JSON a test feeds must
                       parse, no test pipes into grep -q, and bin/lib's Python reads now and today only
                       through bin/lib/clock.py), pre-commit, board-only.sh
+scripts/build.sh      the release contract: builds the four swarm-<os>-<arch> binaries and SHA256SUMS into dist/;
+                      --list prints the assets, checksum file and signer without running go
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
@@ -187,9 +191,12 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/*.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*.sh and bin/lib/*.py
+gofmt -l .                                  # must print nothing
+go vet ./...
+go test ./...
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
                                             # it never runs the full suite: it names each changed file that would select every test,
                                             # which CI's full run covers, and runs the tests for the rest
