@@ -17,6 +17,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any behaviour change
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/loose_match_test.sh, tests/removed_test.sh, tests/timeouts_test.sh. Each keeps the assertion its go_check column names.
 - stage: v0.32.0, so v0.32.0 waits for it (bin/lib/board.sh:1438-1453).
 - The freeze starts when this epic's first story starts (HLD:343). From then main takes only port stories, their test rewrites, fix: true stories and fix-main builds.
 - Pick a helper under the 300-line story cap that the bash runs as a process, that imports no shared module (contradiction 1), that no other helper imports (contradiction 24), that no inline `python3 -c` site imports (contradiction 2), and that is not ci_gate.py, which CI's gate runs (contradiction 4).

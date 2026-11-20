@@ -19,6 +19,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - A YAML library (HLD:426-427)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/events_fixture_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1, P4, P5 and P6 (shared_constraints.port).
 - Exception 1 (HLD:272-275): the bash copies stay until the last bash caller is ported, so these stories add Go and delete nothing.
 - The parsers are our own and match the bash line for line: fm at bin/lib/board.sh:7 (state file, then front matter, and a report's snapshot), load_config at bin/swarm.sh:273 (key = value, no sourcing, CFG_ and SRC_ per key), append_event at bin/lib/agents.sh:983 with the outcome column's rule (bin/lib/agents.sh:969; tests/outcome_scan_test.sh).

@@ -15,6 +15,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - New flow sections or figures
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/review_yield_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - flow_report.py goes in the story that ports the last section, which is why this depends on helpers-flow-queues.
 - A section that needs gh calls it through the code host, with its time bound.
