@@ -15,6 +15,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Making dash faster (HLD:90)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/dash_reexec_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - dash's bash calls the queue's no-agent lines in process (dash_no_agent, bin/lib/dash.sh:624; `_step --dash`), which is why it waits for port-lead-queue-agents.
 - dash --check runs each owning command as a command, whichever side it is on.
