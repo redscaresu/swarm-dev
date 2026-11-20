@@ -214,6 +214,18 @@ Run `scripts/select-tests.sh --run` before a push. It never runs the full suite,
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
 14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
+The `speed` job (`.github/workflows/speed.yml`) runs on each PR that is not board-only.
+It installs strace, then runs `tests/speed_run.sh --require-count` with the PR's base as tree a and the PR's merge commit as tree b.
+The merge commit is the head merged into the base, which GitHub checks out, so the run measures only the PR's own change.
+Its log has one row for each command in `tests/speed_list.txt`, with each tree's median wall time and process starts.
+It fails a command the merge commit runs slower than the base by more than 20% and at least 100 ms, and a run where strace cannot count.
+A self-check step then times a copy of the merge commit with one extra exec (`/usr/bin/true` after `bin/swarm.sh`'s shebang) on the `usage` command.
+It fails unless the copy counts exactly one more process start than the merge commit.
+A run by hand (`workflow_dispatch`) takes a `base` ref, such as a tag, to time the dispatched ref against.
+It is not a required check, but `swarm.sh merge` waits for it like every other pull_request workflow, and a red run holds the merge.
+A port epic adds each command it ports to `tests/speed_list.txt`, one fixture name to a line.
+Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file, or the run is red.
+
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
@@ -275,6 +287,13 @@ It spares a process whose parent is the test's parent, such as the `tail` in `ba
 When the file does not lead its group, such as a file run by hand from a shell without job control, `stop_test_group` stops nothing.
 A group the test makes itself with `in_new_group` is stopped by `stop_group`, or by `stop_groups` in the trap.
 `tests/test_helpers_test.sh` checks it.
+
+`tests/nopy_list.txt` lists the differential run's fixtures whose command must not start a program: one line per fixture, its name and then each program.
+`tests/nopy_test.sh` runs each listed fixture through `tests/diff_run.sh` with those programs replaced on PATH by a stub that logs its call and exits 1.
+It fails when the command starts one of them, even when the command swallows the failure.
+The fixture's build and the gh and herdr stubs keep the real programs.
+A program started by its absolute path is out of its reach.
+A port epic adds a fixture's line once its command starts none of the programs the port removes, and adds a program to a line once the port drops it: python3 at stage 1, then awk, sed, perl and curl.
 
 Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
