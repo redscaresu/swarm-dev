@@ -1,0 +1,189 @@
+# docs/port/exit-codes.tsv: the exit codes of each swarm.sh command, hook script and the gh shim, as of v0.31.3.
+# Created: 2026-11-20. Columns (tab-separated): command, code, when, returned by, pinned by.
+# Commands are the arms of bin/swarm.sh's dispatch (`(other)` is its `*` arm: an unknown command), the early case (version, update),
+# each script in hooks/hooks.json and bin/gh-shim/gh. A name starting with _ is a hook the plugin and the tests call.
+# One row per code on the command's own path: each literal `exit N` and `return N` (N not 0) in the arm's case body and in each
+# function that body names, a named code by its value, `die` as 1, 0, and each code AGENTS.md or docs/ state for it.
+# Codes passed up from deeper callees are not listed: they cannot be listed in full. A command that fails under set -e
+# exits with the failing command's own status, which no row lists. A return N in a helper is a status its caller reads,
+# and ends the command only when the caller passes it up.
+# returned by: file:function. For a hook script or the gh shim: the script's own literal exits; the gh shim passes gh's own code through.
+# pinned by: tests/*_test.sh that run the command and assert its exit status on that path (a test that checks only the message does not count), or `none`. A row with several sites is pinned
+# when a test asserts some of them, not necessarily all.
+(other)	0	a known command ran and finished	bin/swarm.sh:main	none
+(other)	2	no command or an unknown one; prints the usage header	bin/swarm.sh:dispatch	none
+_archive	0	the story's session log was copied	bin/swarm.sh:main	none
+_base	0	printed the repo's base branch	bin/swarm.sh:main	none
+_base	1	origin cannot be listed or fetched, or has no wanted branch; says why	bin/swarm.sh:base_for	none
+_board-rel	0	printed the board's path from the project root	bin/swarm.sh:main	none
+_brief	0	printed the story's builder brief	bin/swarm.sh:main	none
+_brief	1	the story's repo could not be found; prints why	bin/swarm.sh:dispatch	none
+_brief	1	the repo is not named, the name is bad or its folder has no .git	bin/swarm.sh:repo_dir	none
+_close-when-idle	0	the idle-close helper finished	bin/swarm.sh:main	none
+_close-when-idle	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+_close-when-idle	1	missing or bad name, pane or pid argument; prints usage	bin/lib/lifecycle.sh:close_idle_wait	none
+_conductor	0	printed the conductor's agent name	bin/swarm.sh:main	none
+_fix-main	0	the check finished; a fix-main story was written or none was needed	bin/swarm.sh:main	none
+_fix-main	1	bad argument, unreadable repo, head or CI; no story written	bin/lib/lifecycle.sh:main_red_run	none
+_mtime	0	printed the age of the story's session log	bin/swarm.sh:main	none
+_name	0	printed the agent name, cut to the length limit	bin/swarm.sh:main	none
+_pane	0	printed the pane for the agent name	bin/swarm.sh:main	none
+_pane	1	herdr could not open a pane in the tab; says so on stderr	bin/lib/agents.sh:next_pane	none
+_pane	1	not run inside a herdr pane (HERDR_ENV is not 1)	bin/lib/agents.sh:require_herdr	none
+_review-brief	0	printed the review agent's brief	bin/swarm.sh:main	none
+_review-red-scan	0	the scan ran	bin/swarm.sh:main	none
+_review-red-scan	1	this red head does not count toward the ladder	bin/lib/merge.sh:review_red_scan	none
+_role	0	printed the role the story is built as	bin/swarm.sh:main	none
+_role	1	no story file, or attempts: is not a whole number	bin/lib/build.sh:story_role	none
+_role	1	story_role refused the story; dies with its message	bin/swarm.sh:dispatch	none
+_step	0	printed the next step	bin/swarm.sh:main	none
+_step-up	0	the build stepped up to the next model	bin/swarm.sh:main	none
+_step-up	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+_step-up	1	step-up refused or failed before closing the builder; says why	bin/lib/lifecycle.sh:step_up	none
+_step-up	1	nothing to resume, lock held, or marker gone; says why	bin/lib/lifecycle.sh:step_up_resume	none
+_step-up	4	step-up failed after it closed the old builder; only the auto path (_step-up) exits it	bin/lib/lifecycle.sh:step_up_failed	none
+_target	0	printed the agent's herdr target	bin/swarm.sh:main	none
+_target	1	no agent of this project holds that name now; says why	bin/lib/agents.sh:own_target	none
+_tell-queue-check	0	the queued-tell check finished	bin/swarm.sh:main	none
+_tell-queue-check	1	missing name or token argument; prints usage	bin/lib/agents.sh:tell_queue_check	none
+_trusted	0	Claude Code trusts the folder	bin/swarm.sh:main	none
+_trusted	1	Claude Code does not trust the folder yet; says what to run	bin/lib/agents.sh:require_trusted	none
+agent	0	the agent started	bin/swarm.sh:main	tests/env_allowlist_test.sh
+agent	1	the story's env: line is bad; says why on stderr	bin/lib/agents.sh:agent_cmd	none
+agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
+base	0	printed the repo's base branch	bin/swarm.sh:main	tests/epic_briefs_test.sh
+base	1	origin cannot be listed or fetched, or has no wanted branch; says why	bin/swarm.sh:base_for	none
+base	1	the repo could not be found; prints why	bin/swarm.sh:dispatch	none
+base	1	the repo is not named, the name is bad or its folder has no .git	bin/swarm.sh:repo_dir	none
+bin/gh-shim/gh	0	the real gh succeeded (the shim passes its code on)	bin/gh-shim/gh:(top level)	tests/gh_calls_test.sh
+bin/gh-shim/gh	127	no real gh on PATH besides the shim	bin/gh-shim/gh:(top level)	none
+bin/gh-shim/gh	130	an interrupt (INT) ended the shim and gh	bin/gh-shim/gh:(top level)	tests/gh_calls_test.sh
+board-pr	0	start, open or done finished its step	bin/swarm.sh:main	tests/board_pr_test.sh
+board-pr	1	bad argument or a failed check; says why on stderr	bin/lib/lifecycle.sh:board_pr	tests/board_pr_test.sh
+close	0	the agent was closed and its story updated	bin/swarm.sh:main	tests/close_test.sh
+close	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+close	1	bad cause or a refusal (PR open or merged, busy, no builder); says why	bin/lib/lifecycle.sh:close_agent	tests/close_test.sh
+close	1	bad flag order, or no pane could be closed; says why	bin/swarm.sh:dispatch	tests/name_cut_test.sh
+codex-review	0	codex finished its review	bin/swarm.sh:main	tests/codex_test.sh
+codex-review	1	bad argument or story, or codex was skipped (unreachable or timed out); says why	bin/swarm.sh:codex_review	tests/codex_test.sh,tests/codex_unavailable_test.sh
+codex-review	143	TERM or HUP: it stops codex and exits	bin/swarm.sh:codex_review	none
+conduct	0	the conductor started	bin/swarm.sh:main	tests/conduct_preflight_test.sh,tests/env_allowlist_test.sh
+conduct	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
+conduct	1	bad epic name, missing epic file, name clash or a refused start; says why	bin/lib/build.sh:start_conductor	tests/conduct_preflight_test.sh,tests/conduct_backlog_test.sh,tests/workspace_labels_test.sh
+config	0	printed the config or one key	bin/swarm.sh:main	none
+config	1	the key asked for is not a known one; says which	bin/swarm.sh:show_config	none
+cost	0	prints that cost moved into flow's cost section	bin/swarm.sh:main	tests/removed_test.sh
+dash	0	the board was drawn, or --check found every figure agrees	bin/swarm.sh:main	tests/dash_check_test.sh,tests/dash_layout_test.sh
+dash	1	bad flag, no board or not a swarm project; says why on stderr	bin/lib/dash.sh:dash	tests/dash_layout_test.sh,tests/dash_projects_test.sh,tests/dash_check_test.sh
+dataset	0	dataset.jsonl was written, or no finished story left it as it was	bin/swarm.sh:main	tests/dataset_test.sh
+dataset	1	extra argument, no agents log, outcomes failed or gh down; says why	bin/lib/reports.sh:dataset_report	tests/dataset_test.sh
+dialog	0	the story's dialog answer was logged	bin/swarm.sh:main	none
+dialog	1	bad slug, no such story, or result not accepted or dismissed	bin/lib/board.sh:dialog_answered	none
+drop	0	the escalated story was taken off the board in a board PR	bin/swarm.sh:main	tests/board_pr_kinds_test.sh
+drop	1	missing or bad slug or reason, no such story, or story not escalated	bin/lib/board.sh:drop_story	none
+dropped-lines	0	no line of the base was dropped, or the head was checked clean	bin/swarm.sh:main	tests/dropped_lines_test.sh
+dropped-lines	1	a merge dropped a line of the base; prints each line	bin/lib/merge.sh:dropped_lines	tests/dropped_lines_test.sh
+dropped-lines	2	bad argument, git too old, or the PR head moved; says why	bin/lib/merge.sh:dropped_lines	tests/dropped_lines_test.sh
+dropped-lines	2	any stop that is no dropped line, such as not in a swarm project	bin/swarm.sh:EXIT trap	tests/dropped_lines_test.sh
+features	0	prints that features moved into flow's features section	bin/swarm.sh:main	tests/removed_test.sh
+findings	0	the PR's findings were printed	bin/swarm.sh:main	tests/fail_lines_test.sh
+findings	1	unknown repo, bad PR number, no GitHub origin, or gh cannot read the PR	bin/lib/reports.sh:findings	none
+finish	0	the finished story, epic or HLD was taken off the board	bin/swarm.sh:main	tests/board_pr_kinds_test.sh,tests/pr_removes_story_test.sh
+finish	1	bad slug, no such item, or an HLD that is not finished; says why	bin/lib/board.sh:finish_item	tests/pr_removes_story_test.sh
+flow	0	the report printed	bin/swarm.sh:main	none
+flow	1	bad flag or date, or a section raised an error	bin/lib/reports.sh:flow_report	tests/flow_sections_test.sh
+grants	0	the grants were printed	bin/swarm.sh:main	tests/grants_test.sh
+grants	1	wrong argument count, or no item, PR or HLD to read grants from	bin/lib/board.sh:grants	none
+handover	0	the handover folder was written	bin/swarm.sh:main	tests/handover_test.sh
+handover	1	bad argument, no usable out folder, board not in a git repo or a copy failed	bin/lib/handover.sh:handover_report	tests/handover_test.sh
+hold	0	the hold was logged for the ready story	bin/swarm.sh:main	none
+hold	1	bad slug, story not ready, PR closed unmerged, no reason, or log unwritable	bin/swarm.sh:hold	tests/hold_test.sh
+hooks/agent-state.sh	0	the hook ran; it never blocks Claude Code	hooks/agent-state.sh:(top level)	none
+hooks/lead-stop.sh	0	the hook ran, with or without a block decision on stdout	hooks/lead-stop.sh:(top level)	none
+hooks/merge-guard.sh	0	the tool call is allowed	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
+hooks/merge-guard.sh	2	the tool call is refused (a merge, or work-losing command)	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
+hooks/user-caught-reminder.sh	0	the hook ran; it only prints a reminder	hooks/user-caught-reminder.sh:(top level)	tests/user_caught_reminder_test.sh
+init	0	the board and files were set up	bin/swarm.sh:main	none
+init	1	the .swarm/auto-mode-done file could not be written	bin/lib/lifecycle.sh:auto_mode_done	none
+init	1	not in a git repo, not at its root, or not at the project's root	bin/lib/lifecycle.sh:init_check	none
+init	1	an argument init does not know; prints its usage	bin/swarm.sh:dispatch	none
+intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	tests/intervene_test.sh
+intervene	1	unknown kind or cause, empty line, or events log unwritable	bin/swarm.sh:intervene	tests/intervene_test.sh
+lessons	0	prints that lessons moved into outcomes' recurring block	bin/swarm.sh:main	tests/config_test.sh
+lessons	1	an argument other than --all; prints the usage line	bin/swarm.sh:dispatch	tests/config_test.sh
+log-finding	0	the finding was appended to findings.tsv	bin/swarm.sh:main	tests/log_finding_test.sh
+log-finding	1	bad flag, reason, round, reviewer, kind or PR; says which	bin/lib/reports.sh:record_finding	tests/log_finding_test.sh
+merge	0	the PR merged and the base's CI was green	bin/swarm.sh:main	tests/merge_note_test.sh
+merge	1	merged, but reconcile failed, base CI was not green, or the queue merged another head	bin/lib/merge.sh:merge_pr	tests/merge_note_test.sh
+next	0	the next step was printed	bin/swarm.sh:main	none
+next	1	cannot make a temp file or set the report deadline	bin/lib/board.sh:next_report	none
+outcomes	0	the rows printed	bin/swarm.sh:main	tests/outcomes_test.sh
+outcomes	1	bad --since, no agents log or the logs could not be read; says why	bin/lib/reports.sh:outcomes_report	none
+plan-unasked	0	the later epic was marked planned unasked	bin/swarm.sh:main	none
+plan-unasked	1	more than one epic, no such epic, or the epic is not later	bin/lib/board.sh:plan_unasked	tests/next_test.sh
+policy	0	printed the model and effort for the role	bin/swarm.sh:main	tests/config_test.sh
+policy	1	the role is not a known one; lists the roles	bin/swarm.sh:policy	none
+reconcile	0	the board state was brought in line with the PRs	bin/swarm.sh:main	tests/epic_reconcile_test.sh,tests/reconcile_pull_test.sh
+reconcile	1	cannot create the .swarm folder	bin/lib/board.sh:reconcile	none
+reset	0	the escalated story went back to ready as code	bin/swarm.sh:main	tests/close_test.sh
+reset	1	missing or bad slug or reason, no story, nothing to reset, or already reset	bin/lib/board.sh:reset_story	tests/close_test.sh
+restart	0	the builder was started again	bin/swarm.sh:main	tests/restart_test.sh
+restart	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+restart	1	story is not restartable or its start failed; says why	bin/lib/lifecycle.sh:restart_build	tests/restart_test.sh
+restart	1	not exactly one slug given; prints usage	bin/swarm.sh:dispatch	none
+retro	0	the retro report printed	bin/swarm.sh:main	tests/retro_test.sh
+retro	1	bad flag, no tag to start from or no such tag; says why on stderr	bin/lib/reports.sh:retro_report	tests/retro_test.sh
+review	0	the story was set to review with its PRs	bin/swarm.sh:main	tests/review_test.sh
+review	1	bad head SHA, no PR URL, or the story waits on a parent PR to merge	bin/lib/board.sh:mark_review	none
+review-agent	0	the review agent started	bin/swarm.sh:main	tests/review_agent_test.sh
+review-agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
+review-agent	1	bad slug or PR URL, no story, a review still running or the start failed	bin/lib/build.sh:review_agent	tests/review_agent_test.sh
+review-agent	1	--next refused: bad input, wrong pane, no findings sent or head moved	bin/lib/build.sh:review_next	tests/review_agent_test.sh
+review-agent	1	--recheck refused: bad input, wrong head, point not in findings or CI not green	bin/lib/build.sh:review_recheck	tests/review_agent_test.sh
+review-yield	0	prints that review-yield moved into flow's reviewers section	bin/swarm.sh:main	tests/removed_test.sh
+status	0	the status report was printed	bin/swarm.sh:main	none
+status	1	cannot start the report deadline	bin/lib/merge.sh:status_report	none
+step-up	0	the build stepped up to the next model, or the resume started	bin/swarm.sh:main	tests/escalate_ladder_test.sh
+step-up	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+step-up	1	refused (bad trigger, ladder off, top rung) or failed; says why	bin/lib/lifecycle.sh:step_up	tests/escalate_ladder_test.sh
+step-up	1	nothing waits to resume, lock held, or marker gone; says why	bin/lib/lifecycle.sh:step_up_resume	tests/escalate_ladder_test.sh
+story	0	the builder started	bin/swarm.sh:main	none
+story	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
+story	1	story not ready, not a code story, build exists or the start failed	bin/lib/build.sh:build_story	tests/epic_briefs_test.sh,tests/env_allowlist_test.sh,tests/board_state_test.sh
+story	1	too many arguments or an unknown flag; says which	bin/swarm.sh:dispatch	none
+swarms	0	the swarms on this machine listed	bin/swarm.sh:main	none
+swarms	1	herdr gave no workspace, pane or agent list, or cut it short	bin/lib/dash.sh:swarms	tests/swarms_test.sh
+swarms	1	an argument was given; swarms takes none	bin/swarm.sh:dispatch	tests/swarms_test.sh
+tell	0	the findings, nudge or resume was sent, queued, or noted	bin/swarm.sh:main	tests/next_test.sh
+tell	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+tell	1	bad kind or file, or the agent cannot be told now; says why	bin/lib/agents.sh:tell_agent	tests/next_test.sh,tests/tell_queue_test.sh,tests/escalate_triggers_test.sh
+tidy	0	empty and retired panes were listed or closed	bin/swarm.sh:main	tests/reconcile_pull_test.sh
+tidy	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+tidy	1	--yes with no pane id, or herdr lists unreadable; says why	bin/lib/lifecycle.sh:tidy_panes	none
+unblock	0	blocked stories whose parents are done were made ready	bin/swarm.sh:main	tests/backlog_test.sh,tests/board_state_test.sh
+unblock	1	bad --startable scope or an unknown argument	bin/swarm.sh:dispatch	none
+update	0	the plugin update ran	bin/swarm.sh:(early case)	none
+upgrade	0	every agent moved to the new version	bin/swarm.sh:main	tests/upgrade_test.sh
+upgrade	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
+upgrade	1	bad argument, unknown epic, or an agent was left on the old version	bin/lib/lifecycle.sh:upgrade_agents	tests/upgrade_test.sh
+upgrade	143	TERM stops the worker; it logs what moved and what is left	bin/lib/lifecycle.sh:upgrade_agents	none
+version	0	printed the version, and a warning if a newer one is out	bin/swarm.sh:(early case)	none
+wait	0	the agent is idle, done or gone, or the lead has news	bin/swarm.sh:main	tests/epic_wait_session_test.sh
+wait	1	the timeout passed and the agent was still busy	bin/lib/agents.sh:wait_agent	tests/wait_past_test.sh,tests/epic_wait_session_test.sh
+wait	1	bad option mix, or idle with no findings file at the timeout	bin/lib/lifecycle.sh:wait_command	tests/wait_lead_test.sh,tests/review_agent_test.sh,tests/wait_past_test.sh
+wait	1	wait --lead timed out with nothing new, or its lock failed	bin/lib/lifecycle.sh:wait_lead	tests/wait_lead_test.sh
+wait	3	wait --stall: the builder stalled	bin/lib/agents.sh:wait_agent	tests/agent_liveness_test.sh,tests/dash_wait_test.sh
+wait	4	the agent is stuck, such as a model error it cannot resume	bin/lib/agents.sh:wait_agent	tests/api_model_error_test.sh
+wait	5	wait --idle ended 0 on something other than idle or done	bin/lib/lifecycle.sh:wait_command	none
+wait	129	wait --lead got a HUP	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh
+wait	130	wait --lead got an INT	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh
+wait	137	wait --lead was killed because a newer run replaced it	bin/lib/lifecycle.sh:lead_lock	none
+wait	143	wait --lead got USR1 or TERM, such as a newer run taking over	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh
+wait-pr	0	every check on the head is green	bin/swarm.sh:main	tests/wait_pr_test.sh
+wait-pr	1	a check on the head is red	bin/lib/merge.sh:wait_pr	tests/wait_pr_test.sh
+wait-pr	2	any stop that is no red check, such as a gh error or timeout	bin/swarm.sh:EXIT trap	tests/wait_pr_test.sh
+watch	0	a story PR opened or changed, or the epic has no agent work left	bin/swarm.sh:main	tests/watch_opened_test.sh
+watch	1	a story's repo could not be resolved; says why	bin/lib/merge.sh:watch_prs	none
+where	0	the agent's pane, workspace and tab printed	bin/swarm.sh:main	tests/where_test.sh
+where	1	herdr gave no agent list, or lists no such agent in this project	bin/lib/agents.sh:agent_where	tests/where_test.sh
+where	1	not exactly one agent named, or the lookup failed; says why	bin/swarm.sh:dispatch	tests/where_test.sh
