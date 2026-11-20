@@ -680,7 +680,9 @@ Repeat until a step below says stop:
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
      and docs/ did not, unless that line is there (a change only to commands/*.md counts as its own
-     docs). Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
+     docs).
+     In swarm-dev's own repo, that check also counts `cmd/`, `internal/` and `go.mod` as code.
+     Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
      `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a
      `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json
      headRefOid -q .headRefOid`). Without `--head`, wait-pr waits on the head GitHub reports first,

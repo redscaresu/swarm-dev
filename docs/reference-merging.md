@@ -226,7 +226,9 @@ the changed paths, unless the PR body has a `Docs: none — <reason>` line. That
 or `* ` list item and may use `-` or `--` for the dash. The reason must be at least two characters,
 and a placeholder such as `<reason>` does not count, nor does a line inside a ```` ``` ```` fence or
 a `>` quote. A change to `commands/*.md` is the text a user reads, so it covers itself when nothing
-else in the code changed; next to a `bin/` or `hooks/` change it does not. The board's own paths
+else in the code changed; next to a `bin/` or `hooks/` change it does not.
+In swarm-dev's own repo, `cmd/`, `internal/` (Go test files included) and `go.mod` count as code too, and when the plugin's `plugin.json` names no GitHub repository they count in every repo.
+The board's own paths
 (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files `retros/*.md`) are not
 docs, even when the board is `docs/`; the rest of `docs/` is. It compares against origin's tag by its
 SHA and never fetches over your local tag. It refuses when origin has no
