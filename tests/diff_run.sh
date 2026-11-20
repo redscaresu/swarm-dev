@@ -28,9 +28,8 @@
 #             in either. A fixture that rightly makes no call names none.
 #
 # The command runs under env -i with only PATH, HOME, LANG, LC_ALL, TERM, USER, LOGNAME,
-# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), TMPDIR=ROOT/tmp,
-# CLAUDE_CONFIG_DIR=ROOT/claude-config and CLAUDE_PLUGIN_ROOT=TREE (as Claude Code sets it for a hook
-# hooks/hooks.json runs), then FX_ENV, then three FX_ENV cannot override: PATH with the
+# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), TMPDIR=ROOT/tmp and
+# CLAUDE_CONFIG_DIR=ROOT/claude-config, then FX_ENV, then three FX_ENV cannot override: PATH with the
 # shims first (before FX_ENV's PATH when it sets one), GH_CONFIG_DIR an empty directory, and
 # HERDR_BIN_PATH. So no GH_TOKEN or GITHUB_TOKEN of the caller's reaches it. It leads a process
 # group of its own; once it exits, the run waits up to --bound seconds for every other process in the
@@ -41,6 +40,8 @@
 # (or from itself) refuses the call the same way, so no stub can loop back through it.
 # SWARM_FORBID_PROJECT, the checkout make test runs from, never names a fixture's project, since each
 # fixture root is a new directory, so a hook writes its events.tsv line there under make test too.
+# CLAUDE_PLUGIN_ROOT=TREE, as Claude Code sets it for a hook hooks/hooks.json runs, goes in beside
+# TMPDIR and CLAUDE_CONFIG_DIR, before FX_ENV, so a fixture can set its own.
 #
 # Streams compared, each after the replacements and masks below:
 #   stdout, stderr, exit  the command's
@@ -56,15 +57,15 @@
 # each of a fixed shape: an ISO time stamp (2026-11-20T09:30:00Z) becomes <time>; a pid after "pid ",
 # "pid=" or "pid:", and the content of a file named pid, <pid>; a mktemp suffix after tmp. or
 # swarm-<name>. (bin/lib/merge.sh's names) <tmp>; and, in .swarm/run-times.tsv, the seconds column
-# (1.234) <seconds> and the load column (0.52, or -) <load>; and in a calls stream, a herdr call's
-# value after --seq of 19 digits (agent-state.sh's time.time_ns()) <seq>. A value of another shape is
-# left as it is.
+# (1.234) <seconds> and the load column (0.52, or -) <load>. A value of another shape is left as it is.
+# In a calls stream, a herdr call's value after --seq of 19 digits (agent-state.sh's time.time_ns())
+# becomes <seq>, and a value of another shape there is left as it is too.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
-# diff for each), a run did not make a named call (MISSING <fixture> ...), a process outlived the
-# bound (STUCK <fixture> ...), or a group passed --max-procs (RUNAWAY <fixture> ...) or --timeout
-# (TIMEOUT <fixture> ...), and 2 on a bad argument or a
+# diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
+# (RUNAWAY <fixture> ...) or --timeout (TIMEOUT <fixture> ...), and 2 on a bad argument or a
 # fixture that fails to build on either tree (BUILD-FAIL <fixture> ... and its output).
+# A run that did not make a named call (MISSING <fixture> ...) exits 1 too.
 set -euo pipefail
 
 BOUND=10
@@ -179,9 +180,9 @@ written() {
   done | LC_ALL=C sort | while IFS=$'\t' read -r _ _ rec; do cat "${rec}"; done
 }
 
-# normalize <tree> <tree as given> <run dir> <version> [file|stream] — stdin with the replacements and
-# masks above; with [file], stdin is that file's content, and its own masks apply; with a calls:<name>
-# stream, so do a call's.
+# normalize <tree> <tree as given> <run dir> <version> [file] — stdin with the replacements and masks
+# above; with [file], stdin is that file's content, and its own masks apply.
+# A calls:<name> stream in place of [file] gets a call's masks.
 normalize() {
   DR_T="$1" DR_TL="$2" DR_R="$3/root" DR_D="$3" DR_V="$4" DR_F="${5-}" perl -pe '
     BEGIN { @r = sort { length($b->[0]) <=> length($a->[0]) } grep { length $_->[0] }
@@ -238,7 +239,8 @@ SHIM
 build() {
   # shellcheck disable=SC2034 # the fixture reads ROOT and TREE
   ROOT="$2" TREE="$3"
-  FX_CMD=(); FX_ENV=(); FX_STDIN=/dev/null; FX_CWD="$2"; FX_GH=""; FX_HERDR=""; FX_CALLS=()
+  FX_CMD=(); FX_ENV=(); FX_STDIN=/dev/null; FX_CWD="$2"; FX_GH=""; FX_HERDR=""
+  FX_CALLS=()
   cd "$2"
   "fx_$1"
   [[ ${#FX_CMD[@]} -gt 0 ]] || { echo "fx_$1 set no FX_CMD" >&2; return 1; }
@@ -268,8 +270,9 @@ watch_group() {
 }
 
 # run_one <fixture> <a|b> — build and run <fixture> against tree <a|b>, leaving its streams in
-# ${WORK}/<fixture>.<a|b>/out/. Returns 2 when the build failed, 3 when a process outlived the bound,
-# watch_group killed the group or a named call was not made.
+# ${WORK}/<fixture>.<a|b>/out/. Returns 2 when the build failed, 3 when a process outlived the bound
+# or watch_group killed the group.
+# A named call it did not make returns 3 too.
 run_one() {
   local fx="$1" side="$2" tree tree_l dir root meta pid kind why rc=0 left="" i s v base_path missing="" envs=() FX_CMD FX_ENV FX_STDIN FX_CWD FX_GH FX_HERDR FX_CALLS
   if [[ "${side}" == a ]]; then tree="${TREE_A}" tree_l="${TREE_A_L}"; else tree="${TREE_B}" tree_l="${TREE_B_L}"; fi
