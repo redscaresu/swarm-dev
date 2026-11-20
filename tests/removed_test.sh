@@ -56,7 +56,9 @@ else echo "ok   bin/swarm.sh and bin/lib say verify only as git --verify and in 
 
 # review.md is narrowed to docs/review.md: commands/epic.md still writes the epic reviewer's D/review.md.
 DOCS_GONE='pr_per|finished = mark|keep_panes|review_bot|release story|swarm.sh decisions|swarm.sh export|docs/review\.md|kind: verify|verify story|swarm\.sh cost'
-if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/templates" "${REPO}/skills")"; then
+# docs/port/names.tsv lists the removed keys a config may still set, for tests/port_names_test.sh.
+if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/templates" "${REPO}/skills" \
+  | grep -vE '^[^:]*/docs/port/names\.tsv:[0-9]+:removed-setting[[:space:]]')"; then
   echo "FAIL docs, commands, templates or skills mention something removed:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi
 
