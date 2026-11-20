@@ -51,7 +51,8 @@ jobs:
           cache: false
       - name: Put macOS's bash 3.2 first on PATH
         if: steps.gate.outputs.board_only != 'true'
-        # PATH takes directories, so /bin/bash gets one of its own, ahead of the runner's Homebrew bash 5.
+        # PATH takes directories, so /bin/bash gets one of its own. It keeps bash 3.2 first even when the
+        # runner image or an earlier step puts another bash, such as Homebrew's bash 5, ahead of /bin.
         # $GITHUB_PATH puts it first for every later step: make test runs `bash scripts/test.sh`, and each
         # test starts with #!/usr/bin/env bash.
         run: |
