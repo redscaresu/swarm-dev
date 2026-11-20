@@ -4,9 +4,13 @@
 # still a function in its file, under bin/, hooks/, cmd/ or internal/ (never a *_test.go), whose body
 # names the field as a whole word: a bash `name() {` or `name() (`, a Python `def name(` (or
 # `<file>:__main__`, the file's `if __name__ == "__main__":` block), or a Go `func Name(` or method.
-# Full-line comments and the declaration (the function's name and parameters) do not count, and a //
-# or # inside a string is no comment. So a port that moves a reader must point read_by at the new
-# function. The fixture cases pin that rule; the last case checks the real inventory against the code.
+# So a port that moves a reader must point read_by at the new function. The fixture cases pin that
+# rule; the last case checks the real inventory against the code.
+# In a body, full-line comments do not count, nor does the line that declares the function, up to
+# where its body starts (its name, and the parameters on that line); a // or # inside a string is no
+# comment. A comment that follows code on a line is searched with it, after a one-line function's
+# closing brace too. A signature split over several lines is not parsed: its later lines are searched
+# as body, and a Python def whose closing `):` sits at the def's own indent is read as having no body.
 # Files are listed with find, not git, so it runs the same on a copy of the worktree without .git.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
