@@ -37,6 +37,9 @@ scripts/test.sh Makefile	all
 scripts/select-tests.sh scripts/select_tests.py scripts/test-map.tsv	tests/select_tests_test.sh
 # build.sh's basename is also bin/lib/build.sh's, so `named` would pick every test of the bin one.
 scripts/build.sh	tests/build_test.sh
+# The allow lists: diff_allow_test.sh parses every entry file under scripts/allow/, so no test names
+# one. scripts/*, the row after this one, does not span directories, so it matches none of them.
+scripts/allow/**	tests/diff_allow_test.sh
 scripts/*	named
 # Every command file is read by the tests that check the docs' names, the roles, the codex lines, the
 # skill's links, the removed names, and the bare /swarm that command_names_test.sh greps every command for.
