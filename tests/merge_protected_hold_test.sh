@@ -6,9 +6,12 @@
 # it too, saying why: a transient gh error is read again, a 404 is not, a hung read stops at
 # BASE_MOVED_WAIT, and a PR of over 300 files or of no file is never listed. A PR that changes none of
 # the paths merges, a --board PR reads no compare, and under merge = human merge_grant still refuses one
-# under an HLD granting merge, the names as written (Hooks/x.sh is not hooks/x.sh to it). On
-# merge_fixture.sh, whose gh stub answers compare/main...<head> with
-# ${FX}/compare.main, else the PR's files.
+# under an HLD granting merge, the names as written (Hooks/x.sh is not hooks/x.sh to it). In the
+# plugin's own repo (plugin.json's repository, its URL in any case) internal/guard/, internal/merge/,
+# internal/release/, internal/agentenv/ and .claude-plugin/ hold too, in any case of letters, but not
+# internal/guardian/; in o/r they merge, unless plugin.json names no repository, which holds them
+# saying plugin_repo could not answer. On merge_fixture.sh, whose gh stub answers
+# compare/main...<head> with ${FX}/compare.main, else the PR's files.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -125,5 +128,54 @@ is "merge = human, granted: two pinned compare reads, the epic guard's and the g
 granted; changes Hooks/x.sh; merge "${URL}"
 is "merge = human, granted, a story PR changing Hooks/x.sh merges: the grant lookup matches the case as written" "${OK}" "$(events | paste -sd'|' -)"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
+
+# --- In the plugin's own repo (plugin.json's repository, read as merge_rules_test.sh reads it), a story
+# PR that changes one of its four Go packages or .claude-plugin/ is held too, in any case of letters.
+OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${REPO}/.claude-plugin/plugin.json")"
+# own_fresh [owner/repo] — fresh, with story s listing PR 7 of [owner/repo] (the plugin's own repo, as
+# written) as OWN_URL, and the board's origin that repo.
+own_fresh() {
+  OWN_URL="https://github.com/${1:-${OWN_REPO}}/pull/7"
+  fresh; item s "status: review" "prs: ${OWN_URL}"; echo "{\"nameWithOwner\":\"${OWN_REPO}\"}" > "${FX}/origin"
+}
+for p in internal/guard/x.go internal/merge/x.go internal/release/x.go internal/agentenv/x.go .claude-plugin/marketplace.json; do
+  own_fresh; changes "${p}"; merge "${OWN_URL}"
+  held_s "the plugin's own repo: a story PR changing ${p}" "${p}"
+done
+# The PR's URL keeps the case it was written in, and the repo is matched in any case.
+MIXED="$(python3 -c 'import sys; print(sys.argv[1].title())' "${OWN_REPO}")"
+mixed_both() { [[ "${MIXED%/*}" != "${OWN_REPO%/*}" && "${MIXED#*/}" != "${OWN_REPO#*/}" ]]; }
+check "the plugin's own repo in mixed case: ${MIXED} differs from ${OWN_REPO} in owner and name" mixed_both
+own_fresh "${MIXED}"; changes internal/merge/x.go; merge "${OWN_URL}"
+held_s "the plugin's own repo written ${MIXED}: a story PR changing internal/merge/x.go" internal/merge/x.go
+for p in Internal/Merge/x.go .Claude-Plugin/x.json; do
+  own_fresh; changes "${p}"; merge "${OWN_URL}"
+  held_s "the plugin's own repo: a story PR changing ${p}" "${p}"
+done
+# A whole directory with its slash: internal/guardian/ is not internal/guard/.
+own_fresh; changes internal/guardian/x.go; merge "${OWN_URL}"
+is "the plugin's own repo: a story PR changing internal/guardian/x.go merges" "${OK}" "$(events | paste -sd'|' -)"
+check "the plugin's own repo: a story PR changing internal/guardian/x.go: gh pr merge ran" merged
+# In o/r those paths are no one's: the PR merges.
+fresh; changes internal/merge/x.go .claude-plugin/plugin.json; merge "${URL}"
+is "o/r: a story PR changing internal/merge/x.go and .claude-plugin/plugin.json merges" "${OK}" "$(events | paste -sd'|' -)"
+check "o/r: a story PR changing internal/merge/x.go and .claude-plugin/plugin.json: gh pr merge ran" merged
+# With a plugin.json that names no repository, plugin_repo cannot answer, so the paths are held in o/r
+# too, the line saying why (fails closed); a path of every repo's list needs no such note, and a PR
+# changing none of them still merges.
+NOREPO="${ROOT}/norepo"; mkdir -p "${NOREPO}/.claude-plugin"; cp -R "${REPO}/bin" "${NOREPO}/"
+python3 -c 'import json, sys; d = json.load(sys.stdin); d.pop("repository"); print(json.dumps(d))' \
+  < "${REPO}/.claude-plugin/plugin.json" > "${NOREPO}/.claude-plugin/plugin.json"
+# norepo_merge <args> — merge, run from the copy of the plugin whose plugin.json names no repository.
+# shellcheck disable=SC2034 # merge_fixture.sh's merge runs ${SWARM}
+norepo_merge() { local SWARM="${NOREPO}/bin/swarm.sh"; merge "$@"; }
+fresh; changes internal/merge/x.go; norepo_merge "${URL}"
+refused "o/r, plugin.json naming no repository: a story PR changing internal/merge/x.go" \
+  "held: s changes internal/merge/x.go, which only the user merges (plugin_repo could not answer whether o/r is this plugin's own repo, so its own paths are held in every repo); the user merges it"
+check "o/r, plugin.json naming no repository: events.tsv has merge s held:" logged '^merge s held: s changes internal/merge/x.go'
+fresh; changes hooks/x.sh; norepo_merge "${URL}"
+held_s "o/r, plugin.json naming no repository: a story PR changing hooks/x.sh" hooks/x.sh
+fresh; changes bin/x.sh; norepo_merge "${URL}"
+is "o/r, plugin.json naming no repository: a story PR changing bin/x.sh merges" "${OK}" "$(events | paste -sd'|' -)"
 
 finish "merge protected hold"
