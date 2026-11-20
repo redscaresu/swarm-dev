@@ -51,7 +51,7 @@ _trusted	1	Claude Code does not trust the folder yet; says what to run	bin/lib/a
 agent	0	the agent started	bin/swarm.sh:main	tests/env_allowlist_test.sh
 agent	1	the story's env: line is bad; says why on stderr	bin/lib/agents.sh:agent_cmd	none
 agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
-base	0	printed the repo's base branch	bin/swarm.sh:main	tests/epic_briefs_test.sh
+base	0	printed the repo's base branch	bin/swarm.sh:main	none
 base	1	origin cannot be listed or fetched, or has no wanted branch; says why	bin/swarm.sh:base_for	none
 base	1	the repo could not be found; prints why	bin/swarm.sh:dispatch	none
 base	1	the repo is not named, the name is bad or its folder has no .git	bin/swarm.sh:repo_dir	none
@@ -107,7 +107,7 @@ init	0	the board and files were set up	bin/swarm.sh:main	none
 init	1	the .swarm/auto-mode-done file could not be written	bin/lib/lifecycle.sh:auto_mode_done	none
 init	1	not in a git repo, not at its root, or not at the project's root	bin/lib/lifecycle.sh:init_check	none
 init	1	an argument init does not know; prints its usage	bin/swarm.sh:dispatch	none
-intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	tests/intervene_test.sh
+intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	none
 intervene	1	unknown kind or cause, empty line, or events log unwritable	bin/swarm.sh:intervene	tests/intervene_test.sh
 lessons	0	prints that lessons moved into outcomes' recurring block	bin/swarm.sh:main	tests/config_test.sh
 lessons	1	an argument other than --all; prints the usage line	bin/swarm.sh:dispatch	tests/config_test.sh
@@ -121,11 +121,11 @@ outcomes	0	the rows printed	bin/swarm.sh:main	tests/outcomes_test.sh
 outcomes	1	bad --since, no agents log or the logs could not be read; says why	bin/lib/reports.sh:outcomes_report	none
 plan-unasked	0	the later epic was marked planned unasked	bin/swarm.sh:main	none
 plan-unasked	1	more than one epic, no such epic, or the epic is not later	bin/lib/board.sh:plan_unasked	tests/next_test.sh
-policy	0	printed the model and effort for the role	bin/swarm.sh:main	tests/config_test.sh
+policy	0	printed the model and effort for the role	bin/swarm.sh:main	none
 policy	1	the role is not a known one; lists the roles	bin/swarm.sh:policy	none
 reconcile	0	the board state was brought in line with the PRs	bin/swarm.sh:main	tests/epic_reconcile_test.sh,tests/reconcile_pull_test.sh
 reconcile	1	cannot create the .swarm folder	bin/lib/board.sh:reconcile	none
-reset	0	the escalated story went back to ready as code	bin/swarm.sh:main	tests/close_test.sh
+reset	0	the escalated story went back to ready as code	bin/swarm.sh:main	none
 reset	1	missing or bad slug or reason, no story, nothing to reset, or already reset	bin/lib/board.sh:reset_story	tests/close_test.sh
 restart	0	the builder was started again	bin/swarm.sh:main	tests/restart_test.sh
 restart	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
@@ -133,7 +133,7 @@ restart	1	story is not restartable or its start failed; says why	bin/lib/lifecyc
 restart	1	not exactly one slug given; prints usage	bin/swarm.sh:dispatch	none
 retro	0	the retro report printed	bin/swarm.sh:main	tests/retro_test.sh
 retro	1	bad flag, no tag to start from or no such tag; says why on stderr	bin/lib/reports.sh:retro_report	tests/retro_test.sh
-review	0	the story was set to review with its PRs	bin/swarm.sh:main	tests/review_test.sh
+review	0	the story was set to review with its PRs	bin/swarm.sh:main	none
 review	1	bad head SHA, no PR URL, or the story waits on a parent PR to merge	bin/lib/board.sh:mark_review	tests/handover_note_test.sh
 review-agent	0	the review agent started	bin/swarm.sh:main	tests/review_agent_test.sh
 review-agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
