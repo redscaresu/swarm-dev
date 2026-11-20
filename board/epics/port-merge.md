@@ -20,6 +20,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Changing what is held or refused, beyond the two items
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/merge_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P8.
 - merge's Go package is protected: the user merges every port here and every later change to it (HLD:297).
 - merge_pr is one body for the three routes. It parses --board and --release itself, and the money hold, the head's CI check and the epic guard run on all of them (bin/lib/merge.sh:1194,1228-1290). So one port takes the name and all three routes, after everything it calls is Go: port-merge-base, port-reconcile, port-release, port-wait-pr and tell.
