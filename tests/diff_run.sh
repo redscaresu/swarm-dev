@@ -479,29 +479,28 @@ place_calls() {
 # bash_env <meta> — write <meta>/bash-env, the command's BASH_ENV: each bash that starts under the
 # command (a script, bash -c, bin/gh-shim/gh; not a subshell, which is a fork) first appends
 # "<pid>\tfg\t<ppid>" to <meta>/starts when it started with SIGINT or SIGQUIT as it was, or
-# "<pid>\tign\t<ppid>" when both were ignored, and then, while its parent still runs, "<ppid>\tup\t<its parent>\t<its argv>": so a
-# launcher that exits before its worker's first call is still known by its argv and its parent.
-# A trap cannot be set on a signal ignored at a shell's start, so trap -p then prints nothing; the
-# traps are reset at once, and nothing is printed or left set. Each shim then appends "<pid>\tshim", and
-# place_calls drops the record just before it for that pid, the shim's own (bash 3.2 sets no $0 a
-# probe could tell a shim by): a record left for a shim's pid is a bash that ran there before it, as
-# `exec gh` leaves.
+# "<pid>\tign\t<ppid>" when both were ignored. An ignored one then appends, while its parent still
+# runs, "<ppid>\tup\t<its parent>\t<its argv>", so a launcher that exits before its worker's first
+# call is still known by its argv and its parent. One perl reads the two signals, as the shim does
+# (it inherits them from the bash, and bash's own trap -p reports a signal ignored at start
+# differently by version: 3.2 prints nothing, 5.x a trap of ''), and looks the parent up in the same
+# process, so the launcher has the least time to exit first. Nothing is printed or left set. Each shim then
+# appends "<pid>\tshim", and place_calls drops the record just before it for that pid, the shim's own
+# (bash 3.2 sets no $0 a probe could tell a shim by): a record left for a shim's pid is a bash that
+# ran there before it, as `exec gh` leaves.
 bash_env() {
-  { printf 'DIFF_RUN_PS=%q\n' "$(command -v ps)"
+  { printf 'DIFF_RUN_PS=%q DIFF_RUN_PERL=%q\n' "$(command -v ps)" "$(command -v perl)"
     cat <<'PROBE'
 if [ -n "${DIFF_RUN_STARTS-}" ]; then
-  trap : INT QUIT
-  if [ -n "$(trap -p INT)" ] || [ -n "$(trap -p QUIT)" ]; then
-    printf '%s\tfg\t%s\n' "$$" "${PPID}" >> "${DIFF_RUN_STARTS}" 2>/dev/null || :
-  else
-    printf '%s\tign\t%s\n' "$$" "${PPID}" >> "${DIFF_RUN_STARTS}" 2>/dev/null || :
-    DIFF_RUN_UP="$("${DIFF_RUN_PS}" -ww -o ppid=,args= -p "${PPID}" 2>/dev/null)" || DIFF_RUN_UP=""
-    [ -z "${DIFF_RUN_UP}" ] || printf '%s\tup\t%s\n' "${PPID}" "${DIFF_RUN_UP}" >> "${DIFF_RUN_STARTS}" 2>/dev/null || :
-    unset DIFF_RUN_UP
-  fi
-  trap - INT QUIT
+  DIFF_RUN_REC="$("${DIFF_RUN_PERL}" -e 'my ($pid, $pp, $ps) = @ARGV;
+    unless (($SIG{INT} // "") eq "IGNORE" && ($SIG{QUIT} // "") eq "IGNORE") { print "$pid\tfg\t$pp\n"; exit 0 }
+    print "$pid\tign\t$pp\n";
+    if (open(my $l, "-|", $ps, "-ww", "-o", "ppid=,args=", "-p", $pp)) { my $u = join("", <$l>); chomp $u; print "$pp\tup\t$u\n" if length $u }' \
+    "$$" "${PPID}" "${DIFF_RUN_PS}" 2>/dev/null)" || DIFF_RUN_REC=""
+  [ -z "${DIFF_RUN_REC}" ] || printf '%s\n' "${DIFF_RUN_REC}" >> "${DIFF_RUN_STARTS}" 2>/dev/null || :
+  unset DIFF_RUN_REC
 fi
-unset DIFF_RUN_PS
+unset DIFF_RUN_PS DIFF_RUN_PERL
 PROBE
   } > "$1/bash-env"
 }

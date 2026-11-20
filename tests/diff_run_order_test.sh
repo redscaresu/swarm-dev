@@ -96,8 +96,8 @@ trees() {
     printf '( bash "$(dirname "$0")/worker.sh" & sleep 1 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/nest.sh"
     printf 'gh api w-1 > /dev/null 2>&1\nsleep 1.5\ngh api w-2 > /dev/null 2>&1\ngh api w-3 > /dev/null 2>&1\n' > "${t}/worker.sh"
     # A launcher that exits before its worker's first call.
-    printf '( bash "$(dirname "$0")/late-worker.sh" & sleep 0.5 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/gone.sh"
-    printf 'sleep 1.5\ngh api v-1 > /dev/null 2>&1\ngh api v-2 > /dev/null 2>&1\n' > "${t}/late-worker.sh"
+    printf '( bash "$(dirname "$0")/late-worker.sh" & sleep 1 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/gone.sh"
+    printf 'sleep 2.5\ngh api v-1 > /dev/null 2>&1\ngh api v-2 > /dev/null 2>&1\n' > "${t}/late-worker.sh"
     # Two wrappers, each running its command in a group of its own (as bin/lib/merge.sh's within does),
     # one inside the other, on the foreground path.
     printf '%s\n' "perl -e 'if (!fork) { setpgrp; exec @ARGV } wait; exit(\$? >> 8)' bash \"\$(dirname \"\$0\")/mid.sh\"" > "${t}/within.sh"
