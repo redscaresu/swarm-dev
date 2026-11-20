@@ -408,23 +408,36 @@ merge_hold() {
 
 # protected_hold <rc> <out> — on the story route under merge = agent, once the story lookup has set MERGE_TARGET to
 # the slug and the head's CI check has passed: stop merge when the PR changes a protected path
-# (protected_paths), a renamed or removed file's old path too, judged on <rc> and <out>, pinned_files'
-# exit and output; a list it could not read holds the PR too, saying why, so the user can tell a
-# passing error, which the next swarm.sh merge reads past, from a hold that stands (a PR of over 300
-# files, the most the compare lists, or of no file). Either hold is recorded on the item in review
-# (protected_note), and a pass drops the record; either merge line carries hold=protected. --board and
-# --release change only board paths or plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
-# merge_pr, refuses such a PR (pr_hld puts it under no HLD).
+# (protected_paths, for the PR's repo: merge_pr's repo), a renamed or removed file's old path too,
+# judged on <rc> and <out>, pinned_files' exit and output; a list it could not read holds the PR too,
+# saying why, so the user can tell a passing error, which the next swarm.sh merge reads past, from a
+# hold that stands (a PR of over 300 files, the most the compare lists, or of no file). A hold on an
+# own-repo path in a repo own_repo cannot place says so (own_unknown). Either hold is recorded on the
+# item in review (protected_note), and a pass drops the record; either merge line carries
+# hold=protected. --board changes only board paths, never a protected path. --release changes
+# .claude-plugin/plugin.json, a protected path in this plugin's own repo, and goes unheld only because
+# its route never calls this. With merge = human it does not run: merge_grant, later in merge_pr,
+# refuses such a PR (pr_hld puts it under no HLD).
 protected_hold() {
   local why
   if [[ $1 -ne 0 ]]; then
     protected_note "unreadable: ${2%%$'\n'*}"
     merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it" hold=protected
   fi
-  why="$(cut -d' ' -f2- <<< "$2" | protected_paths any-case)"
+  why="$(cut -d' ' -f2- <<< "$2" | protected_paths "${repo}" any-case)"
   why="${why%%$'\n'*}"
   protected_note "${why}"
-  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it" hold=protected
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges$(own_unknown "${repo}" "${why}"); the user merges it" hold=protected
+}
+
+# own_unknown <owner/repo> <path> — protected_hold's note when <path> is under OWN_PROTECTED, in any case
+# of letters, and own_repo cannot answer for <owner/repo>, so protected_paths held it whatever the repo
+# (it fails closed); else nothing.
+own_unknown() {
+  local rc=0
+  grep -iqE "^(${OWN_PROTECTED})" <<< "$2" || return 0   # loose-match: ok a constant regex of literal paths
+  own_repo "$1" || rc=$?
+  [[ ${rc} -ne 2 ]] || echo " (plugin_repo could not answer whether $1 is this plugin's own repo, so its own paths are held in every repo)"
 }
 
 # protected_note [what] — protected_hold's record of its verdict for status and wait --lead
@@ -1158,7 +1171,9 @@ short_shas() {
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
 # passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
-# hooks/ or a root Makefile, a renamed file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
+# hooks/ or a root Makefile, and in this plugin's own repo internal/guard/, internal/merge/,
+# internal/release/, internal/agentenv/ or .claude-plugin/, a renamed file's old path too), which only
+# the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing; and, under either merge mode, it sets
 # no epic active with no ticket, or above the stage the base allows (epic_guard, read at the pinned
 # head, unless the board is not in the project's repo or the PR is in another repo than the board's,
@@ -2722,6 +2737,14 @@ m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/*$", u if isinstance
 sys.exit(m is None or print(m.group(1).lower()))' < "${SWARM_HOME}/.claude-plugin/plugin.json" 2>/dev/null
 }
 
+# plugin_own <owner/repo> — true when <owner/repo>, lower-cased, is this plugin's own repo (plugin_repo,
+# as release_docs compares them); false for any other repo, and when plugin_repo cannot answer, so a
+# rule for the own repo alone fails closed to the rule every repo has.
+plugin_own() {
+  local own
+  own="$(plugin_repo)" && [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]
+}
+
 # release_confirmed <owner/repo> <merge commit> <version> <base> — the tag v<version> is on <merge
 # commit>, or on a later commit of <base> (a later push's release run can tag first: release.yml runs
 # one at a time), and its GitHub release is published, waiting up to RELEASE_WAIT seconds for the
@@ -2881,7 +2904,7 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     why="$(release_grant "$1" "$2" "${was}" "${tag}")" || why="cannot tell which HLDs the stories merged since v${was} are under"
     [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET} waits on the user's merge (merge = human, and ${why})"
   fi
-  release_docs "${body}" "$2" "${was}" "${tag}"
+  release_docs "$1" "${body}" "$2" "${was}" "${tag}"
 }
 
 # release_retro <owner/repo> <base> <was> <new> — the retro gate, under either merge setting, reading git
@@ -2890,7 +2913,9 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 # (release_tag, by its SHA, never the local tag) is on the base and every change from it to RELEASE_BASE
 # is a fix (non_fix_change, through release_changes, read fresh, not from its cache). RELEASE_TAG is set
 # to that tag's commit for a patch, else empty. On a pass it prints one line, which merge's output keeps;
-# otherwise it refuses, naming the retro file, the change that is no fix or the read that failed. Every
+# for a patch in this plugin's own repo (plugin_own) that line names the fixes non_fix_change takes
+# there alone, port: true stories and changes only under tests/, beside fix: true stories and fix-main
+# builds. Otherwise it refuses, naming the retro file, the change that is no fix or the read that failed. Every
 # refusal on a board outside the repo, where neither read can pass, says to merge the PR by hand.
 release_retro() {
   local a b c d out err rc=0 hand=""
@@ -2911,7 +2936,11 @@ release_retro() {
   [[ ${rc} == 0 ]] \
     || merge_fail "--release: v$4 is a patch, but the fixes since v$3 cannot be read (${err#failed: })${hand}"
   [[ -z "${out}" ]] || merge_fail "--release: v$4 is a patch, but ${out%%$'\n'*}: cut a minor after its retro${hand}"
-  echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true story or a fix-main build"
+  if plugin_own "$1"; then
+    echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true or port: true story, a fix-main build or a change only under tests/"
+  else
+    echo "retro gate: v$4 is a patch; every change since v$3 is from a fix: true story or a fix-main build"
+  fi
 }
 
 # release_grant <owner/repo> <base> <version> <tag> — why HLDs do not cover the release, or nothing
@@ -3014,27 +3043,38 @@ release_tag() {
   echo "${tag}"
 }
 
-# release_docs <pr-body> <base> <version> [tag] — a release ships its docs: refuse when bin/, commands/ or
-# hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md and docs/
-# did not, naming the changed paths, unless docs_none finds a reason in the PR body. A change to
+# release_docs <owner/repo> <pr-body> <base> <version> [tag] — a release ships its docs: refuse when bin/,
+# commands/ or hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md
+# and docs/ did not, naming the changed paths, unless docs_none finds a reason in the PR body. In this
+# plugin's own repo (<owner/repo>, as the URL has it, lower-cased equals plugin_repo, as release_upgrade
+# compares them) RELEASE_GO_CODE counts as code too, its Go test files included; when plugin_repo
+# cannot answer it counts in every repo (fail closed), and the refusal says why. A change to
 # commands/*.md is the commands' own text, so it answers for itself, and only when nothing else in
 # the code changed. The board's own paths (board_paths) are not docs, even when the board is docs/.
 # [tag] is origin's tag as release_check read it; without one, origin's tag (release_tag) missing or
 # off origin/<base> refuses.
 release_docs() {
-  local tag="${4:-}" code docs p ex=()
-  ! docs_none <<< "$1" || return 0
-  [[ -n "${tag}" ]] || tag="$(release_tag "$2" "$3" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
-  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks)" \
-    || merge_fail "--release: git cannot diff v$3 with origin/$2"
+  local tag="${5:-}" code docs p own go=("${RELEASE_GO_CODE[@]}") why="" ex=()
+  ! docs_none <<< "$2" || return 0
+  [[ -n "${tag}" ]] || tag="$(release_tag "$3" "$4" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
+  if ! own="$(plugin_repo)"; then
+    why=" (the Go tree counts as code in every repo, as the plugin's plugin.json names no GitHub repository)"
+  elif [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]]; then
+    go=()
+  fi
+  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks ${go[@]+"${go[@]}"})" \
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
   [[ -n "${code}" ]] || return 0
   grep -qv '^commands/.*\.md$' <<< "${code}" || return 0
   while IFS= read -r p; do ex+=(":(exclude)${p%/}"); done < <(board_paths)
   docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
-    || merge_fail "--release: git cannot diff v$3 with origin/$2"
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
   [[ -z "${docs}" ]] || return 0
-  merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
+  merge_fail "--release: ${code//$'\n'/, } changed since v$4 but README.md, AGENTS.md and docs/ did not${why}: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
 }
+
+# The Go tree, which release_docs counts as code in this plugin's own repo.
+RELEASE_GO_CODE=(cmd internal go.mod)
 
 DOCS_NONE_FORMS="a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a \`\`\` block or a > quote)"
 # docs_none — true when stdin has a "Docs: none — <reason>" line (bulleted or not; —, - or --) whose

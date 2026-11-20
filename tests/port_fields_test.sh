@@ -2,11 +2,16 @@
 # port_fields_test.sh — docs/port/fields.tsv names each board front-matter field the code reads, by file
 # kind, with the functions that read it (read_by). Each row needs at least one read_by entry that is
 # still a function in its file, under bin/, hooks/, cmd/ or internal/ (never a *_test.go), whose body
-# names the field as a whole word: a bash `name() {`, a Python `def name(` (or `<file>:__main__`, the
-# file's `if __name__ == "__main__":` block), or a Go `func Name(` or method. Full-line comments do not
-# count. So a port that moves a reader must point read_by at the new function. The fixture cases pin
-# that rule; the last case checks the real inventory against the code. Files are listed with find, not
-# git, so it runs the same on a copy of the worktree without .git.
+# names the field as a whole word: a bash `name() {` or `name() (`, a Python `def name(` (or
+# `<file>:__main__`, the file's `if __name__ == "__main__":` block), or a Go `func Name(` or method.
+# So a port that moves a reader must point read_by at the new function. The fixture cases pin that
+# rule; the last case checks the real inventory against the code.
+# In a body, full-line comments do not count, nor does the line that declares the function, up to
+# where its body starts (its name, and the parameters on that line); a // or # inside a string is no
+# comment. A comment that follows code on a line is searched with it, after a one-line function's
+# closing brace too. A signature split over several lines is not parsed: its later lines are searched
+# as body, and a Python def whose closing `):` sits at the def's own indent is read as having no body.
+# Files are listed with find, not git, so it runs the same on a copy of the worktree without .git.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -32,6 +37,11 @@ unread() {
     | python3 -I -c '
 import re, sys
 tsv, files = sys.argv[1], set(sys.stdin.read().split())
+def code(l, c):
+    # <l> with its string literals emptied and then its trailing <c> comment cut, so a // or # in a
+    # string is not taken for a comment.
+    l = re.sub(r"\"(?:\\.|[^\"\\])*\"|\x27[^\x27]*\x27|\x60[^\x60]*\x60", "\"\"", l)
+    return re.sub(r"(^|\s)" + re.escape(c) + r".*$", "", l).rstrip()
 def bodies(path, name):
     try:
         lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
@@ -50,28 +60,31 @@ def bodies(path, name):
             j = i + 1
             while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > ind):
                 j += 1
-            out.append((lines[i:j], "#"))
+            # The declaration (its name and parameters) is no read: keep what follows its colon.
+            head = "" if name == "__main__" else re.sub(r"^.*?\)\s*(->[^:]*)?:", "", l, count=1)
+            out.append(([head] + lines[i + 1:j], "#"))
         elif path.endswith(".go"):
             if re.match(r"func (\([^)]*\) *)?" + re.escape(name) + r"\(", l):
-                if "{" in l and l.rstrip().endswith("}"):
-                    out.append(([l], "//"))
+                head = l.split("{", 1)[1] if "{" in l else ""   # what follows the declaration
+                if "{" in l and code(l, "//").endswith("}"):
+                    out.append(([head], "//"))
                     continue
                 j = i + 1
-                while j < len(lines) and lines[j] != "}":
+                while j < len(lines) and not lines[j].startswith("}"):
                     j += 1
-                out.append((lines[i:j + 1], "//"))
+                out.append(([head] + lines[i + 1:j + 1], "//"))
         else:
             m = re.match(r"(\s*)" + re.escape(name) + r"\(\) *([{(])(.*)$", l)
             if not m:
                 continue
             close = "}" if m.group(2) == "{" else ")"
-            if m.group(3).rstrip().endswith(close):
-                out.append(([l], "#"))
+            if code(m.group(3), "#").endswith(close):
+                out.append(([m.group(3)], "#"))
                 continue
             j = i + 1
             while j < len(lines) and not re.match(re.escape(m.group(1) + close), lines[j]):
                 j += 1
-            out.append((lines[i:j + 1], "#"))
+            out.append(([m.group(3)] + lines[i + 1:j + 1], "#"))
     return out
 def reads(entry, field):
     path, _, name = entry.rpartition(":")
@@ -101,15 +114,16 @@ if rows == 0:
 }
 
 # fixture <name> — a stand-in project with one reader of the field color in each language, and a
-# *_test.go and a __pycache__ file that name it; the caller writes its fields.tsv.
+# *_test.go and a __pycache__ file that name it; the caller writes its fields.tsv. Each reader of hue
+# comes just before one of color, so a hue reader whose body runs on reads as a reader of color.
 fixture() {
   local p="${dir}/$1"
   mkdir -p "${p}/bin/lib/__pycache__" "${p}/internal/x" "${p}/docs/port"
   # shellcheck disable=SC2016 # the $1 is the fixture's shell, written as text
-  printf 'color_of() {\n  fm "$1" color\n}\nshade_of() { get_fm "$1" color; }\nold_reader() {\n  # reads color\n  fm "$1" hue\n}\n' > "${p}/bin/lib/a.sh"
-  printf 'def color_of(fm):\n    return fm.get("color")\n\nif __name__ == "__main__":\n    print(front()["color"])\n' > "${p}/bin/lib/p.py"
+  printf 'hue_of() { get_fm "$1" hue; } # note\ncolor_of() {\n  fm "$1" color\n}\nquoted_of() { echo "a # b" hue; }\nshade_of() { get_fm "$1" color; }\nold_reader() {\n  # reads color\n  fm "$1" hue\n}\ncolor() {\n  fm "$1" hue\n}\n' > "${p}/bin/lib/a.sh"
+  printf 'def color_of(fm):\n    return fm.get("color")\n\ndef color(f):\n    return f.get("hue")\n\nif __name__ == "__main__":\n    print(front()["color"])\n' > "${p}/bin/lib/p.py"
   printf 'color' > "${p}/bin/lib/__pycache__/p.cpython-39.pyc"
-  printf 'package x\n\nfunc OnlyReader() string { return "hue" }\n\nfunc ColorOf(f string) string {\n\treturn fm(f, "color")\n}\n\nfunc (b *Board) Shade(f string) string {\n\treturn b.fm(f, "color")\n}\n' > "${p}/internal/x/x.go"
+  printf 'package x\n\nfunc OnlyReader() string { return "hue" }\n\nfunc ColorOf(f string) string {\n\treturn fm(f, "color")\n}\n\nfunc Ended(f string) string {\n\treturn fm(f, "hue")\n} // end\n\nfunc Noted() string { return "hue" } // note\n\nfunc Link() string { return "a // b hue" }\n\nfunc Tint(color string) string { return "hue" }\n\nfunc (b *Board) Shade(f string) string {\n\treturn b.fm(f, "color")\n}\n' > "${p}/internal/x/x.go"
   printf 'package x\n\nfunc TestColor(t *testing.T) { _ = "color" }\n' > "${p}/internal/x/x_test.go"
   echo "${p}"
 }
@@ -144,6 +158,22 @@ printf '# only a header\n' > "${p}/docs/port/fields.tsv"
 check "a tsv with no rows fails" "docs/port/fields.tsv: no rows" "$(unread "${p}")"
 row "${p}" "internal/x/x.go:OnlyReader"
 check "a one-line Go func ends at its own brace" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "internal/x/x.go:Noted"
+check "a one-line Go func with a trailing comment ends at its own brace" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "internal/x/x.go:Ended"
+check "a Go func whose closing brace has a comment ends there" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "internal/x/x.go:Link"
+check "a // in a one-line Go func's string is no comment" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "bin/lib/a.sh:quoted_of"
+check "a # in a one-line bash function's string is no comment" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "bin/lib/a.sh:color"
+check "a bash function named for the field is no reader of it" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "bin/lib/p.py:color"
+check "a Python def named for the field is no reader of it" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "internal/x/x.go:Tint"
+check "a Go parameter named for the field is no read of it" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
+row "${p}" "bin/lib/a.sh:hue_of"
+check "a one-line bash function with a trailing comment ends at its own brace" "${want}" "$(unread "${p}" | cut -d'(' -f1 | sed 's/ $//')"
 rm "${p}/docs/port/fields.tsv"
 check "a missing tsv fails" "docs/port/fields.tsv: cannot read it" "$(unread "${p}" | head -1 | cut -d'(' -f1 | sed 's/ $//')"
 

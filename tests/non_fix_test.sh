@@ -275,7 +275,7 @@ rm "${ROOT}/gh.fail"
 nf v1.2.0 "${C4}"
 check "the next run gives the real answer, and caches it" "0|${WIN}|1" "${CODE}|${OUT}|$(cached_files)"
 check "the cache file is named for the rule, the board's path and both SHAs" \
-  "${P}/.swarm/gh-cache/o--r/non-fix/rule1-docs%2F-${OLD}-${C4}.json" "$(find "${P}/.swarm/gh-cache" -name '*.json')"
+  "${P}/.swarm/gh-cache/o--r/non-fix/rule2-docs%2F-${OLD}-${C4}.json" "$(find "${P}/.swarm/gh-cache" -name '*.json')"
 : > "${ROOT}/gh.fail"
 nf v1.2.0 "${C4}"
 check "a second run on the same SHAs with gh failing prints the first run's answer from the cache" "0|${WIN}|no gh" \

@@ -16,6 +16,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Changing what tidy closes
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/close_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - close logs a `close:<cause>` line through the frame's main, whose arm moves to Go with this port (bin/swarm.sh:1287).
 - A close that a step-up took the place of logs no line (stepped_up_since): port-step-up, still bash then, answers that through the binary's caller as today.

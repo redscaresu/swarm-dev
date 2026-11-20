@@ -20,13 +20,15 @@ git -C "${P}" init -q
 git -C "${P}" remote add origin https://github.com/o/r.git
 fails=0
 
-# gh: repo view names o/r (fails with ${FX}/repo-view.fail); pr view <n> answers ${FX}/pr.<n>; api
+# gh: repo view names O/R, or ${FX}/repo-name's repo when there is one (fails with ${FX}/repo-view.fail);
+# pr view <n> answers ${FX}/pr.<n>; api
 # <path> answers ${FX}/<path with / and ? as _>, else a 404. Each call is a line in ${FX}/gh.log.
 printf '#!/usr/bin/env bash\nFX="%s"\n' "${FX}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${FX}/gh.log"
 case "$1 $2" in
-  "repo view") [ ! -e "${FX}/repo-view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"nameWithOwner":"O/R"}' ;;
+  "repo view") [ ! -e "${FX}/repo-view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+               r=O/R; [ ! -e "${FX}/repo-name" ] || r="$(cat "${FX}/repo-name")"; echo "{\"nameWithOwner\":\"${r}\"}" ;;
   "pr view") cat "${FX}/pr.$3" ;;
   *) for a in "$@"; do p="${a}"; done; p="${p//\//_}"; p="${p//\?/_}"
      if [ -e "${FX}/${p}" ]; then cat "${FX}/${p}"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
@@ -223,6 +225,32 @@ echo '[{"filename":"bin/x.sh"},{"status":"renamed","filename":"old/Makefile","pr
 expect story-pr-renaming-makefile-away-none https://github.com/o/r/pull/15 none
 echo '[{"filename":"docs/stories/s-child.md"},{"filename":".github/workflows/ci.yml"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
 expect story-pr-touching-board-and-protected-path-none https://github.com/o/r/pull/15 none
+# In o/r internal/merge/ is no one's: story PR #15 touching it is A's, as before.
+echo '[{"filename":"bin/x.sh"},{"filename":"internal/merge/x.go"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect o-r-story-pr-touching-internal-merge https://github.com/o/r/pull/15 "$(printf '%s\nmerge\nstories' "${A}")"
+# With a plugin.json that names no repository, plugin_repo cannot answer, so internal/merge/ is
+# protected in o/r too (fails closed): none; a PR touching none of the paths is still A's.
+NOREPO="${ROOT}/norepo"; mkdir -p "${NOREPO}/.claude-plugin"; cp -R "$(dirname "${SWARM}")" "${NOREPO}/bin"
+python3 -c 'import json, sys; d = json.load(sys.stdin); d.pop("repository"); print(json.dumps(d))' \
+  < "$(dirname "${SWARM}")/../.claude-plugin/plugin.json" > "${NOREPO}/.claude-plugin/plugin.json"
+# norepo_expect <name> <arg> <expected output> — expect, run from that copy of the plugin.
+norepo_expect() { local SWARM="${NOREPO}/bin/swarm.sh"; expect "$@"; }
+norepo_expect no-plugin-repo-story-pr-touching-internal-merge-none https://github.com/o/r/pull/15 none
+echo '[{"filename":"bin/x.sh"},{"filename":"README.md"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+norepo_expect no-plugin-repo-story-pr-touching-no-protected-path https://github.com/o/r/pull/15 "$(printf '%s\nmerge\nstories' "${A}")"
+# In the plugin's own repo (plugin.json's repository, read as merge_rules_test.sh reads it), with the
+# board in it: story PR #20 (s-own, under A) touching internal/merge/ is under none; touching
+# bin/x.sh alone, it is A's.
+OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "$(dirname "${SWARM}")/../.claude-plugin/plugin.json")"
+OWN_FILES="${FX}/repos_${OWN_REPO//\//_}_pulls_20_files_per_page=100"
+echo "${OWN_REPO}" > "${FX}/repo-name"
+item "${B}/stories/s-own.md" "status: review" "epic: child" "prs: https://github.com/${OWN_REPO}/pull/20"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.20"
+echo '[{"filename":"bin/x.sh"},{"filename":"internal/merge/x.go"}]' > "${OWN_FILES}"
+expect own-repo-story-pr-touching-internal-merge-none "https://github.com/${OWN_REPO}/pull/20" none
+echo '[{"filename":"bin/x.sh"},{"filename":"README.md"}]' > "${OWN_FILES}"
+expect own-repo-story-pr-touching-no-protected-path "https://github.com/${OWN_REPO}/pull/20" "$(printf '%s\nmerge\nstories' "${A}")"
+rm "${FX}/repo-name" "${B}/stories/s-own.md"
 
 # board PR #16 deletes s-child (A) and changes docs/README.md, a board file that is no epic or story: none.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.16"

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # board_only_test.sh — scripts/board-only.sh on a fixture git repo: board-only for board/ paths only
 # (not a board README), fast-path for a version-only plugin.json bump on main's latest, green commit,
-# and the full suite for anything else, a change to the gate's own files included. Then ci.yml: only
-# the gated jobs may read checks and statuses, each one's checkout fetches the base, every step after
-# the gate runs only when the gate says no, shellcheck covers the script, and the test job passes only
-# when every test-shard did. Last, the gate step run as ci.yml has it: the base's copy of the gate
-# judges the PR, or the PR's when the base has none. gh is a stub on PATH answering main's latest
-# commit from ${FX}/tip and each commit's check runs from ${FX}/<sha>.checks.
+# and the full suite for anything else, a change to the gate's own files included. Then ci.yml: only the
+# gated jobs may read checks and statuses, each one's checkout fetches the base, every step after the
+# gate runs only when the gate says no, shellcheck covers the script (by name or by a glob, expanded
+# from the repo root), and the test job passes only when every test-shard did. Last, the gate step run
+# as ci.yml has it: the base's copy of the gate judges the PR, or the PR's when the base has none. gh is
+# a stub on PATH answering main's latest commit from ${FX}/tip and each commit's check runs from
+# ${FX}/<sha>.checks.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -130,9 +131,9 @@ check "plugin.json deleted on the PR runs everything" says false
 git -C "${G}" checkout -q board
 key="$(gate)"; key="${key%%=*}"
 check "the gate writes one output key" [ "${key}" = board_only ]
-if python3 - "${REPO}/.github/workflows/ci.yml" "${key}" "${tmp}/step.sh" <<'PY'
-import re, sys
-path, key, out = sys.argv[1:4]
+if python3 - "${REPO}/.github/workflows/ci.yml" "${key}" "${tmp}/step.sh" "${REPO}" <<'PY'
+import glob, os, re, sys
+path, key, out, repo = sys.argv[1:5]
 top, jobs, section, job, fails = {}, {}, None, None, 0
 for raw in open(path).read().split("\n"):
     if not raw.strip() or raw.lstrip().startswith("#"):
@@ -203,8 +204,14 @@ check("test: needs every test-shard, runs always and passes only on their succes
       and any("${{ needs.test-shard.result }}" in "\n".join(s) and field(s, "run") == "'[ \"${RESULT}\" = success ]'"
               for s in agg["steps"]))
 check("the three gate steps run the same commands", len(runs) == len(GATED) and len(set(runs)) == 1)
-check("shellcheck: the shellcheck step names scripts/board-only.sh",
-      any(re.search(r"^shellcheck .*\bscripts/board-only\.sh\b", field(s, "run") or "") for s in jobs.get("shellcheck", {}).get("steps", [])))
+def shellchecked(run):
+    """The repo paths a shellcheck step's command covers, its globs expanded from the repo root as bash would."""
+    words = (run or "").split()
+    if words[:1] != ["shellcheck"]:
+        return set()
+    return {os.path.relpath(f, repo) for w in words[1:] for f in glob.glob(os.path.join(repo, w))}
+check("shellcheck: the shellcheck step covers scripts/board-only.sh",
+      any("scripts/board-only.sh" in shellchecked(field(s, "run")) for s in jobs.get("shellcheck", {}).get("steps", [])))
 open(out, "w").write(runs[0] + "\n" if runs else "exit 1\n")
 sys.exit(fails > 0)
 PY

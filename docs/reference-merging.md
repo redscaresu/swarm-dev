@@ -98,10 +98,11 @@ A `costs:` of `none` or empty merges, and an unreadable board story holds every 
 When another merge deletes a story file after `swarm.sh merge` listed the board, `merge` lists the board again, once, and reads it again.
 If a story file on that second list is gone by its read too, or a file is there but unreadable, the PR is still held, and a review agent merging its own story's PR is refused in the same cases.
 `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`).
+In swarm-dev's own repo (the repository its `plugin.json` names, in any case of letters), it also holds a story PR that changes `internal/guard/`, `internal/merge/`, `internal/release/`, `internal/agentenv/` or `.claude-plugin/`, again in any case of letters; when it cannot read a repository from `plugin.json`, it holds those paths in every repo and the hold line says `plugin_repo` could not answer.
 It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`).
 When it still cannot read them, it holds the PR and says why.
 A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands.
-`--board` and `--release` PRs cannot change those paths.
+`--board` PRs cannot change those paths; a `--release` PR changes `.claude-plugin/plugin.json`, and goes unheld because its route never runs this hold.
 Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story.
 `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path.
 `status` and `wait --lead` read the record with no gh call.
@@ -225,7 +226,9 @@ the changed paths, unless the PR body has a `Docs: none — <reason>` line. That
 or `* ` list item and may use `-` or `--` for the dash. The reason must be at least two characters,
 and a placeholder such as `<reason>` does not count, nor does a line inside a ```` ``` ```` fence or
 a `>` quote. A change to `commands/*.md` is the text a user reads, so it covers itself when nothing
-else in the code changed; next to a `bin/` or `hooks/` change it does not. The board's own paths
+else in the code changed; next to a `bin/` or `hooks/` change it does not.
+In swarm-dev's own repo, `cmd/`, `internal/` (Go test files included) and `go.mod` count as code too, and when the plugin's `plugin.json` names no GitHub repository they count in every repo.
+The board's own paths
 (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files `retros/*.md`) are not
 docs, even when the board is `docs/`; the rest of `docs/` is. It compares against origin's tag by its
 SHA and never fetches over your local tag. It refuses when origin has no
@@ -1062,6 +1065,15 @@ A release is due once the project has `.claude-plugin/plugin.json`, the tag `v<v
 `next` reads local refs for this, since reconcile has just pulled.
 With no stage (see below), `next` then checks each change since the tag against one `gh pr list` of the merged PRs.
 A change is a fix when its PR came from a `story/fix-main-<sha7>` branch, or from a story whose file had `fix: true` before the merge.
+In swarm-dev's own repo, a merged PR whose whole diff from the commit before it is under `tests/` (board files aside) is a fix too, whatever its branch.
+There, a story whose file had `port: true` and no `fix:` value before the merge is a fix when that file's `touches` list, under this repo, every `tests/` file its PR changes (both sides of a rename count).
+Otherwise the line names the first `tests/` file they do not list.
+`port: true` gets the same check as `fix: true`: no commit may change the story file between its base and the merge.
+Any other `port:` value is no fix, as for `fix:`.
+When the story's `fix:` has a value, `port:` is not read: `fix: true` passes as above, and any other value is no fix.
+An empty `fix:` counts as no `fix:` at all.
+Each change is judged as one commit, so a rebase merge's earlier commits, which no PR lists, are still no fix.
+In any other repo, or when the plugin's `plugin.json` names no GitHub repository, only `fix: true` stories and fix-main builds count.
 When every change is a fix, `next` prints a bare `release`, and a bare release is always a patch.
 Any other change makes the release a minor, and so does a check that cannot answer.
 A minor needs a done retro file first: `<board>/retros/v<version>.md` on `origin/<base>`, with `covers:` and `done:` in the [retros README](../templates/docs/retros/README.md)'s format.
@@ -1091,7 +1103,9 @@ there, the release is held. `next` then prints `release-held: v<S>, open epics: 
 only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
 while S is held. It needs three things. No story of a staged epic has merged since the tag. The next
 patch of the tag's line is below S. Every change since the tag came from a `fix: true` story or a
-fix-main build (the test a bare `release` uses). Then the step is `release v<x.y.z+1> (patch)`, and
+fix-main build (the test a bare `release` uses).
+In swarm-dev's own repo that test also passes `port: true` stories and changes only under `tests/`, as above.
+Then the step is `release v<x.y.z+1> (patch)`, and
 what merged under an unstaged epic, or under no epic, goes out in it. A change that is no fix, or a
 read that fails, gives no release step. The `release-held:` line then ends `; no patch: <that
 change, or the failure>`. A merged story is
@@ -1174,11 +1188,13 @@ A patch reads origin's tag `v<old>` by its SHA, never your local tag, and the gr
 A tag that is missing, or not on the base, refuses the patch, even one whose body has a `Docs: none` line.
 There is no pass for a first release: tag the last release on origin.
 Every change from that tag to the base must come from a `fix: true` story or a `story/fix-main-<sha7>` build, as `next` tells a fix (§ Releases above).
+In swarm-dev's own repo it may also come from a `port: true` story whose changed `tests/` files are all in its `touches`, or change only files under `tests/`.
 merge reads the merged PRs from gh each time, skipping the cache `next` uses.
 A change that is no fix refuses with `--release: v<new> is a patch, but <change>: cut a minor after its retro`.
 Once a feature lands, no patch can go out until the next minor, which needs its retro.
 A read that fails refuses too, naming it.
 On a pass, merge prints `retro gate: v<new> is a minor; <board>/retros/v<new>.md covers v<a.b.c>..v<new>, done <date>`, or `retro gate: v<new> is a patch; every change since v<old> is from a fix: true story or a fix-main build`.
+In swarm-dev's own repo the patch's line is `retro gate: v<new> is a patch; every change since v<old> is from a fix: true or port: true story, a fix-main build or a change only under tests/`.
 On a board outside the project's repo, git holds no retro file or story history to read, so the gate refuses every release, and the refusal ends `merge it yourself if it may ship without a retro`.
 
 ## Commands
