@@ -13,8 +13,10 @@
 # command's own background gh, is a step whether the command still runs or not; and a foreground call
 # inside two nested process groups is on calls:fg. Foreground calls through a wrapper that runs gh as
 # a waited background job (bin/gh-shim/gh's way), answered by a bash stub, stay on calls:fg, in
-# order, and so do calls made after trap '' INT. And a step that ends before the command exits gives
-# the same streams, ten runs in ten, as one that ends after.
+# order, and so do calls made after trap '' INT and the calls of subshells the command waits on at
+# once, so two such subshells swapped are red; on Linux, a subshell whose parent is blocked opening a
+# FIFO is a step all the same. And a step that ends before the command exits gives the same
+# streams, ten runs in ten, as one that ends after.
 # shellcheck disable=SC2016 # the copies' scripts and the harness's perl, expanded when a run runs them
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -54,6 +56,8 @@ fx_order_exec() { FX_CMD=(bash "${TREE}/exec.sh"); }
 fx_order_solo() { FX_CMD=(bash "${TREE}/solo.sh"); }
 fx_order_mask() { FX_CMD=(bash "${TREE}/mask.sh"); }
 fx_order_stuck() { FX_CMD=(bash "${TREE}/stuck.sh"); }
+fx_order_waited() { FX_CMD=(bash "${TREE}/waited.sh"); }
+fx_order_read() { FX_CMD=(bash "${TREE}/read.sh"); }
 # A bash stub, as tests/merge_fixture.sh writes, behind a wrapper that runs gh as bin/gh-shim/gh does.
 fx_order_wrap() { FX_GH="${TREE}/bash-stub"; FX_CMD=(bash "${TREE}/wrap.sh"); }
 fx_order_within() { FX_CMD=(bash "${TREE}/within.sh"); }
@@ -92,12 +96,13 @@ trees() {
     # A setsid'd step whose calls all come a second after the command has exited.
     { echo "nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \\"
       echo '  bash "$(dirname "$0")/bin/swarm.sh" late < /dev/null > /dev/null 2>&1 &'; echo 'exit 0'; } > "${t}/setlate.sh"
-    # A launcher that starts a worker and exits between the worker's first call and its second.
-    printf '( bash "$(dirname "$0")/worker.sh" & sleep 1 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/nest.sh"
-    printf 'gh api w-1 > /dev/null 2>&1\nsleep 1.5\ngh api w-2 > /dev/null 2>&1\ngh api w-3 > /dev/null 2>&1\n' > "${t}/worker.sh"
+    # A launcher that starts a worker and exits between the worker's first call and its second. The gaps
+# are seconds wide, so a slow process start on a loaded machine still lands each call where meant.
+    printf '( bash "$(dirname "$0")/worker.sh" & sleep 2 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/nest.sh"
+    printf 'gh api w-1 > /dev/null 2>&1\nsleep 3\ngh api w-2 > /dev/null 2>&1\ngh api w-3 > /dev/null 2>&1\n' > "${t}/worker.sh"
     # A launcher that exits before its worker's first call.
-    printf '( bash "$(dirname "$0")/late-worker.sh" & sleep 1 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/gone.sh"
-    printf 'sleep 2.5\ngh api v-1 > /dev/null 2>&1\ngh api v-2 > /dev/null 2>&1\n' > "${t}/late-worker.sh"
+    printf '( bash "$(dirname "$0")/late-worker.sh" & sleep 2 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/gone.sh"
+    printf 'sleep 4\ngh api v-1 > /dev/null 2>&1\ngh api v-2 > /dev/null 2>&1\n' > "${t}/late-worker.sh"
     # Two wrappers, each running its command in a group of its own (as bin/lib/merge.sh's within does),
     # one inside the other, on the foreground path.
     printf '%s\n' "perl -e 'if (!fork) { setpgrp; exec @ARGV } wait; exit(\$? >> 8)' bash \"\$(dirname \"\$0\")/mid.sh\"" > "${t}/within.sh"
@@ -278,6 +283,44 @@ for t in "${A}" "${B}"; do
   else bad "the setsid'd process was killed (${t##*/})" "pid $(cat "${t}/stuck.pid" 2>/dev/null) still runs, or none was written"
     [[ ! -s "${t}/stuck.pid" ]] || kill -KILL "$(cat "${t}/stuck.pid")" 2>/dev/null || true; fi
 done
+
+# Two subshells the command waits on at once (bin/lib/merge.sh runs reconcile and story_note so),
+# one of them a single command that bash runs in the subshell's own pid: their calls are on calls:fg
+# in place, clean three runs in three, and red on calls:fg once the two are swapped.
+# waited <tree> <first> <second> — waited.sh, the a and b subshells in the order given.
+waited() {
+  local -a sub=([1]='( gh api a-1 2> /dev/null; gh api a-2 2> /dev/null ) & wait $!' [2]='( gh api b-1 2> /dev/null ) & wait $!')
+  printf '%s\n' 'gh api fg-0 2> /dev/null' "${sub[$2]}" 'gh api fg-1 2> /dev/null' "${sub[$3]}" 'exit 0' > "$1/waited.sh"
+}
+waited "${A}" 1 2; waited "${B}" 1 2
+start "${ROOT}/waited" "${A}/tests/diff_run.sh" --times 3 --keep "${ROOT}/keep-waited" "${A}" "${B}" order_waited; finish
+if [[ "$(rc_of "${ROOT}/waited")" == 0 && "$(field "${ROOT}/keep-waited/order_waited/a/calls:fg")" == "gh api fg-0;gh api a-1;gh api a-2;gh api fg-1;gh api b-1;" \
+  && ! -s "${ROOT}/keep-waited/order_waited/a/steps" ]]; then ok "subshells waited on at once are on calls:fg, in place"
+else bad "subshells waited on at once are on calls:fg, in place" \
+  "exit $(rc_of "${ROOT}/waited"): $(cat "${ROOT}/waited"); calls:fg: $(field "${ROOT}/keep-waited/order_waited/a/calls:fg")"; fi
+rm -rf "${ROOT}/keep-waited"
+waited "${B}" 2 1
+start "${ROOT}/waited-swap" "${A}/tests/diff_run.sh" "${A}" "${B}" order_waited; finish
+if [[ "$(rc_of "${ROOT}/waited-swap")" == 1 && "$(diffs "${ROOT}/waited-swap")" == "order_waited calls:fg;" ]]; then
+  ok "two subshells waited on at once, swapped, are red on calls:fg"
+else bad "two subshells waited on at once, swapped, are red on calls:fg" "exit $(rc_of "${ROOT}/waited-swap"): $(cat "${ROOT}/waited-swap")"; fi
+
+# The command blocked opening a FIFO, with an unwaited subshell its only child: on Linux, whose
+# /proc names what a process sleeps in, that subshell is a step, not on calls:fg. The FIFO's writer
+# is no child of the command: the subshell that starts it exits at once.
+sleep 5 & nap=$!; sleep 0.3
+nap_in="$(cat "/proc/${nap}/wchan" 2>/dev/null || true)"; kill "${nap}" 2>/dev/null || true; wait "${nap}" 2>/dev/null || true
+if [[ "${nap_in}" =~ [a-z] ]]; then
+  for t in "${A}" "${B}"; do
+    printf '%s\n' 'mkfifo f' '( ( sleep 1.5; echo go > f ) & )' '( sleep 0.3; gh api r-1 2> /dev/null; gh api r-2 2> /dev/null ) &' 'read -r x < f' 'exit 0' > "${t}/read.sh"
+  done
+  start "${ROOT}/read" "${A}/tests/diff_run.sh" --keep "${ROOT}/keep-read" "${A}" "${B}" order_read; finish
+  if [[ "$(rc_of "${ROOT}/read")" == 0 && "$(cat "${ROOT}/keep-read/order_read/a/steps" 2>/dev/null)" == "[bash <tree>/read.sh] gh api r-1" \
+    && ! -s "${ROOT}/keep-read/order_read/a/calls:fg" ]]; then ok "a subshell whose parent is blocked in a FIFO open is a step"
+  else bad "a subshell whose parent is blocked in a FIFO open is a step" \
+    "exit $(rc_of "${ROOT}/read"): $(cat "${ROOT}/read"); steps: $(cat "${ROOT}/keep-read/order_read/a/steps" 2>/dev/null)"; fi
+  rm -rf "${ROOT}/keep-read"
+else echo "skip a subshell whose parent is blocked in a FIFO open is a step: /proc names no wait channel here"; fi
 
 # (3) The stub answers "answer 1" on a tree's odd runs and "answer 0" on its even ones.
 trees

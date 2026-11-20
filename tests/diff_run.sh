@@ -61,12 +61,18 @@
 # by position; two steps with one label are told apart by their calls. A call the run cannot place
 # is red (UNPLACED): one whose chain the shim could not read, and a foreground call made after the
 # command exited by a process that did not start in the background.
-# How some shapes are placed (bin/ and hooks/ have the first two, and neither of the last two):
-#   - A subshell waited on at once (`( ... ) & wait $!`, as bin/lib/merge.sh runs some) is a step all
-#     the same, its calls in order.
+# How some shapes are placed (bin/ and hooks/ have the first two, and none of the last three):
+#   - A subshell waited on at once (`( ... ) & wait $!`, as bin/lib/merge.sh runs reconcile and
+#     story_note) has its calls on calls:fg, in place: a step whose parent, at the step's first call,
+#     sleeps with that step as its only child is taken as waited on; where /proc names what it sleeps
+#     in (Linux), only a wait counts. A parent that has not yet reached its wait by then (the step
+#     has forked and started a gh by that time) would leave it a step of its own, and on macOS one
+#     blocked in a read with that step its only child would make the step look waited on.
 #   - A `gh ... &` the command itself runs is a step (hooks/agent-state.sh runs herdr so, unwaited);
 #     one that a bash below the command runs and never waits on would be a foreground call.
 #   - A waited `gh ... &` that a shell other than bash runs is a step: only bash runs the probe.
+#   - A command that ignores both SIGINT and SIGQUIT itself (trap '' INT QUIT) makes its own calls
+#     look like background ones, each a step of its own.
 #   - A subshell that exits before the worker it started has begun (`( bash worker.sh & exit 0 ) &`)
 #     leaves no trace, as a subshell is a fork no probe sees, so that worker's step is its own or the
 #     subshell's by timing.
@@ -260,9 +266,10 @@ normalize() {
 # in <meta>/paths ("<label>\t<path>" lines, longest path first) replaced by their labels, then quoted
 # as printf %q quotes it (the labels left as they are), so a path with a space is replaced before %q
 # escapes it. Each line starts with the call's place: bg or fg (its own SIGINT and SIGQUIT both
-# ignored or not), a tab, its chain of pids from its own up, ending in "top" when the chain reached
-# the command's pid (in <meta>/group) or "-" when it stopped at a process outside the run first, and a
-# tab; or "?", a tab and "?" when the chain could not be read. Each pid in the chain goes to
+# ignored or not), a tab, its chain of pids from its own up (each "<pid>=w" when its parent sleeps
+# with it as its only child), ending in "top" when the chain reached the command's pid (in
+# <meta>/group) or "-" when it stopped at a process outside the run first, and a tab; or "?", a tab
+# and "?" when the chain could not be read. Each pid in the chain goes to
 # <meta>/procs too, with its parent then and its argv: "<pid>\t<ppid>\t<argv>" lines.
 shim() {
   { printf '#!/usr/bin/env bash\nTOOL=%q LOG=%q STUB=%q PATHS=%q GROUP=%q PROCS=%q PERL=%q PS=%q\n' \
@@ -306,9 +313,9 @@ place="$("${PERL}" -e '
   my $flag = ($SIG{INT} // "") eq "IGNORE" && ($SIG{QUIT} // "") eq "IGNORE" ? "bg" : "fg";
   my $g = "";
   if (open(my $f, "<", $gf)) { $g = <$f> // ""; chomp $g; close $f }
-  open(my $l, "-|", $ps, "-ww", "-A", "-o", "pid=,ppid=,pgid=,args=") or exit 1;
-  my (%up, %grp, %argv);
-  while (<$l>) { chomp; s/^\s+//; my ($p, $u, $pg, $a) = split /\s+/, $_, 4; ($up{$p}, $grp{$p}, $argv{$p}) = ($u, $pg, $a // "") }
+  open(my $l, "-|", $ps, "-ww", "-A", "-o", "pid=,ppid=,pgid=,stat=,args=") or exit 1;
+  my (%up, %grp, %stat, %argv, %kids);
+  while (<$l>) { chomp; s/^\s+//; my ($p, $u, $pg, $st, $a) = split /\s+/, $_, 5; ($up{$p}, $grp{$p}, $stat{$p}, $argv{$p}) = ($u, $pg, $st, $a // ""); $kids{$u}++ }
   close $l or exit 1;
   # Up to the command, whatever groups the chain crosses; past pid 1 or a missing parent it is the
   # chain of an orphan, cut where the group rule first fails.
@@ -334,7 +341,19 @@ place="$("${PERL}" -e '
   open(my $o, ">>", $pf) or exit 1;
   print $o join("", map { "$_\t$up{$_}\t$argv{$_}\n" } @chain);
   close $o or exit 1;
-  print "$flag\t", join(" ", @chain, $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
+  # A process whose parent sleeps with it as its only child is waited on, as `( ... ) & wait $!` leaves
+  # it: "<pid>=w". Where /proc names what the parent sleeps in, only a wait counts, so one blocked in a
+  # read (pipe_read) or a FIFO open does not; where it names nothing (macOS, a kernel that hides it),
+  # sleeping is enough.
+  sub waited_on {
+    my ($u) = @_;
+    return 0 unless ($stat{$u} // "") =~ /^S/ && ($kids{$u} // 0) == 1;
+    my $c = "";
+    if (open(my $w, "<", "/proc/$u/wchan")) { $c = <$w> // ""; close $w }
+    return 1 unless $c =~ /[a-z]/;
+    return $c =~ /^(?:do_wait|kernel_wait4)/ ? 1 : 0;
+  }
+  print "$flag\t", join(" ", (map { waited_on($up{$_}) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
 [[ "${place}" == [bf]g$'\t'* ]] || place=$'?\t?'
 # A call from inside a stub, or from this shim through anything on PATH, is refused: a loop back
 # through the shim would fork without end.
@@ -402,18 +421,19 @@ watch_group() {
 # made their first calls, each an "@@ [<argv>] <first call>" line and then the step's calls in order;
 # and <meta>/unplaced a "<call>\t<why>" line for each call the run cannot place. A process is known to
 # start on the foreground path when it is the command, a bash that <meta>/starts says started with
-# SIGINT as it was, or in a foreground call's chain above its own pid. A background call whose parent
+# SIGINT or SIGQUIT as it was, or in a foreground call's chain above its own pid. A background call whose parent
 # is known so, and is not the command, is its parent's own `&` job (bin/gh-shim/gh starts the real gh
 # so, and waits on it): a foreground call, unless its own pid began as a background bash that exec'd
-# gh. Any other background call's step is the process in its chain just below the lowest
-# known one, or the chain's top. A chain the shim cut short, as a process above it had exited, goes on
-# through each top's parent as first seen (in <meta>/procs or <meta>/starts), so a worker whose
-# launcher exits keeps the launcher's step.
+# gh. Any other background call's step is the process in its chain just below the lowest known one,
+# or the chain's top; a step whose root was marked waited on (=w) at its first call is on the
+# foreground path, its calls in place. A chain the shim cut short, as a process above it had exited,
+# goes on through each top's parent as first seen (in <meta>/procs or <meta>/starts), so a worker
+# whose launcher exits keeps the launcher's step.
 place_calls() {
   # shellcheck disable=SC2016 # perl's own variables
   DR_TOP="$2" perl -e '
     my $m = shift; my $g = $ENV{DR_TOP};
-    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, @order);
+    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, %waited_step, @order);
     if (open(my $f, "<", "$m/procs")) { while (<$f>) { chomp; my ($p, $u, $a) = split /\t/, $_, 3; $argv{$p} //= $a // ""; $first_up{$p} //= $u if ($u // 0) > 1 } }
     if (open(my $f, "<", "$m/starts")) {
       my %starts;
@@ -433,7 +453,11 @@ place_calls() {
     }
     $fg_proc{$g} = 1;
     open(my $f, "<", "$m/calls") or die "diff_run: no $m/calls\n";
-    while (<$f>) { chomp; my ($flag, $chain, $call) = split /\t/, $_, 3; my @c = split / /, $chain; my $end = pop @c; push @calls, { flag => $flag, chain => \@c, end => $end // "", call => $call // "" } }
+    while (<$f>) {
+      chomp; my ($flag, $chain, $call) = split /\t/, $_, 3; my @c = split / /, $chain; my $end = pop @c; my %w;
+      for (@c) { $w{$_} = 1 if s/=w$// }
+      push @calls, { flag => $flag, chain => \@c, waited => \%w, end => $end // "", call => $call // "" };
+    }
     for my $c (@calls) { next unless $c->{flag} eq "fg"; $fg_proc{$_} = 1 for @{$c->{chain}} }
     for my $c (@calls) {
       next unless $c->{flag} eq "bg";
@@ -466,6 +490,12 @@ place_calls() {
       # A leaf pid known on the foreground path too (a pid used twice) names no step.
       if ($i == 0) { print $un "$call\tno process in its chain of pids starts a background step\n"; next }
       my $root = $chain->[$i - 1];
+      # A step its parent waited on at its first call is on the foreground path, its calls in place.
+      $waited_step{$root} //= $c->{waited}{$root} ? 1 : 0;
+      if ($waited_step{$root}) {
+        if ($end eq "top") { print $fg "$call\n" } else { print $un "$call\tits waited step outlived the command\n" }
+        next;
+      }
       push @order, $root unless $step{$root};
       push @{$step{$root}}, $call;
     }
