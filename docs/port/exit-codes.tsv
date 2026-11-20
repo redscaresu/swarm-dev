@@ -33,7 +33,7 @@ _pane	1	not run inside a herdr pane (HERDR_ENV is not 1)	bin/lib/agents.sh:requi
 _review-brief	0	printed the review agent's brief	bin/swarm.sh:main	none
 _review-red-scan	0	the scan ran	bin/swarm.sh:main	none
 _review-red-scan	1	this red head does not count toward the ladder	bin/lib/merge.sh:review_red_scan	none
-_role	0	printed the role the story is built as	bin/swarm.sh:main	none
+_role	0	printed the role the story is built as	bin/swarm.sh:main	tests/roles_test.sh
 _role	1	no story file, or attempts: is not a whole number	bin/lib/build.sh:story_role	none
 _role	1	story_role refused the story; dies with its message	bin/swarm.sh:dispatch	none
 _step	0	printed the next step	bin/swarm.sh:main	none
@@ -70,7 +70,7 @@ codex-review	143	TERM or HUP: it stops codex and exits	bin/swarm.sh:codex_review
 conduct	0	the conductor started	bin/swarm.sh:main	tests/conduct_preflight_test.sh,tests/env_allowlist_test.sh
 conduct	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
 conduct	1	bad epic name, missing epic file, name clash or a refused start; says why	bin/lib/build.sh:start_conductor	tests/conduct_preflight_test.sh,tests/conduct_backlog_test.sh,tests/workspace_labels_test.sh
-config	0	printed the config or one key	bin/swarm.sh:main	none
+config	0	printed the config or one key	bin/swarm.sh:main	tests/removed_test.sh
 config	1	the key asked for is not a known one; says which	bin/swarm.sh:show_config	none
 cost	0	prints that cost moved into flow's cost section	bin/swarm.sh:main	tests/removed_test.sh
 dash	0	the board was drawn, or --check found every figure agrees	bin/swarm.sh:main	tests/dash_check_test.sh,tests/dash_layout_test.sh
@@ -96,10 +96,10 @@ grants	0	the grants were printed	bin/swarm.sh:main	tests/grants_test.sh
 grants	1	wrong argument count, or no item, PR or HLD to read grants from	bin/lib/board.sh:grants	none
 handover	0	the handover folder was written	bin/swarm.sh:main	tests/handover_test.sh
 handover	1	bad argument, no usable out folder, board not in a git repo or a copy failed	bin/lib/handover.sh:handover_report	tests/handover_test.sh
-hold	0	the hold was logged for the ready story	bin/swarm.sh:main	none
+hold	0	the hold was logged for the ready story	bin/swarm.sh:main	tests/events_tail_merge_test.sh,tests/hold_test.sh
 hold	1	bad slug, story not ready, PR closed unmerged, no reason, or log unwritable	bin/swarm.sh:hold	tests/hold_test.sh
 hooks/agent-state.sh	0	the hook ran; it never blocks Claude Code	hooks/agent-state.sh:(top level)	none
-hooks/lead-stop.sh	0	the hook ran, with or without a block decision on stdout	hooks/lead-stop.sh:(top level)	none
+hooks/lead-stop.sh	0	the hook ran, with or without a block decision on stdout	hooks/lead-stop.sh:(top level)	tests/live_logs_test.sh,tests/lead_stop_test.sh
 hooks/merge-guard.sh	0	the tool call is allowed	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
 hooks/merge-guard.sh	2	the tool call is refused (a merge, or work-losing command)	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
 hooks/user-caught-reminder.sh	0	the hook ran; it only prints a reminder	hooks/user-caught-reminder.sh:(top level)	tests/user_caught_reminder_test.sh
@@ -115,7 +115,7 @@ log-finding	0	the finding was appended to findings.tsv	bin/swarm.sh:main	tests/l
 log-finding	1	bad flag, reason, round, reviewer, kind or PR; says which	bin/lib/reports.sh:record_finding	tests/log_finding_test.sh
 merge	0	the PR merged and the base's CI was green	bin/swarm.sh:main	tests/merge_note_test.sh
 merge	1	merged, but reconcile failed, base CI was not green, or the queue merged another head	bin/lib/merge.sh:merge_pr	tests/merge_note_test.sh
-next	0	the next step was printed	bin/swarm.sh:main	none
+next	0	the next step was printed	bin/swarm.sh:main	tests/next_test.sh
 next	1	cannot make a temp file or set the report deadline	bin/lib/board.sh:next_report	none
 outcomes	0	the rows printed	bin/swarm.sh:main	tests/outcomes_test.sh
 outcomes	1	bad --since, no agents log or the logs could not be read; says why	bin/lib/reports.sh:outcomes_report	none
@@ -134,24 +134,24 @@ restart	1	not exactly one slug given; prints usage	bin/swarm.sh:dispatch	none
 retro	0	the retro report printed	bin/swarm.sh:main	tests/retro_test.sh
 retro	1	bad flag, no tag to start from or no such tag; says why on stderr	bin/lib/reports.sh:retro_report	tests/retro_test.sh
 review	0	the story was set to review with its PRs	bin/swarm.sh:main	tests/review_test.sh
-review	1	bad head SHA, no PR URL, or the story waits on a parent PR to merge	bin/lib/board.sh:mark_review	none
+review	1	bad head SHA, no PR URL, or the story waits on a parent PR to merge	bin/lib/board.sh:mark_review	tests/handover_note_test.sh
 review-agent	0	the review agent started	bin/swarm.sh:main	tests/review_agent_test.sh
 review-agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
 review-agent	1	bad slug or PR URL, no story, a review still running or the start failed	bin/lib/build.sh:review_agent	tests/review_agent_test.sh
 review-agent	1	--next refused: bad input, wrong pane, no findings sent or head moved	bin/lib/build.sh:review_next	tests/review_agent_test.sh
 review-agent	1	--recheck refused: bad input, wrong head, point not in findings or CI not green	bin/lib/build.sh:review_recheck	tests/review_agent_test.sh
 review-yield	0	prints that review-yield moved into flow's reviewers section	bin/swarm.sh:main	tests/removed_test.sh
-status	0	the status report was printed	bin/swarm.sh:main	none
+status	0	the status report was printed	bin/swarm.sh:main	tests/idle_epic_test.sh
 status	1	cannot start the report deadline	bin/lib/merge.sh:status_report	none
 step-up	0	the build stepped up to the next model, or the resume started	bin/swarm.sh:main	tests/escalate_ladder_test.sh
 step-up	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
 step-up	1	refused (bad trigger, ladder off, top rung) or failed; says why	bin/lib/lifecycle.sh:step_up	tests/escalate_ladder_test.sh
 step-up	1	nothing waits to resume, lock held, or marker gone; says why	bin/lib/lifecycle.sh:step_up_resume	tests/escalate_ladder_test.sh
-story	0	the builder started	bin/swarm.sh:main	none
+story	0	the builder started	bin/swarm.sh:main	tests/board_state_test.sh
 story	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
 story	1	story not ready, not a code story, build exists or the start failed	bin/lib/build.sh:build_story	tests/epic_briefs_test.sh,tests/env_allowlist_test.sh,tests/board_state_test.sh
 story	1	too many arguments or an unknown flag; says which	bin/swarm.sh:dispatch	none
-swarms	0	the swarms on this machine listed	bin/swarm.sh:main	none
+swarms	0	the swarms on this machine listed	bin/swarm.sh:main	tests/swarms_test.sh
 swarms	1	herdr gave no workspace, pane or agent list, or cut it short	bin/lib/dash.sh:swarms	tests/swarms_test.sh
 swarms	1	an argument was given; swarms takes none	bin/swarm.sh:dispatch	tests/swarms_test.sh
 tell	0	the findings, nudge or resume was sent, queued, or noted	bin/swarm.sh:main	tests/next_test.sh
@@ -167,14 +167,14 @@ upgrade	0	every agent moved to the new version	bin/swarm.sh:main	tests/upgrade_t
 upgrade	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
 upgrade	1	bad argument, unknown epic, or an agent was left on the old version	bin/lib/lifecycle.sh:upgrade_agents	tests/upgrade_test.sh
 upgrade	143	TERM stops the worker; it logs what moved and what is left	bin/lib/lifecycle.sh:upgrade_agents	none
-version	0	printed the version, and a warning if a newer one is out	bin/swarm.sh:(early case)	none
+version	0	printed the version, and a warning if a newer one is out	bin/swarm.sh:(early case)	tests/config_test.sh
 wait	0	the agent is idle, done or gone, or the lead has news	bin/swarm.sh:main	tests/epic_wait_session_test.sh
 wait	1	the timeout passed and the agent was still busy	bin/lib/agents.sh:wait_agent	tests/wait_past_test.sh,tests/epic_wait_session_test.sh
 wait	1	bad option mix, or idle with no findings file at the timeout	bin/lib/lifecycle.sh:wait_command	tests/wait_lead_test.sh,tests/review_agent_test.sh,tests/wait_past_test.sh
 wait	1	wait --lead timed out with nothing new, or its lock failed	bin/lib/lifecycle.sh:wait_lead	tests/wait_lead_test.sh
 wait	3	wait --stall: the builder stalled	bin/lib/agents.sh:wait_agent	tests/agent_liveness_test.sh,tests/dash_wait_test.sh
 wait	4	the agent is stuck, such as a model error it cannot resume	bin/lib/agents.sh:wait_agent	tests/api_model_error_test.sh
-wait	5	wait --idle ended 0 on something other than idle or done	bin/lib/lifecycle.sh:wait_command	none
+wait	5	wait --idle ended 0 on something other than idle or done	bin/lib/lifecycle.sh:wait_command	tests/nudge_idle_test.sh
 wait	129	wait --lead got a HUP	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh
 wait	130	wait --lead got an INT	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh
 wait	137	wait --lead was killed because a newer run replaced it	bin/lib/lifecycle.sh:lead_lock	none
