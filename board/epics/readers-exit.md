@@ -1,7 +1,7 @@
 ---
 status: active
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
-depends_on: [foundation-exit, board-store, helpers-shared, helpers-ci-gate, helpers-dropped-lines, helpers-flow-queues, helpers-panes, helpers-reports, helpers-flow-reviews, helpers-dash, port-board-readers, port-reports, port-release-gates, port-next, port-lead-queue-prs, port-lead-queue-agents, port-status, port-dash]
+depends_on: [foundation-exit, board-store, helpers-shared, helpers-ci-gate, helpers-dropped-lines, helpers-flow-queues, helpers-panes, helpers-reports, helpers-flow-reviews, port-board-readers, port-reports, port-release-gates, port-next, port-lead-queue-prs, port-lead-queue-agents, port-status]
 ---
 
 # Stage 2 ends
