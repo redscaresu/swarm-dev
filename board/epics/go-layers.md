@@ -19,6 +19,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Removing scripts/lint's python-clock rule (bash-retired)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/lint_test.sh. Each keeps the assertion its go_check column names.
 - stage: v0.32.0.
 - Exactly one implementation of each: herdr, gh, git, and .swarm/ with the board's files (HLD:169-175).
 - git, gh, herdr, claude and codex stay subprocesses found on PATH, so the tests' stubs keep working (HLD:335-336).

@@ -18,6 +18,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Porting scripts/board-only.sh itself
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/merge_queue_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - scripts/board-only.sh:58-59 runs bin/lib/ci_gate.py, and CI runs the base's copy of that script (.github/workflows/ci.yml:29-37): contradiction 4.
 - ci_gate decides merges, so its Go and poll_cache's sit in the protected merge package and the user merges every port here.

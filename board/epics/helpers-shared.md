@@ -19,6 +19,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - recurring.py, which moves with its two importers (helpers-reports)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/flow_sections_test.sh, tests/outcome_scan_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - Exception 3 (HLD:278-281) lets report.py, events_outcome.py, clock.py and touches_rows.py keep a Python copy under the comparison test until the last importer is ported; panes.py is helpers-panes'. 26 Python files import report.py, 24 events_outcome.py, 11 clock.py and 5 touches_rows.py, so no module can go in one PR with its importers. Every other helper epic depends on this one.
 - gh_cache.py is not on the exception's list, but report.py imports it (bin/lib/report.py:2), so report.py's copy cannot run without it. The plan reads the exception as covering it, under the same test: contradiction 24. Its copy goes when report.py's does.
