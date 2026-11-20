@@ -38,10 +38,12 @@ bad() { echo "FAIL $1: $2"; sed 's/^/  | /' "${ROOT}/out"; fails=$((fails + 1));
 # Two copies at paths of different lengths, of what the fixtures run: bin/, hooks/, templates/, the
 # plugin manifest and the harness with its fixtures. A copy of the whole tree takes a minute on a Mac
 # that scans each new file.
+# Each copy also gets tests/merge_fixture.sh, whose project and stubs the merge fixtures build on.
 A="${ROOT}/a" B="${ROOT}/copies/b"
 for t in "${A}" "${B}"; do
   mkdir -p "${t}/tests"
   (cd "${REPO}" && tar -cf - bin hooks templates .claude-plugin tests/diff_run.sh tests/diff_fixtures_*.sh) | tar -C "${t}" -xf -
+  cp "${REPO}/tests/merge_fixture.sh" "${t}/tests/"
 done
 
 # run <rc> [diff_run args...] — run a's diff_run.sh, its output in ${ROOT}/out, and check its exit.
