@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # diff_run.sh — the differential run: run each fixture once against <tree-a> and once against
-# <tree-b> (or --times N times each), and compare what the runs did.
+# <tree-b>, and compare what the two runs did.
+# With --times N each fixture runs N times on each tree, and every run is compared.
 #
 #   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--times <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
-#                      its group or marked (default 10); one still alive then is red, by its argv, and is killed
+#                      its group (default 10); one still alive then is red, by its argv, and is killed
+#                      the same bound covers each process that left the group but holds the run's
+#                      marker or hold pipe
 #   --timeout <s>      how long a command may run (default 300); past it, its group is killed, and red
 #   --max-procs <n>    how many processes its group may hold at once (default 200); past it, the group
 #                      is killed, and red, so a command that forks without end never fills the machine
@@ -25,7 +28,7 @@
 #   FX_CWD    the command's cwd (default ROOT)
 #   FX_GH, FX_HERDR  an executable that answers the gh or herdr shim's calls, such as the gh stub
 #             tests/merge_fixture.sh writes; with none, every call is unanswered
-#   FX_CALLS  the calls the command must make, each a "<tool> <args>" prefix of a calls:fg line as
+#   FX_CALLS  the calls the command must make, each a "<tool> <args>" prefix of a calls:fg line, or of a step's line, as
 #             compared (such as "herdr agent list"); a tree's run that makes one of them in no line is
 #             red (MISSING), so a command that exits early in both trees cannot pass by making no call
 #             in either. A fixture that rightly makes no call names none.
@@ -35,17 +38,17 @@
 # CLAUDE_CONFIG_DIR=ROOT/claude-config, then FX_ENV, then the ones FX_ENV cannot override: PATH with
 # the shims first (before FX_ENV's PATH when it sets one), GH_CONFIG_DIR an empty directory,
 # HERDR_BIN_PATH, DIFF_RUN_MARK (the run's marker), and BASH_ENV and DIFF_RUN_STARTS (the bash start
-# probe below). So no GH_TOKEN or GITHUB_TOKEN of the caller's reaches it. It leads a process group of
-# its own; once it exits, the run waits up to --bound seconds for every other process in the group,
-# then for every process that holds the marker in its environment, then for every process that holds
-# the run's hold pipe, whose write end the command gets on fd 19 and every process it starts
-# inherits: so a run that left the group by setsid is waited for too, on macOS as well, where ps shows
-# no environment for the system's own binaries. Its group is counted every 0.2 s from its start until
-# it is gone, and killed past --max-procs or --timeout. The gh and herdr shims go first on PATH, and
-# HERDR_BIN_PATH names the herdr one. Each logs its call, then runs FX_GH or FX_HERDR; with none, it
-# says so on stderr and exits 1. Neither ever runs a gh or herdr found on PATH, and a shim called
-# again from inside a stub (or from itself) refuses the call the same way, so no stub can loop back
-# through it.
+# probe below). So no GH_TOKEN or GITHUB_TOKEN of the caller's reaches it. It leads a process
+# group of its own; once it exits, the run waits up to --bound seconds for every other process in the
+# group. Its group is counted every 0.2 s from its start until it is gone, and killed past
+# --max-procs or --timeout. The gh and herdr shims go first on PATH, and HERDR_BIN_PATH names the
+# herdr one. Each logs its call, then runs FX_GH or FX_HERDR; with none, it says so on stderr and
+# exits 1. Neither ever runs a gh or herdr found on PATH, and a shim called again from inside a stub
+# (or from itself) refuses the call the same way, so no stub can loop back through it.
+# Within the same --bound, the run then waits for every process that holds the marker in its
+# environment, then for every process that holds the run's hold pipe, whose write end the command
+# gets on fd 19 and every process it starts inherits: so a run that left the group by setsid is
+# waited for too, on macOS as well, where ps shows no environment for the system's own binaries.
 # SWARM_FORBID_PROJECT, the checkout make test runs from, never names a fixture's project, since each
 # fixture root is a new directory, so a hook writes its events.tsv line there under make test too.
 # CLAUDE_PLUGIN_ROOT=TREE, as Claude Code sets it for a hook hooks/hooks.json runs, goes in beside
@@ -90,9 +93,9 @@
 #   files     each file under ROOT the run added or changed, by path and content, each symbolic
 #             link by its target, and each it deleted, the list of paths first; files under a .git
 #             directory are left out, since a git read can rewrite the index with stat data
-#   calls:fg  the foreground gh and herdr calls, in order, one "<tool> <args>" line each: in each
-#             argument the tree and root paths are replaced first, then it is quoted as printf %q
-#             quotes it, so two argument lists never log the same line
+#   calls:fg  the foreground gh and herdr calls, in order, one "<tool> <args>" line each: in each argument the
+#             tree and root paths are replaced first, then it is quoted as printf %q quotes it, so two
+#             argument lists never log the same line
 #   calls:[<argv>] <first call>  one stream per background step, its calls in order, as calls:fg's;
 #             a step on one side only is red, by its label
 # Replacements: each tree's path (as given and as pwd -P prints it) becomes <tree>, the fixture root
@@ -107,12 +110,12 @@
 # A step's label line ("@@ [<argv>] <first call>") gets the same mask, in its argv and its call.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
-# diff for each, with "(a run <n> against run 1)" after a repeat's stream), a process outlived the
-# bound (STUCK <fixture> ...), a call could not be placed (UNPLACED <fixture> ...), or a group passed
-# --max-procs (RUNAWAY <fixture> ...) or --timeout (TIMEOUT <fixture> ...), and 2 on a bad argument
-# or a fixture that fails to build on either tree, or a shim of the run's own that does not parse
-# (BUILD-FAIL <fixture> ... and its output). A line about one run names its side, (a) or (b), and
-# past the first run its number, (a run 2).
+# diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
+# (RUNAWAY <fixture> ...) or --timeout (TIMEOUT <fixture> ...), and 2 on a bad argument or a
+# fixture that fails to build on either tree (BUILD-FAIL <fixture> ... and its output).
+# A call the run could not place (UNPLACED <fixture> ...) exits 1 too, and a shim of the run's own
+# that does not parse is a BUILD-FAIL (exit 2). A repeat's DIFF line ends "(a run <n> against run 1)",
+# and a line about one run names its side, (a) or (b), and past the first run its number, (a run 2).
 # A run that did not make a named call (MISSING <fixture> ...) exits 1 too.
 set -euo pipefail
 
@@ -125,7 +128,7 @@ STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '5,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '6,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
@@ -176,14 +179,15 @@ marked() {
   fi
 }
 
-# Each side's worker (run_one) has its pid in ${WORK}/<fixture>.<side>.<n>.pid, and its build its pid
-# in meta/build.pid, while they run. Each command's group id is in its meta/group from just before
-# perl's setpgrp until the group is gone; perl writes it, so no command runs unrecorded. So the trap
-# signals only what still runs, never an id a finished one gave back. It stops the workers first, so
-# none starts a command after it, gives a command one of them had forked time to record itself, then
-# kills each recorded command by its pid (one stopped before setpgrp) and its group (no pid is reused
-# while its group lives), and last each process that holds a run's marker or hold pipe, as a setsid'd
-# one left the group, and each pipe's reader.
+# Each side's worker (run_one) has its pid in ${WORK}/<fixture>.<side>.<n>.pid, and its build its pid in
+# meta/build.pid, while they run. Each command's group id is in its meta/group from just before perl's
+# setpgrp until the group is gone; perl writes it, so no command runs unrecorded. So the trap signals
+# only what still runs, never an id a finished one gave back. It stops the workers first, so none
+# starts a command after it, gives a command one of them had forked time to record itself, then kills
+# each recorded command by its pid (one stopped before setpgrp) and its group (no pid is reused while
+# its group lives).
+# Last it kills each process that holds a run's marker or hold pipe, as a setsid'd one left the
+# group, and each pipe's reader.
 # shellcheck disable=SC2329 # the EXIT trap calls it
 cleanup() {
   local f g stopped=""
@@ -280,8 +284,9 @@ normalize() {
 # <stub>; with no <stub>, fail loudly. It never looks on PATH. Each argument is logged with the paths
 # in <meta>/paths ("<label>\t<path>" lines, longest path first) replaced by their labels, then quoted
 # as printf %q quotes it (the labels left as they are), so a path with a space is replaced before %q
-# escapes it. Each line starts with the call's place: bg or fg (its own SIGINT and SIGQUIT both
-# ignored or not), a tab, its chain of pids from its own up (each "<pid>=w" when its parent sleeps
+# escapes it.
+# Each line starts with the call's place: bg or fg (its own SIGINT and SIGQUIT both ignored or
+# not), a tab, its chain of pids from its own up (each "<pid>=w" when its parent sleeps
 # with it as its only child), ending in "top" when the chain reached the command's pid (in
 # <meta>/group) or "-" when it stopped at a process outside the run first, and a tab; or "?", a tab
 # and "?" when the chain could not be read. Each pid in the chain goes to
@@ -639,8 +644,8 @@ run_one() {
     bash -n "${v}" 2> "${meta}/parse.log" || { echo "BUILD-FAIL ${fx} (${tag}): diff_run's own ${v##*/} does not parse"; sed 's/^/  /' "${meta}/parse.log"; return 2; }
   done
   # FX_ENV goes before the settings that keep the shims in front, as env's last word for a name wins:
-  # a PATH of the fixture's own goes behind the shims, and HERDR_BIN_PATH, GH_CONFIG_DIR, the marker
-  # and the bash start probe stay ours.
+  # a PATH of the fixture's own goes behind the shims, and HERDR_BIN_PATH and GH_CONFIG_DIR stay ours.
+  # The marker and the bash start probe stay ours too.
   base_path="${PATH}"
   for v in ${FX_ENV[@]+"${FX_ENV[@]}"}; do [[ "${v}" != PATH=* ]] || base_path="${v#PATH=}"; done
   for v in ${PASS_ENV}; do [[ -z "${!v+x}" ]] || envs+=("${v}=${!v}"); done
@@ -752,7 +757,8 @@ echo "b: ${TREE_B}"
 status=0
 for fx in "${names[@]}"; do
   red="" broken=""
-  # Each run's two sides go side by side, each with its own root; their lines come out a's first.
+  # The two runs go side by side, each with its own root; their lines come out a's first.
+  # With --times, each repeat's two runs go after the last repeat's.
   for ((n = 1; n <= TIMES; n++)); do
     for side in a b; do run_one "${fx}" "${side}" "${n}" > "${WORK}/${fx}.${side}.${n}.log" 2>&1 & echo "$!" > "${WORK}/${fx}.${side}.${n}.pid"; done
     for side in a b; do
