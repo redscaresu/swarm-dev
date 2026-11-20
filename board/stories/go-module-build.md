@@ -4,7 +4,7 @@ status: blocked
 epic: go-module
 depends_on: [protected-go-paths]
 needs: protected-go-paths (its merge: no Go lands before the Go paths are protected, HLD § Protected paths)
-touches: [go.mod, cmd/swarm/main.go, cmd/swarm/main_test.go, scripts/build.sh, tests/build_test.sh, .gitignore:Go build outputs, .github/workflows/ci.yml:shellcheck step file list, Makefile:SHELLCHECK_FILES, AGENTS.md:pre-PR commands (Before you open a PR), AGENTS.md:tree (Working on this repository)]
+touches: [go.mod, cmd/swarm/main.go, cmd/swarm/main_test.go, scripts/build.sh, tests/build_test.sh, .gitignore:Go build outputs, .github/workflows/ci.yml:shellcheck step file list, Makefile:SHELLCHECK_FILES, AGENTS.md:pre-PR commands (Before you open a PR), AGENTS.md:tree (Working on this repository), tests/board_only_test.sh:shellcheck list assertion]
 estimate_lines: 285
 ---
 
@@ -32,6 +32,9 @@ Waits for protected-go-paths to merge, so no Go lands before the Go paths are pr
 - AGENTS.md: add go.mod, cmd/swarm/ and scripts/build.sh to the tree, each on its own line. Add `gofmt -l .` (must print nothing), `go vet ./...` and `go test ./...` to the pre-PR block. Leave the required-checks sentence (AGENTS.md:279): go-required-checks edits it once the user has made the checks required.
 - Before you push, run `scripts/build.sh` once with the real go and list dist/. The PR is held for the user: ci.yml and the root Makefile are protected paths.
 
+tests/board_only_test.sh:206-207 looks for the literal `scripts/board-only.sh` in the workflow's shellcheck command. If the list becomes a glob such as `scripts/*.sh`, update that assertion in the same PR so it checks the file is still covered, not the literal name (codex).
+
 **Done when:**
 - At the repo root, `go build ./...` exits 0 and writes ./swarm, which `git status --porcelain` does not show. `go mod tidy` leaves go.mod as `go 1.27.1` with no require lines, and writes no go.sum. `go list -m all` prints only github.com/redscaresu/swarm-dev. `gofmt -l .` prints nothing. `go vet ./...` and `go test ./...` pass. The Go tests go red if the message or the exit code changes, and the subprocess test goes red when main() exits 0 whatever run() returns. `scripts/build.sh` with the real go writes the four swarm-<os>-<arch> files and SHA256SUMS into dist/, and `shasum -a 256 -c SHA256SUMS` passes there. tests/build_test.sh passes under make test. On a worktree copy it goes red when one asset's name changes in the build step but not in the list, when a platform is dropped from the list, when the signer line names .github/workflows/ci.yml, when build.sh removes a file in --out it did not write, when a failed build still writes SHA256SUMS, and when --list calls go. `make lint` shellchecks scripts/build.sh: a shellcheck finding planted in it fails the run. ci.yml's shellcheck step, Makefile SHELLCHECK_FILES and AGENTS.md's shellcheck line name the same files.
 - scripts/select-tests.sh --run passes
+- tests/board_only_test.sh passes with the new shellcheck list
