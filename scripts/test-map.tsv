@@ -52,6 +52,9 @@ README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh
 # A test, and the four tests that read every tests/*_test.sh: the mktemp-root checks of
 # sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep and test_shard_test.sh's split.
 tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh
+# The differential run's fixtures: diff_run.sh loads them by a glob, so no test names one, and
+# diff_run_test.sh builds every fixture on disk. removed_test.sh greps every tests/*.sh.
+tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/removed_test.sh
 # A test helper: removed_test.sh greps every tests/*.sh.
 tests/*.sh	named tests/removed_test.sh
 tests/**	named
