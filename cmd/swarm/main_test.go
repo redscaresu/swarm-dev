@@ -15,7 +15,7 @@ const runMainEnv = "SWARM_TEST_RUN_MAIN"
 // wantLine and wantCode are written out here, not taken from main.go, so a change there goes red.
 const (
 	wantLine = "swarm: no command is ported yet\n"
-	wantCode = 2
+	wantCode = 3
 )
 
 func TestMain(m *testing.M) {
