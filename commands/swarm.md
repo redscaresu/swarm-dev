@@ -668,7 +668,9 @@ Repeat until a step below says stop:
      merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference*.md, docs/method.md and
      commands/*.md as they apply, its prose run through the humanizer skill. It reaches the
      base the way a fix does, through a `kind: code` story or a lead PR (for a patch, a `fix: true` story: `merge --release` refuses a patch with a change from a lead PR or any other story); stop there, and
-     go back to 1 once it is on the base. Then make a worktree
+     go back to 1 once it is on the base.
+     In swarm-dev's own repo a patch also takes a PR that changes only files under `tests/`, and a `port: true` story's PR whose changed `tests/` files are all in its `touches`.
+     Then make a worktree
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
      `.claude-plugin/plugin.json`, to `<new>`: the version `next`
      named, either the stage's v<S> or the patch it named. Only when `next` printed a bare `release`, bump to the next minor version, or to the patch its why names when
@@ -680,14 +682,18 @@ Repeat until a step below says stop:
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
      and docs/ did not, unless that line is there (a change only to commands/*.md counts as its own
-     docs). Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
+     docs).
+     In swarm-dev's own repo, that check also counts `cmd/`, `internal/` and `go.mod` as code.
+     Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
      `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a
      `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json
      headRefOid -q .headRefOid`). Without `--head`, wait-pr waits on the head GitHub reports first,
      which right after your push can still be the old one. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
-     green commit. For a patch, the fix must come from a `fix: true` story or a fix-main build, or the retro gate refuses the patch. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
+     green commit. For a patch, the fix must come from a `fix: true` story or a fix-main build, or the retro gate refuses the patch.
+     In swarm-dev's own repo it may also come from a `port: true` story or a PR that changes only files under `tests/`.
+     Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
      one you named: tell the user
      what it printed and stop. For swarm-dev's own repo, first ask the user whether to move the running agents onto
      v<new> once it merges; merge runs in the background with no terminal, so it cannot ask

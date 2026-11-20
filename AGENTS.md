@@ -148,6 +148,7 @@ Useful while it runs:
   patch release soon after it merges, so running projects get it. The lead cuts it, through the
   release arm below; a builder's story PR never bumps the version.
   It ships as a patch only when every change since the tag is from a `fix: true` story or a fix-main build.
+  In swarm-dev's own repo, a PR that changes only files under `tests/`, and a `port: true` story's PR whose changed `tests/` files are all in its `touches`, ship as a patch too.
   Otherwise `merge --release` refuses the patch, and the fix ships in the next minor, after its retro.
 - Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
   that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
@@ -181,7 +182,8 @@ scripts/build.sh      the release contract: builds the four swarm-<os>-<arch> bi
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
-board/                this repo's own board (board_dir = board); docs/ holds user docs only
+board/                this repo's own board (board_dir = board); docs/ holds user docs, and docs/port/ is the one
+                      contributor folder under it: the lists the Go port is checked against
 skills/swarm-dev/     the plugin skill that answers "how do I use swarm-dev?"
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
@@ -215,6 +217,7 @@ map does not know. CI's sharded run is the gate: `test` is the required check, a
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
   gets SIGPIPE.
@@ -297,4 +300,6 @@ without one publishes nothing. Before a release, bring AGENTS.md, README.md, doc
 line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
 `commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
 the release PR body has a `Docs: none — <reason>` line.
+In swarm-dev's own repo, that check also counts `cmd/`, `internal/` and `go.mod` as code.
 It also refuses a minor bump with no done `<board>/retros/v<new>.md` on `main` covering it, and a patch bump while a change since origin's tag is not from a `fix: true` story or a fix-main build, under either merge setting ([§ The retro gate](docs/reference-merging.md#the-retro-gate)).
+In swarm-dev's own repo, that patch check also passes a change only under `tests/`, and a `port: true` story whose `touches` list every `tests/` file it changes.
