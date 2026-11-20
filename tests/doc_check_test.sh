@@ -4,7 +4,12 @@
 # code must be one of dispatch's arms (or version and update, which run before it), every key in a
 # setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
 # in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
-# and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. Every
+# and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. The repo paths
+# include the Go tree, cmd/ and internal/, and every go.mod in code, bare or under a directory (go.sum
+# is not checked: the Go rules keep it absent). A path in code may also be one of the own-repo protected
+# Go packages in bin/lib/board.sh's OWN_PROTECTED, or a directory above one (internal/), since the docs
+# name them before the port writes them; a file under one must still exist. AGENTS.md is checked for
+# links only, so a Go path in its code is not caught. Every
 # `](<path>#<slug>)` or `](#<slug>)` link in those files, AGENTS.md and llms.txt must name a heading of
 # its markdown target, slugged as GitHub does. AGENTS.md and llms.txt get only their links checked:
 # each target must exist and each #anchor be a heading.
@@ -33,10 +38,19 @@ early = src.split('\ncase "${1:-}" in', 1)[1].split("\nesac", 1)[0]
 commands = {a for arms in re.findall(r"^    ([a-z_|-]+)\)", body, re.M) for a in arms.split("|")}
 commands |= set(re.findall(r"^  ([a-z_-]+)\)", early, re.M))
 keys = set(re.search(r'^CONFIG_KEYS="([^"]+)"', src, re.M).group(1).split())
-ROOTS = r"(?:bin|commands|docs|hooks|scripts|skills|templates|tests|\.claude-plugin|\.github)/"
+ROOTS = r"(?:bin|cmd|commands|docs|hooks|internal|scripts|skills|templates|tests|\.claude-plugin|\.github)/"
+# OWN_PROTECTED's whole directories, each with its trailing slash: a doc may name one that does not
+# exist yet. Its form is an alternation of plain paths; any other form stops the check.
+own = re.search(r"^OWN_PROTECTED='([^']+)'", open(os.path.join(repo, "bin/lib/board.sh")).read(), re.M)
+protected = [p.replace("\\.", ".") for p in own.group(1).split("|")] if own else []
+if not protected or not all(re.fullmatch(r"[\w.-]+(?:/[\w.-]+)*/", p) for p in protected):
+    sys.exit("doc_check: bin/lib/board.sh's OWN_PROTECTED is not an alternation of plain directories")
 
 def exists(path):
     if glob.glob(os.path.join(repo, path)):
+        return True
+    # An own-repo protected Go package, or a directory above one, may not exist yet.
+    if any(p.startswith(path.rstrip("/") + "/") for p in protected):
         return True
     # swarm.sh init writes CI's board-only gate there, from templates/ci/board-only.sh.
     if path == ".github/swarm-board-only.sh":
@@ -57,6 +71,10 @@ def check_code(code, out):
             path = path[:path.rfind("/") + 1]   # a placeholder follows: its directory must exist
         if not exists(path):
             out.append("path " + path)
+    # go.mod has no slash of its own, so ROOTS never matches it.
+    for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?((?:[\w.-]+/)*go\.mod)(?![\w.-])", code):
+        if not exists(m.group(1)):
+            out.append("path " + m.group(1))
 
 def check_prose(rel, para, out):
     # A paragraph's lines are joined first: the docs are hard-wrapped, so a code span or link can
@@ -260,14 +278,20 @@ bin/swarm.sh nosuch1
 "${SWARM_HOME}/bin/swarm.sh" dash
 ```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
+# The Go tree: a missing cmd/ or internal/ path, or a go.mod anywhere but the root, is caught; a protected
+# package that does not exist yet passes, and so does the directory above it, but not a file under it.
+cat > "${tmp}/fixture/docs/go.md" <<'EOF'
+Stale: `cmd/nope/main.go`, `internal/nope/x.go`, `internal/gaurd/`, `internal/guard/nope.go` and `tools/go.mod`.
+Real: `cmd/swarm/main.go`, `go.mod`, `go.sum`, `internal/guard/` and `internal/`.
+EOF
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/go.md\tpath cmd/nope/main.go\ndocs/go.md\tpath internal/nope/x.go\ndocs/go.md\tpath internal/gaurd/\ndocs/go.md\tpath internal/guard/nope.go\ndocs/go.md\tpath tools/go.mod\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
-  echo "ok   fixture docs: an unknown command, config key, link, path and #anchor are each caught (AGENTS.md's and llms.txt's links too), and nothing else"
+  echo "ok   fixture docs: an unknown command, config key, link, path (Go ones too) and #anchor are each caught (AGENTS.md's and llms.txt's links too), and nothing else"
 else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
