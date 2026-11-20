@@ -71,8 +71,9 @@ def check_code(code, out):
             path = path[:path.rfind("/") + 1]   # a placeholder follows: its directory must exist
         if not exists(path):
             out.append("path " + path)
-    # go.mod has no slash of its own, so ROOTS never matches it.
-    for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?((?:[\w.-]+/)*go\.mod)(?![\w.-])", code):
+    # go.mod has no slash of its own, so ROOTS never matches it. Its directories take a glob as ROOTS'
+    # do, and a sentence's closing .,:; may follow it, but go.mod.bak and go.modx are other names.
+    for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?((?:[\w.*-]+/)*go\.mod)(?=[.,:;]*(?:[^\w.-]|$))", code):
         if not exists(m.group(1)):
             out.append("path " + m.group(1))
 
@@ -278,13 +279,18 @@ bin/swarm.sh nosuch1
 "${SWARM_HOME}/bin/swarm.sh" dash
 ```
 EOF
-# The Go tree: a missing cmd/ or internal/ path, or a go.mod anywhere but the root, is caught; a protected
-# package that does not exist yet passes, and so does the directory above it, but not a file under it.
+# The Go tree: a missing cmd/ or internal/ path, or a go.mod anywhere but the root (under a glob, or
+# ending a sentence, too), is caught; a protected package that does not exist yet passes, and so does
+# the directory above it, but not a file under it.
 cat > "${tmp}/fixture/docs/go.md" <<'EOF'
-Stale: `cmd/nope/main.go`, `internal/nope/x.go`, `internal/gaurd/`, `internal/guard/nope.go` and `tools/go.mod`.
+Stale: `cmd/nope/main.go`, `internal/nope/x.go`, `internal/gaurd/`, `internal/guard/nope.go`, `tools/go.mod` and `tools/*/go.mod`.
 Real: `cmd/swarm/main.go`, `go.mod`, `go.sum`, `internal/guard/` and `internal/`.
+
+```bash
+# Edit nope/go.mod. Then read go.mod, and other/go.mod.bak or other/go.modx is another name.
+```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/go.md\tpath cmd/nope/main.go\ndocs/go.md\tpath internal/nope/x.go\ndocs/go.md\tpath internal/gaurd/\ndocs/go.md\tpath internal/guard/nope.go\ndocs/go.md\tpath tools/go.mod\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/go.md\tpath cmd/nope/main.go\ndocs/go.md\tpath internal/nope/x.go\ndocs/go.md\tpath internal/gaurd/\ndocs/go.md\tpath internal/guard/nope.go\ndocs/go.md\tpath tools/go.mod\ndocs/go.md\tpath tools/*/go.mod\ndocs/go.md\tpath nope/go.mod\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
