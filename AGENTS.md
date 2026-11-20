@@ -288,4 +288,5 @@ without one publishes nothing. Before a release, bring AGENTS.md, README.md, doc
 line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
 `commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
 the release PR body has a `Docs: none — <reason>` line.
+In swarm-dev's own repo, that check also counts `cmd/`, `internal/` and `go.mod` as code.
 It also refuses a minor bump with no done `<board>/retros/v<new>.md` on `main` covering it, and a patch bump while a change since origin's tag is not from a `fix: true` story or a fix-main build, under either merge setting ([§ The retro gate](docs/reference-merging.md#the-retro-gate)).
