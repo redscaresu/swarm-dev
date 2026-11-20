@@ -17,7 +17,8 @@
 # one CI's full run covers. A git command that fails leaves every path out. It prints nothing when no
 # test is left; scripts/select-tests.sh --run runs this list.
 # select_tests.py --check-map reads paths from stdin (`git ls-files`) and names each one under bin/,
-# scripts/, commands/, hooks/ or docs/ that no row matches; it exits 1 when there is one.
+# scripts/, commands/, hooks/ or docs/, and each Go file, go.mod or go.sum wherever it sits, that no
+# row matches; it exits 1 when there is one.
 # select_tests.py --functions prints, one per line, the bin/ functions those changes reach: each
 # changed line of bin/swarm.sh or bin/lib/*.sh, at the merge base and now, as <file>:<function>, or
 # <file>:arm <cmd> in an arm of bin/swarm.sh's dispatch case; for a changed bin/lib/*.py, each
@@ -43,6 +44,8 @@ KEYWORDS = ("named", "self", "all", "none", "reach")
 ALONE = ("all", "none")
 KNOWN = ", ".join(KEYWORDS)
 MAPPED_DIRS = ("bin/", "scripts/", "commands/", "hooks/", "docs/")
+# Go code is a kind of file, not one directory: a .go file, go.mod or go.sum anywhere must have a row.
+GO_FILE = re.compile(r"(?:\.go|(?:^|/)go\.(?:mod|sum))\Z")
 # The selector's own test: its fixture names real paths it does not test, so it counts as naming none.
 NOT_NAMERS = ("tests/select_tests_test.sh",)
 # A basename is named when no word character, '-' or '.' runs on before it, nor a word character or
@@ -695,7 +698,7 @@ def reaching(root, base, paths):
 
 
 def check_map(rows, paths):
-    return [p for p in paths if p.startswith(MAPPED_DIRS) and row_for(rows, p) is None]
+    return [p for p in paths if (p.startswith(MAPPED_DIRS) or GO_FILE.search(p)) and row_for(rows, p) is None]
 
 
 def main(argv):

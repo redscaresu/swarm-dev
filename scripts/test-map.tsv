@@ -11,7 +11,8 @@
 # A row with `named` or `self` and test files selects both: the files are its floor, the tests that
 # read every file the row covers through a glob or a directory, which name none of them. A path no
 # row matches selects every test, and so does a `named` that finds none. tests/select_tests_test.sh
-# fails on a tracked file under bin/, scripts/, commands/, hooks/ or docs/ that no row matches.
+# fails on a tracked file under bin/, scripts/, commands/, hooks/ or docs/, or a tracked Go file, go.mod
+# or go.sum anywhere, that no row matches.
 
 # A test that runs swarm.sh sources every bin/lib/*.sh, so bin/ goes by function, not by file; select_tests.py
 # selects every test when it cannot follow the calls. The floor is the tests that read bin's code as text (a
@@ -39,6 +40,9 @@ scripts/*	named
 # skill's links, the removed names, and the bare /swarm that command_names_test.sh greps every command for.
 commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh
+# The Go module: a renamed Go path can break a doc that names it, which doc_check_test.sh catches. Not
+# `named`, since no test names main.go and it would select every test; CI's go-checks job runs the Go tests.
+go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh
 # The docs: the tests that name the file, always the ones that check or read the real docs, and
 # command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
 # epic_briefs_test.sh, plan_epic_test.sh and upgrade_test.sh read docs/reference*.md through a glob.
