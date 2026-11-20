@@ -8,19 +8,20 @@ depends_on: [foundation-exit, helpers-shared]
 
 Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewrite.md).
 
-**Done when:** None of the 10 files is left but panes.py, which stays under the comparison test until helpers-dash ports its last importers. Each inline site the agreed list gives this epic calls the binary: the ones that import panes or session_mtime in agents.sh, lifecycle.sh and merge.sh:3274. tests/lib_path_test.sh's rule is kept by the check the agreed list names. The differential run is clean for every command that called them: agent starts, status, dash, wait, close, tidy. The harness shows those call sites start no python3. Each helper's mutation proofs are repeated on the Go.
+**Done when:** None of the 10 files is left but panes.py, which stays under the comparison test until its last importer is ported. Each inline site the agreed list gives this epic calls the binary: the ones that import panes or session_mtime in agents.sh, lifecycle.sh and merge.sh:3274. tests/lib_path_test.sh's rule is kept by the check the agreed list names. The differential run is clean for every command that called them: agent starts, status, dash, wait, close, tidy. The harness shows those call sites start no python3. Each helper's mutation proofs are repeated on the Go.
 
 **Out of scope:**
-- The dash helpers, stall.py with stall_py.py, and the three inline sites in dash.sh (helpers-dash)
+- The dash helpers and dash.sh's inline sites: deleted in stage 1 (delete-dash), not ported
 - Porting any command's bash
 - Changing how a stuck or stalled agent is told apart
 
 **Constraints:**
+- stall.py and stall_py.py are ported here too: they were helpers-dash's, which left the plan when the user chose on 2026-11-20 to delete dash (delete-dash) instead of porting it. Port them only once delete-dash has merged, and read which of their callers are left.
 - Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/agent_state_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - The inline sites embed Python that imports a helper through SWARM_LIB: contradiction 2. Each becomes a call to the binary, so this epic edits loop code that stage 3 ports later. The list in port-inventory says which sites are this epic's; readers-exit checks that none is left anywhere.
 - Four sites also import report.session_log (bin/lib/agents.sh:1237,1251; bin/lib/lifecycle.sh:1178,4011), which is why this depends on helpers-shared.
-- panes.py has 6 Python importers, dash helpers among them, and is on exception 3's list (HLD:278-281): its Python copy stays until helpers-dash. stall.py is not on the list, and dash_age.py and dash_render.py import it. So stall.py, its entry stall_py.py and the site at dash.sh:700 leave this epic for helpers-dash: contradiction 24.
+- panes.py has 6 Python importers, dash helpers among them, and is on exception 3's list (HLD:278-281): its Python copy stays until its last Python importer is ported. stall.py is not on the list, and dash_age.py and dash_render.py import it. So stall.py, its entry stall_py.py and the site at dash.sh:700 leave this epic for helpers-dash: contradiction 24.
 - These read herdr and session logs: they go through the agent runner interface, and herdr 0.9.2 stays the floor (bin/lib/agents.sh:174).
 - No builder reads ~/.claude/projects or a session log by hand (rules.md:33); tests use fixtures.
 - panes.py is 548 lines: two stories, cut by function.
