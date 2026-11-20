@@ -273,6 +273,13 @@ When the file does not lead its group, such as a file run by hand from a shell w
 A group the test makes itself with `in_new_group` is stopped by `stop_group`, or by `stop_groups` in the trap.
 `tests/test_helpers_test.sh` checks it.
 
+`tests/nopy_list.txt` lists the differential run's fixtures whose command must not start a program: one line per fixture, its name and then each program.
+`tests/nopy_test.sh` runs each listed fixture through `tests/diff_run.sh` with those programs replaced on PATH by a stub that logs its call and exits 1.
+It fails when the command starts one of them, even when the command swallows the failure.
+The fixture's build and the gh and herdr stubs keep the real programs.
+A program started by its absolute path is out of its reach.
+A port epic adds a fixture's line once its command starts none of the programs the port removes, and adds a program to a line once the port drops it: python3 at stage 1, then awk, sed, perl and curl.
+
 Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
 in the PR that you did. Story files and briefs are written for agents and need no pass.
