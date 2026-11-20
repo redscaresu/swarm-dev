@@ -25,6 +25,8 @@ Needs no other story.
 - Prove it red on a copy without .git: an arm removed, a CONFIG_KEYS key removed, a REMOVED_KEYS key removed, the lessons_file skip removed, a hooks.json entry removed.
 - Humanizer over the header lines and the PR body.
 
+bin/gh-shim/gh is in the hook population but is not registered under any event in hooks/hooks.json: swarm.sh puts it on PATH. Give the shim row its own check, that its executable path exists, and require a hooks.json registration only for the event-bound hooks (codex).
+
 **Done when:**
 - names.tsv has a row for every arm, setting, removed setting and hook path of v0.31.3. tests/port_names_test.sh passes and goes red on each of the five seeded cases on a copy without .git.
 - scripts/select-tests.sh --run passes

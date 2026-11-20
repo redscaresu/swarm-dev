@@ -23,6 +23,9 @@ Uses tests/port_sites_test.sh, port_swarm_names_test.sh, port_locks_test.sh, por
 - tests/select_tests_test.sh copies the real map (:55) and pins each floor exactly (:46-50; its cases say `no other`). Add the new tests to BIN_FLOOR, SHELL_FLOOR (which SHIM_FLOOR extends) and TEST_FLOOR, and to the Go-only branch case select-tests-go adds. That test is the red proof: on a worktree copy, drop port_locks from the hooks row and it goes red.
 - `scripts/select-tests.sh --check-map` and tests/select_tests_test.sh pass.
 
+The hook and shim floors include `port_fields` too, since port-frozen-fields' test scans both bin/ and hooks/; add it to their selector-test expectations (codex).
+
 **Done when:**
 - For a change to bin/lib/agents.sh, bin/gh-shim/gh, hooks/merge-guard.sh, internal/x/y.go, tests/merge_fixture.sh and tests/x_test.sh, select-tests.sh's list names each new test that scans that path, and the PR quotes the six lists. tests/select_tests_test.sh passes, and goes red on a worktree copy with port_locks dropped from the hooks row.
 - scripts/select-tests.sh --run passes
+- A hook-only change and a shim-only change each select port_fields_test.sh
