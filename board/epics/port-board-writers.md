@@ -16,6 +16,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Removing any setting, field or brief form (HLD:463)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/intervene_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - These are the stage list's 'remaining writers' (HLD:368). They do not run the loop, so they build beside the first loop ports.
 - state_lock is at bin/lib/board.sh:3108; set_fm, state_set and state_write at :3073-3147.

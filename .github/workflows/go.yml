@@ -1,0 +1,139 @@
+name: Go
+
+# The same triggers as ci.yml.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  # A merge queue tests each PR on top of main and the PRs queued ahead of it (swarm.sh merge).
+  # board-only.sh runs everything on it.
+  merge_group:
+
+# Least-privilege default: every job only reads the repo.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, where GitHub's default bash has no pipefail
+
+# The Go checks, one step each, so one run shows every check that fails. The gate skips the steps,
+# never the job: a board-only or version-only PR still reports go-checks green, as a required check
+# that never reports blocks its PR.
+jobs:
+  go-checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read     # the gate reads main's check runs for a release PR
+      statuses: read   # and its commit statuses
+    env:
+      # Bumped by hand: dependabot watches only github-actions (.github/dependabot.yml). The sha256 is
+      # the release's staticcheck_linux_amd64.tar.gz.sha256 asset, checked against the tarball itself.
+      STATICCHECK_VERSION: 2026.2.2
+      STATICCHECK_SHA256: 14c081e0f0d05b5a4d4c53fd3d357d4a5af9d20501465fefc9024ee828d3aa5c
+      # Bumped by hand too, for the same reason. errcheck has no release assets, so it is installed
+      # from source, pinned by its module hash, which sum.golang.org has for this version. Its go line
+      # must be at most go.mod's: setup-go sets GOTOOLCHAIN=local, so a newer one fails to install.
+      ERRCHECK_MODULE: github.com/kisielk/errcheck
+      ERRCHECK_VERSION: v1.30.0
+      ERRCHECK_SUM: h1:ZIxNDAfAd4larXHTceoZP/dYPAB90dHg1OYhA2sVh5k=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base
+          persist-credentials: false
+      - name: Gate a board-only or version-only PR
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GH_TOKEN: ${{ github.token }}
+        # The base's copy when it has one: a PR is never judged by a gate it changed.
+        run: |
+          git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
+          bash "${RUNNER_TEMP}/board-only.sh"
+      - name: Set up Go from go.mod
+        id: setup
+        if: steps.gate.outputs.board_only != 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Every check below runs once Go is set up, whichever check before it failed.
+      - name: gofmt -l prints nothing
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::gofmt -l lists files that are not gofmt'd:"
+            echo "${unformatted}"
+            exit 1
+          fi
+      - name: go vet
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: go vet ./...
+      - name: staticcheck
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # The tarball is checked before anything in it runs.
+        run: |
+          tarball="${RUNNER_TEMP}/staticcheck_linux_amd64.tar.gz"
+          curl -fsSL -o "${tarball}" "https://github.com/dominikh/go-tools/releases/download/${STATICCHECK_VERSION}/staticcheck_linux_amd64.tar.gz"
+          echo "${STATICCHECK_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" -C "${RUNNER_TEMP}"
+          "${RUNNER_TEMP}/staticcheck/staticcheck" -version
+          "${RUNNER_TEMP}/staticcheck/staticcheck" ./...
+      - name: errcheck
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # Downloaded and installed from outside the module, so neither touches go.mod or go.sum.
+        run: |
+          tools="${RUNNER_TEMP}/errcheck"
+          mkdir -p "${tools}/bin"
+          sum="$(cd "${tools}" || exit 1; go mod download -json "${ERRCHECK_MODULE}@${ERRCHECK_VERSION}" | jq -r .Sum)"
+          if [ "${sum}" != "${ERRCHECK_SUM}" ]; then
+            echo "::error::${ERRCHECK_MODULE}@${ERRCHECK_VERSION} has sum ${sum}, not the pinned ${ERRCHECK_SUM}"
+            exit 1
+          fi
+          (cd "${tools}" || exit 1; GOBIN="${tools}/bin" go install "${ERRCHECK_MODULE}@${ERRCHECK_VERSION}")
+          "${tools}/bin/errcheck" ./...
+      - name: go build
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: go build ./...
+      - name: go test
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: go test ./...
+      - name: The build contract (scripts/build.sh and its --list)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # dist/ holds each asset --list names and its checksums file, nothing else, and the sums hold.
+        run: |
+          scripts/build.sh
+          want="$(scripts/build.sh --list | awk -F '\t' '$1 == "asset" { print $3 } $1 == "checksums" { print $2 }' | sort)"
+          got="$(ls -A dist | sort)"
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::dist/ does not hold exactly what scripts/build.sh --list names"
+            diff <(echo "${want}") <(echo "${got}") || true
+            exit 1
+          fi
+          checksums="$(scripts/build.sh --list | awk -F '\t' '$1 == "checksums" { print $2 }')"
+          (cd dist || exit 1; shasum -a 256 -c "${checksums}")
+      # Last, so nothing the steps above ran can add to go.sum or the module list after it is read.
+      - name: go.sum is absent or empty
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          if [ -s go.sum ]; then
+            echo "::error::go.sum has lines: the module uses only the standard library"
+            cat go.sum
+            exit 1
+          fi
+      # A require replaced by a local directory adds no go.sum line, so go.sum alone does not hold the
+      # standard-library rule.
+      - name: go list -m all names only this module
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          modules="$(go list -m all)"
+          if [ "${modules}" != "github.com/redscaresu/swarm-dev" ]; then
+            echo "::error::go list -m all names more than github.com/redscaresu/swarm-dev:"
+            echo "${modules}"
+            exit 1
+          fi

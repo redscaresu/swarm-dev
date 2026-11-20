@@ -17,6 +17,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - The differential run, the speed fixture and the python3 harness (port-checks)
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/port_fields_test.sh, tests/port_locks_test.sh, tests/port_swarm_names_test.sh. Each keeps the assertion its go_check column names.
 - stage: v0.32.0.
 - The list replaces the HLD's 46 to 67 range. At 171c1dbf, 32 of 208 test files name a bin/lib/*.py and 25 source a bin/lib/*.sh.
 - The list also covers the tests that read bin/ and hooks/ as text (loose_match, timeouts, outcome_scan, lib_path, agent_state, removed, command_names, doc_check, skill, events_fixture) and names the Go check that keeps each one's rule.

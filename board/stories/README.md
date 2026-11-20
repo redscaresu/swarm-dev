@@ -15,9 +15,14 @@ never given to a swarm agent. A `lead` story says what it needs from you, and ma
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
 `fix: true` marks a story that fixes behaviour a release already shipped, such as a bug or a regression.
-A patch release is meant to carry only such stories and fix-main builds.
+A patch release is meant to carry only such stories and fix-main builds; in swarm-dev's own repo it may also carry `port: true` stories and changes only under `tests/`.
 New behaviour never carries it.
 Leave the field off every other story.
+
+`port: true` marks a story in swarm-dev's own repo that ports code or rewrites tests and changes no behaviour.
+Its PR ships in a patch when its `touches` list, under this repo, every `tests/` file it changes.
+In any other repo it counts for nothing, and `fix: true` wins when a story has both.
+New behaviour never carries it.
 
 `attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
 closes the builder of a code, docs or chore story that is still `ready` with no open PR, or when
