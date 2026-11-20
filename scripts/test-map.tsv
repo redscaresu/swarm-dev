@@ -44,6 +44,7 @@ commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
 # The Go module: a renamed Go path can break a doc that names it, which doc_check_test.sh catches. Not
 # `named`, since no test names main.go and it would select every test; CI's go-checks job runs the Go tests.
+# port_swarm_names_test.sh, port_locks_test.sh and port_fields_test.sh scan the Go files by a glob.
 go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh
 # The docs: the tests that name the file, always the ones that check or read the real docs, and
 # command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
@@ -54,6 +55,10 @@ README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh
 # A test, and the four tests that read every tests/*_test.sh: the mktemp-root checks of
 # sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep and test_shard_test.sh's split.
 tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh
+# The differential run's fixtures: diff_run.sh loads them by a glob, so no test names one, and
+# diff_run_test.sh builds every fixture on disk. removed_test.sh greps every tests/*.sh, and
+# port_tests_list_test.sh reads each helper under tests/.
+tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/removed_test.sh tests/port_tests_list_test.sh
 # A test helper: removed_test.sh greps every tests/*.sh.
 tests/*.sh	named tests/removed_test.sh tests/port_tests_list_test.sh
 tests/**	named

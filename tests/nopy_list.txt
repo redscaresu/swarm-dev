@@ -1,0 +1,15 @@
+# nopy_list.txt — tests/nopy_test.sh's list: the differential run's fixtures whose command must not
+# start a program. One line a fixture: its name (fx_<name> in a tests/diff_fixtures_*.sh file), then
+# each program it must not start, space-separated:
+#
+#   <fixture> <program>...
+#
+# Stage 1 names python3. A port epic adds a fixture's line once its command starts none of the
+# programs the port removes, and adds awk, sed, perl or curl to a line once the port drops it. A
+# fixture appears on one line only.
+# Blank lines and lines that start with # are skipped.
+#
+# next and status are not listed yet: each starts python3, for now_ms (bin/lib/agents.sh) and for
+# bin/lib/touches_rows.py's idle check (bin/lib/board.sh).
+
+usage python3

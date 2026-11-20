@@ -182,7 +182,8 @@ scripts/build.sh      the release contract: builds the four swarm-<os>-<arch> bi
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
-board/                this repo's own board (board_dir = board); docs/ holds user docs only
+board/                this repo's own board (board_dir = board); docs/ holds user docs, and docs/port/ is the one
+                      contributor folder under it: the lists the Go port is checked against
 skills/swarm-dev/     the plugin skill that answers "how do I use swarm-dev?"
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
@@ -216,6 +217,7 @@ map does not know. CI's sharded run is the gate: `test` is the required check, a
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
   gets SIGPIPE.
@@ -273,6 +275,13 @@ It spares a process whose parent is the test's parent, such as the `tail` in `ba
 When the file does not lead its group, such as a file run by hand from a shell without job control, `stop_test_group` stops nothing.
 A group the test makes itself with `in_new_group` is stopped by `stop_group`, or by `stop_groups` in the trap.
 `tests/test_helpers_test.sh` checks it.
+
+`tests/nopy_list.txt` lists the differential run's fixtures whose command must not start a program: one line per fixture, its name and then each program.
+`tests/nopy_test.sh` runs each listed fixture through `tests/diff_run.sh` with those programs replaced on PATH by a stub that logs its call and exits 1.
+It fails when the command starts one of them, even when the command swallows the failure.
+The fixture's build and the gh and herdr stubs keep the real programs.
+A program started by its absolute path is out of its reach.
+A port epic adds a fixture's line once its command starts none of the programs the port removes, and adds a program to a line once the port drops it: python3 at stage 1, then awk, sed, perl and curl.
 
 Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
