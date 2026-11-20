@@ -74,7 +74,7 @@ config	0	printed the config or one key	bin/swarm.sh:main	tests/removed_test.sh
 config	1	the key asked for is not a known one; says which	bin/swarm.sh:show_config	none
 cost	0	prints that cost moved into flow's cost section	bin/swarm.sh:main	tests/removed_test.sh
 dash	0	the board was drawn, or --check found every figure agrees	bin/swarm.sh:main	tests/dash_check_test.sh,tests/dash_layout_test.sh
-dash	1	bad flag, no board or not a swarm project; says why on stderr	bin/lib/dash.sh:dash	tests/dash_layout_test.sh,tests/dash_projects_test.sh,tests/dash_check_test.sh
+dash	1	bad flag, no board or not a swarm project; says why on stderr	bin/lib/dash.sh:dash	tests/dash_layout_test.sh,tests/dash_check_test.sh
 dataset	0	dataset.jsonl was written, or no finished story left it as it was	bin/swarm.sh:main	tests/dataset_test.sh
 dataset	1	extra argument, no agents log, outcomes failed or gh down; says why	bin/lib/reports.sh:dataset_report	tests/dataset_test.sh
 dialog	0	the story's dialog answer was logged	bin/swarm.sh:main	none
@@ -110,10 +110,10 @@ init	1	an argument init does not know; prints its usage	bin/swarm.sh:dispatch	no
 intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	none
 intervene	1	unknown kind or cause, empty line, or events log unwritable	bin/swarm.sh:intervene	tests/intervene_test.sh
 lessons	0	prints that lessons moved into outcomes' recurring block	bin/swarm.sh:main	tests/config_test.sh
-lessons	1	an argument other than --all; prints the usage line	bin/swarm.sh:dispatch	tests/config_test.sh
+lessons	1	an argument other than --all; prints the usage line	bin/swarm.sh:dispatch	none
 log-finding	0	the finding was appended to findings.tsv	bin/swarm.sh:main	tests/log_finding_test.sh
-log-finding	1	bad flag, reason, round, reviewer, kind or PR; says which	bin/lib/reports.sh:record_finding	tests/log_finding_test.sh
-merge	0	the PR merged and the base's CI was green	bin/swarm.sh:main	tests/merge_note_test.sh
+log-finding	1	bad flag, reason, round, reviewer, kind or PR; says which	bin/lib/reports.sh:record_finding	none
+merge	0	the PR merged and the base's CI was green, or it merged elsewhere while merge waited (no base CI wait)	bin/swarm.sh:main	tests/merge_note_test.sh
 merge	1	merged, but reconcile failed, base CI was not green, or the queue merged another head	bin/lib/merge.sh:merge_pr	tests/merge_note_test.sh
 next	0	the next step was printed	bin/swarm.sh:main	tests/next_test.sh
 next	1	cannot make a temp file or set the report deadline	bin/lib/board.sh:next_report	none
@@ -133,7 +133,7 @@ restart	1	story is not restartable or its start failed; says why	bin/lib/lifecyc
 restart	1	not exactly one slug given; prints usage	bin/swarm.sh:dispatch	none
 retro	0	the retro report printed	bin/swarm.sh:main	tests/retro_test.sh
 retro	1	bad flag, no tag to start from or no such tag; says why on stderr	bin/lib/reports.sh:retro_report	tests/retro_test.sh
-review	0	the story was set to review with its PRs	bin/swarm.sh:main	none
+review	0	the story was set to review with its PRs	bin/swarm.sh:main	tests/handover_note_test.sh
 review	1	bad head SHA, no PR URL, or the story waits on a parent PR to merge	bin/lib/board.sh:mark_review	tests/handover_note_test.sh
 review-agent	0	the review agent started	bin/swarm.sh:main	tests/review_agent_test.sh
 review-agent	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
@@ -149,7 +149,7 @@ step-up	1	refused (bad trigger, ladder off, top rung) or failed; says why	bin/li
 step-up	1	nothing waits to resume, lock held, or marker gone; says why	bin/lib/lifecycle.sh:step_up_resume	tests/escalate_ladder_test.sh
 story	0	the builder started	bin/swarm.sh:main	tests/board_state_test.sh
 story	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	bin/lib/agents.sh:require_herdr	none
-story	1	story not ready, not a code story, build exists or the start failed	bin/lib/build.sh:build_story	tests/epic_briefs_test.sh,tests/env_allowlist_test.sh,tests/board_state_test.sh
+story	1	story not ready, not a code story, build exists or the start failed	bin/lib/build.sh:build_story	tests/env_allowlist_test.sh,tests/board_state_test.sh
 story	1	too many arguments or an unknown flag; says which	bin/swarm.sh:dispatch	none
 swarms	0	the swarms on this machine listed	bin/swarm.sh:main	tests/swarms_test.sh
 swarms	1	herdr gave no workspace, pane or agent list, or cut it short	bin/lib/dash.sh:swarms	tests/swarms_test.sh
