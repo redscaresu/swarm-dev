@@ -12,7 +12,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Out of scope:**
 - The lead's queue, already Go (port-lead-queue-agents)
-- dash (port-dash)
+- dash, which is deleted in stage 1 (delete-dash), not ported
 - tidy (port-close)
 - Making status faster (HLD:90; open question 2 is for v0.33)
 

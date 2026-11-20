@@ -1,7 +1,7 @@
 ---
 status: active
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
-depends_on: [foundation-exit, board-store, helpers-flow-reviews, helpers-reports, helpers-dash, helpers-ci-gate, helpers-dropped-lines]
+depends_on: [foundation-exit, board-store, helpers-flow-reviews, helpers-reports, helpers-ci-gate, helpers-dropped-lines]
 ---
 
 # The board's shared readers and the small read-only commands are Go: config, policy, base and grants, with the story and epic graph the other commands read
@@ -12,7 +12,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Out of scope:**
 - next and the release gates (port-next, port-release-gates)
-- status and dash (port-status, port-dash)
+- status (port-status). dash is deleted in stage 1 (delete-dash)
 - Any new line or setting
 
 **Constraints:**
