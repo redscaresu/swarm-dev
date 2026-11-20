@@ -11,7 +11,7 @@
 # pinned by: tests/*_test.sh that run the command and assert its exit status on that path (a test that checks only the message does not count), or `none`. A row with several sites is pinned
 # when a test asserts some of them, not necessarily all.
 (other)	0	a known command ran and finished	bin/swarm.sh:main	none
-(other)	2	no command or an unknown one; prints the usage header	bin/swarm.sh:dispatch	none
+(other)	2	no command or an unknown one; prints the usage header	bin/swarm.sh:dispatch	tests/flow_test.sh
 _archive	0	the story's session log was copied	bin/swarm.sh:main	none
 _base	0	printed the repo's base branch	bin/swarm.sh:main	none
 _base	1	origin cannot be listed or fetched, or has no wanted branch; says why	bin/swarm.sh:base_for	none
@@ -90,15 +90,15 @@ findings	0	the PR's findings were printed	bin/swarm.sh:main	tests/fail_lines_tes
 findings	1	unknown repo, bad PR number, no GitHub origin, or gh cannot read the PR	bin/lib/reports.sh:findings	none
 finish	0	the finished story, epic or HLD was taken off the board	bin/swarm.sh:main	tests/board_pr_kinds_test.sh,tests/pr_removes_story_test.sh
 finish	1	bad slug, no such item, or an HLD that is not finished; says why	bin/lib/board.sh:finish_item	tests/pr_removes_story_test.sh
-flow	0	the report printed	bin/swarm.sh:main	none
+flow	0	the report printed	bin/swarm.sh:main	tests/review_yield_test.sh
 flow	1	bad flag or date, or a section raised an error	bin/lib/reports.sh:flow_report	tests/flow_sections_test.sh
 grants	0	the grants were printed	bin/swarm.sh:main	tests/grants_test.sh
-grants	1	wrong argument count, or no item, PR or HLD to read grants from	bin/lib/board.sh:grants	none
+grants	1	wrong argument count, or no item, PR or HLD to read grants from	bin/lib/board.sh:grants	tests/pr_contents_test.sh
 handover	0	the handover folder was written	bin/swarm.sh:main	tests/handover_test.sh
 handover	1	bad argument, no usable out folder, board not in a git repo or a copy failed	bin/lib/handover.sh:handover_report	tests/handover_test.sh
 hold	0	the hold was logged for the ready story	bin/swarm.sh:main	tests/events_tail_merge_test.sh,tests/hold_test.sh
 hold	1	bad slug, story not ready, PR closed unmerged, no reason, or log unwritable	bin/swarm.sh:hold	tests/hold_test.sh
-hooks/agent-state.sh	0	the hook ran; it never blocks Claude Code	hooks/agent-state.sh:(top level)	none
+hooks/agent-state.sh	0	the hook ran; it never blocks Claude Code	hooks/agent-state.sh:(top level)	tests/resume_report_test.sh
 hooks/lead-stop.sh	0	the hook ran, with or without a block decision on stdout	hooks/lead-stop.sh:(top level)	tests/live_logs_test.sh,tests/lead_stop_test.sh
 hooks/merge-guard.sh	0	the tool call is allowed	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
 hooks/merge-guard.sh	2	the tool call is refused (a merge, or work-losing command)	hooks/merge-guard.sh:(top level)	tests/merge_guard_test.sh
@@ -107,7 +107,7 @@ init	0	the board and files were set up	bin/swarm.sh:main	none
 init	1	the .swarm/auto-mode-done file could not be written	bin/lib/lifecycle.sh:auto_mode_done	none
 init	1	not in a git repo, not at its root, or not at the project's root	bin/lib/lifecycle.sh:init_check	none
 init	1	an argument init does not know; prints its usage	bin/swarm.sh:dispatch	none
-intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	none
+intervene	0	the intervention was logged as an incident	bin/swarm.sh:main	tests/events_test.sh
 intervene	1	unknown kind or cause, empty line, or events log unwritable	bin/swarm.sh:intervene	tests/intervene_test.sh
 lessons	0	prints that lessons moved into outcomes' recurring block	bin/swarm.sh:main	tests/config_test.sh
 lessons	1	an argument other than --all; prints the usage line	bin/swarm.sh:dispatch	none
@@ -125,7 +125,7 @@ policy	0	printed the model and effort for the role	bin/swarm.sh:main	tests/roles
 policy	1	the role is not a known one; lists the roles	bin/swarm.sh:policy	none
 reconcile	0	the board state was brought in line with the PRs	bin/swarm.sh:main	tests/epic_reconcile_test.sh,tests/reconcile_pull_test.sh
 reconcile	1	cannot create the .swarm folder	bin/lib/board.sh:reconcile	none
-reset	0	the escalated story went back to ready as code	bin/swarm.sh:main	none
+reset	0	the escalated story went back to ready as code	bin/swarm.sh:main	tests/close_test.sh
 reset	1	missing or bad slug or reason, no story, nothing to reset, or already reset	bin/lib/board.sh:reset_story	tests/close_test.sh
 restart	0	the builder was started again	bin/swarm.sh:main	tests/restart_test.sh
 restart	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
