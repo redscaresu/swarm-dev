@@ -39,6 +39,7 @@ tests/dash_stalls_test.sh	py	rewrite-from-outside		helpers-dash
 tests/dash_time_limit_test.sh	py,python3-stub	rewrite-from-outside		helpers-dash
 tests/dash_watch_test.sh	py,python3-stub	rewrite-from-outside		helpers-dash
 tests/dataset_test.sh	py,python3-stub	rewrite-from-outside		helpers-reports
+tests/diff_allow_test.sh	text	rewrite-from-outside	retired-with: port-next	port-next
 tests/diff_run_test.sh	lib	rewrite-from-outside		helpers-shared
 tests/doc_check_test.sh	text	rewrite-from-outside	doc_check reads the command and setting names from the Go dispatch table and settings list as well as the bash, and fails when it finds none	binary-wrapper
 tests/dropped_lines_test.sh	py	rewrite-from-outside		helpers-dropped-lines
