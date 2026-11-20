@@ -2,8 +2,8 @@
 # diff_run.sh — the differential run: run each fixture once against <tree-a> and once against
 # <tree-b>, and compare what the two runs did.
 #
-#   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>]
-#                          [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [those options] [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
 #                      its group (default 10); one still alive then is red, by its argv, and is killed
@@ -352,7 +352,8 @@ run_one() {
 
 echo "a: ${TREE_A}"
 echo "b: ${TREE_B}"
-status=0 ran=() reds=()
+status=0
+ran=() reds=()
 for fx in "${names[@]}"; do
   red="" broken=""
   # The two runs go side by side, each with its own root; their lines come out a's first.
