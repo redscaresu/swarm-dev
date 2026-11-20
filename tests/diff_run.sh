@@ -65,7 +65,7 @@
 #   - A subshell waited on at once (`( ... ) & wait $!`, as bin/lib/merge.sh runs reconcile and
 #     story_note) has its calls on calls:fg, in place: a step whose parent, at the step's first call,
 #     sleeps with that step as its only child is taken as waited on; where /proc names what it sleeps
-#     in (Linux), only a wait counts. A parent that has not yet reached its wait by then (the step
+#     in (Linux), only a wait counts, and the parent's own list of children is read. A parent that has not yet reached its wait by then (the step
 #     has forked and started a gh by that time) would leave it a step of its own, and on macOS one
 #     blocked in a read with that step its only child would make the step look waited on.
 #   - A `gh ... &` the command itself runs is a step (hooks/agent-state.sh runs herdr so, unwaited);
@@ -342,18 +342,29 @@ place="$("${PERL}" -e '
   print $o join("", map { "$_\t$up{$_}\t$argv{$_}\n" } @chain);
   close $o or exit 1;
   # A process whose parent sleeps with it as its only child is waited on, as `( ... ) & wait $!` leaves
-  # it: "<pid>=w". Where /proc names what the parent sleeps in, only a wait counts, so one blocked in a
-  # read (pipe_read) or a FIFO open does not; where it names nothing (macOS, a kernel that hides it),
-  # sleeping is enough.
+  # it: "<pid>=w". Where /proc names what the parent sleeps in (Linux), the parent itself is read, not
+  # ps: ps reads /proc one process at a time, so a child forked meanwhile can be missing. The parent
+  # must be in a wait before and between two reads of its own list of children, and both must be
+  # this one process; a parent blocked in a read or a FIFO open is not waiting. Where /proc names
+  # nothing (macOS, whose ps reads the whole table at once, or a kernel that hides it), sleeping with
+  # it as its only child is enough.
+  sub slurp { my ($f) = @_; open(my $h, "<", $f) or return ""; my $c = join("", <$h>); close $h; return $c }
   sub waited_on {
-    my ($u) = @_;
-    return 0 unless ($stat{$u} // "") =~ /^S/ && ($kids{$u} // 0) == 1;
-    my $c = "";
-    if (open(my $w, "<", "/proc/$u/wchan")) { $c = <$w> // ""; close $w }
-    return 1 unless $c =~ /[a-z]/;
-    return $c =~ /^(?:do_wait|kernel_wait4)/ ? 1 : 0;
+    my ($u, $child) = @_;
+    my $w1 = slurp("/proc/$u/wchan");
+    if ($w1 =~ /[a-z]/) {
+      return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4)/;
+      my $cf = "/proc/$u/task/$u/children";
+      if (-e $cf) {
+        # The list the kernel keeps holds a child not yet reaped too. Read twice around a second wchan, so a
+        # child forked or reaped between two reads shows in one of them.
+        my $one = sub { my @k = split " ", slurp($cf); @k == 1 && $k[0] eq $child };
+        return $one->() && slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4)/ && $one->() ? 1 : 0;
+      }
+    }
+    return ($stat{$u} // "") =~ /^S/ && ($kids{$u} // 0) == 1 ? 1 : 0;
   }
-  print "$flag\t", join(" ", (map { waited_on($up{$_}) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
+  print "$flag\t", join(" ", (map { waited_on($up{$_} // "", $_) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
 [[ "${place}" == [bf]g$'\t'* ]] || place=$'?\t?'
 # A call from inside a stub, or from this shim through anything on PATH, is refused: a loop back
 # through the shim would fork without end.
