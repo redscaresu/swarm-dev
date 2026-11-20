@@ -74,6 +74,20 @@ expect() {
 kept() { cat "${KD}/$1/${SIDE}/$2"; }
 # kept_has <fixture> <stream> <line> — that stream holds <line>, whole.
 kept_has() { grep -qxF -- "$3" "${KD}/$1/${SIDE}/$2"; }
+# kept_calls <fixture> — every call of that run as kept, calls:fg's and each step's: agent-state runs
+# its herdr call in the background, so it is a step's.
+kept_calls() { cat "${KD}/$1/${SIDE}/calls:fg" "${KD}/$1/${SIDE}"/step.* 2> /dev/null || true; }
+
+# expect_calls <name> <fixture> — b as mutated is red, and only on <fixture>'s call streams (calls:fg
+# or a step's, which is labelled by its argv and first call); then b is restored.
+expect_calls() {
+  local got l off=""
+  if ! run 1 "${A}" "${B}" "$2" > "${ROOT}/why"; then bad "$1" "$(cat "${ROOT}/why")"; restore; return; fi
+  got="$(diffs)"
+  while IFS= read -r l; do [[ -z "${l}" || "${l}" == "$2 calls:"* ]] || off+="${l};"; done <<< "${got//;/$'\n'}"
+  if [[ -z "${got}" || -n "${off}" ]]; then bad "$1" "DIFF lines '${got}', not only $2's call streams"; else ok "$1"; fi
+  restore
+}
 
 # streams <name> <keep dir> — each side's kept streams are what the hooks do, beyond the two agreeing.
 streams() {
@@ -97,8 +111,8 @@ streams() {
     else bad "$1: lead-stop allows with no step (${SIDE})" "stdout: $(kept hook_stop_none stdout), files: $(kept hook_stop_none files)"; fi
     for st in working idle; do
       want="herdr pane report-agent --source swarm --agent claude --state ${st} --seq <seq> --agent-session-id sess-1 w1:p1 -- claude --resume sess-1"
-      if [[ "$(kept "hook_state_${st}" calls:fg)" == "${want}" ]]; then ok "$1: agent-state reports ${st} to herdr (${SIDE})"
-      else bad "$1: agent-state reports ${st} to herdr (${SIDE})" "calls: $(kept "hook_state_${st}" calls:fg)"; fi
+      if [[ "$(kept_calls "hook_state_${st}")" == "${want}" ]]; then ok "$1: agent-state reports ${st} to herdr (${SIDE})"
+      else bad "$1: agent-state reports ${st} to herdr (${SIDE})" "calls: $(kept_calls "hook_state_${st}")"; fi
     done
     if [[ "$(kept hook_caught_lead stdout)" == "If this message points out a problem the swarm or the lead missed, log it first: "* \
       && -z "$(kept hook_caught_agent stdout)" && "$(kept hook_caught_agent exit)" == 0 ]]; then
@@ -135,11 +149,11 @@ expect "one byte of lead-stop's stdout" hook_stop_step "hook_stop_step stdout;"
 mutate "${B}" hooks/merge-guard.sh '"incident", "-",' '"incidenT", "-",'
 expect "one byte of merge-guard's event line" hook_guard_merge "hook_guard_merge files;"
 mutate "${B}" hooks/agent-state.sh '"${h}" pane "$@" <' '"${h}" pane extra < /dev/null > /dev/null 2>&1 & "${h}" pane "$@" <'
-expect "one extra herdr call from agent-state" hook_state_working "hook_state_working calls:fg;"
+expect_calls "one extra herdr call from agent-state" hook_state_working
 mutate "${B}" hooks/agent-state.sh '--agent claude --state' '--agent claudE --state'
-expect "one byte of agent-state's herdr argv outside --seq" hook_state_working "hook_state_working calls:fg;"
+expect_calls "one byte of agent-state's herdr argv outside --seq" hook_state_working
 mutate "${B}" hooks/agent-state.sh '--state "${state}" --seq "${seq}"' '--state "${state}" --seq "${seq}0"'
-expect "a --seq of another shape is not masked" hook_state_working "hook_state_working calls:fg;"
+expect_calls "a --seq of another shape is not masked" hook_state_working
 
 # (3) make test's SWARM_FORBID_PROJECT names no fixture project, so (1) saw the line in both trees;
 # b's guard writing none is red.
@@ -153,8 +167,8 @@ cat > "${A}/tests/diff_fixtures_probe.sh" <<'FX'
 fx_probe_noresume() { fx_hook_state_working; rm -f "${ROOT}/resume.argv"; }
 FX
 if run 1 "${A}" "${B}" probe_noresume > "${ROOT}/why" && [[ -z "$(diffs)" ]] \
-  && grep -qxF "MISSING probe_noresume (a): no call 'herdr pane report-agent' in calls:fg" "${ROOT}/out" \
-  && grep -qxF "MISSING probe_noresume (b): no call 'herdr pane report-agent' in calls:fg" "${ROOT}/out"; then
+  && grep -qxF "MISSING probe_noresume (a): no call 'herdr pane report-agent' in calls:fg or a step" "${ROOT}/out" \
+  && grep -qxF "MISSING probe_noresume (b): no call 'herdr pane report-agent' in calls:fg or a step" "${ROOT}/out"; then
   ok "an agent-state fixture with no SWARM_RESUME file is red by its missing call"
 else bad "an agent-state fixture with no SWARM_RESUME file is red by its missing call" "$(cat "${ROOT}/why")"; fi
 
