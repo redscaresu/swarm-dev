@@ -14,7 +14,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Out of scope:**
 - The release gates' rules (port-release-gates)
-- status and dash (port-status, port-dash)
+- status (port-status). dash is deleted in stage 1 (delete-dash)
 - Any new step or line in next
 
 **Constraints:**
