@@ -6,7 +6,8 @@
 # --run runs --known's list through make test, 4 at a time, or says there is none to run
 # (select_tests.py says why on stderr). It never runs the full suite; make test with no TESTS does.
 # select-tests.sh --check-map < <paths> — names each path under bin/, scripts/, commands/, hooks/ or
-# docs/ that the map leaves out, and fails when there is one.
+# docs/, and each Go file, go.mod or go.sum wherever it sits, that the map leaves out, and fails when
+# there is one.
 # select-tests.sh --functions — the bin/ functions this branch's changes reach, one per line
 # (<file>:<function>, or bin/swarm.sh:arm <cmd> for an arm of its dispatch case), or `full`; --run
 # takes none of these options.
