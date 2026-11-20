@@ -98,10 +98,11 @@ A `costs:` of `none` or empty merges, and an unreadable board story holds every 
 When another merge deletes a story file after `swarm.sh merge` listed the board, `merge` lists the board again, once, and reads it again.
 If a story file on that second list is gone by its read too, or a file is there but unreadable, the PR is still held, and a review agent merging its own story's PR is refused in the same cases.
 `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`).
+In swarm-dev's own repo (the repository its `plugin.json` names, in any case of letters), it also holds a story PR that changes `internal/guard/`, `internal/merge/`, `internal/release/`, `internal/agentenv/` or `.claude-plugin/`, again in any case of letters; when it cannot read a repository from `plugin.json`, it holds those paths in every repo and the hold line says `plugin_repo` could not answer.
 It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`).
 When it still cannot read them, it holds the PR and says why.
 A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands.
-`--board` and `--release` PRs cannot change those paths.
+`--board` PRs cannot change those paths; a `--release` PR changes `.claude-plugin/plugin.json`, and goes unheld because its route never runs this hold.
 Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story.
 `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path.
 `status` and `wait --lead` read the record with no gh call.
@@ -225,7 +226,9 @@ the changed paths, unless the PR body has a `Docs: none — <reason>` line. That
 or `* ` list item and may use `-` or `--` for the dash. The reason must be at least two characters,
 and a placeholder such as `<reason>` does not count, nor does a line inside a ```` ``` ```` fence or
 a `>` quote. A change to `commands/*.md` is the text a user reads, so it covers itself when nothing
-else in the code changed; next to a `bin/` or `hooks/` change it does not. The board's own paths
+else in the code changed; next to a `bin/` or `hooks/` change it does not.
+In swarm-dev's own repo, `cmd/`, `internal/` (Go test files included) and `go.mod` count as code too, and when the plugin's `plugin.json` names no GitHub repository they count in every repo.
+The board's own paths
 (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and the retro files `retros/*.md`) are not
 docs, even when the board is `docs/`; the rest of `docs/` is. It compares against origin's tag by its
 SHA and never fetches over your local tag. It refuses when origin has no

@@ -1,0 +1,131 @@
+# names.tsv: the commands, settings, removed settings and hook paths of swarm-dev v0.31.3, frozen
+# for the Go port. tests/port_names_test.sh fails on each one that is gone, naming this file and it.
+# Rows are tab-separated: kind, name, where. Line numbers in the where column are as of v0.31.3.
+# v0.31.2 has the same names. Between the two tags, bin/swarm.sh changes one usage comment line
+# (dropped-lines took --story) and hooks/hooks.json does not change.
+# Flags are not listed.
+#
+# The kinds, and what the test checks for each:
+#   command: still an arm of bin/swarm.sh's dispatch, or of the early case that runs before it, read
+#     as tests/doc_check_test.sh reads them. 68 rows: 66 dispatch arms, 18 of them internal `_` arms,
+#     plus version and update. When binary-wrapper moves a ported command's arm out of dispatch, the
+#     test must read that command's marker file too.
+#   setting: a key of CONFIG_KEYS. 25 rows. `swarm.sh config` in a stand-in project prints a
+#     `<key> = ` line for it.
+#   removed-setting: a key a config may still set. 5 rows. A config that sets it still loads. When the
+#     where column starts with REMOVED_KEYS, stderr also has a warning naming the key. lessons_file
+#     loads silently.
+#   hook: 11 rows. Ten are `<event> <command>`: hooks/hooks.json still runs that command on that event,
+#     and the script exists. The eleventh is bin/gh-shim/gh, which no event runs: swarm.sh puts it
+#     first on PATH. The test checks that it exists and can be run.
+#
+# kind	name	where
+command	version	early case, bin/swarm.sh:160
+command	update	early case, bin/swarm.sh:161
+command	policy	dispatch, bin/swarm.sh:628
+command	agent	dispatch, bin/swarm.sh:629
+command	story	dispatch, bin/swarm.sh:630
+command	conduct	dispatch, bin/swarm.sh:634
+command	close	dispatch, bin/swarm.sh:635
+command	step-up	dispatch, bin/swarm.sh:643
+command	_step-up	dispatch, bin/swarm.sh:643
+command	tell	dispatch, bin/swarm.sh:645
+command	_review-red-scan	dispatch, bin/swarm.sh:647
+command	restart	dispatch, bin/swarm.sh:648
+command	unblock	dispatch, bin/swarm.sh:649
+command	next	dispatch, bin/swarm.sh:653
+command	status	dispatch, bin/swarm.sh:654
+command	dash	dispatch, bin/swarm.sh:655
+command	tidy	dispatch, bin/swarm.sh:656
+command	upgrade	dispatch, bin/swarm.sh:657
+command	cost	dispatch, bin/swarm.sh:658
+command	outcomes	dispatch, bin/swarm.sh:659
+command	flow	dispatch, bin/swarm.sh:660
+command	dataset	dispatch, bin/swarm.sh:661
+command	retro	dispatch, bin/swarm.sh:662
+command	handover	dispatch, bin/swarm.sh:663
+command	review-yield	dispatch, bin/swarm.sh:664
+command	log-finding	dispatch, bin/swarm.sh:665
+command	intervene	dispatch, bin/swarm.sh:667
+command	hold	dispatch, bin/swarm.sh:668
+command	lessons	dispatch, bin/swarm.sh:669
+command	features	dispatch, bin/swarm.sh:671
+command	watch	dispatch, bin/swarm.sh:672
+command	finish	dispatch, bin/swarm.sh:673
+command	reset	dispatch, bin/swarm.sh:674
+command	drop	dispatch, bin/swarm.sh:675
+command	dialog	dispatch, bin/swarm.sh:676
+command	plan-unasked	dispatch, bin/swarm.sh:677
+command	grants	dispatch, bin/swarm.sh:678
+command	where	dispatch, bin/swarm.sh:679
+command	swarms	dispatch, bin/swarm.sh:683
+command	review	dispatch, bin/swarm.sh:684
+command	reconcile	dispatch, bin/swarm.sh:685
+command	merge	dispatch, bin/swarm.sh:686
+command	dropped-lines	dispatch, bin/swarm.sh:687
+command	wait-pr	dispatch, bin/swarm.sh:688
+command	board-pr	dispatch, bin/swarm.sh:689
+command	findings	dispatch, bin/swarm.sh:690
+command	config	dispatch, bin/swarm.sh:691
+command	init	dispatch, bin/swarm.sh:692
+command	base	dispatch, bin/swarm.sh:697
+command	codex-review	dispatch, bin/swarm.sh:698
+command	review-agent	dispatch, bin/swarm.sh:699
+command	_base	dispatch, bin/swarm.sh:705
+command	_role	dispatch, bin/swarm.sh:706
+command	_name	dispatch, bin/swarm.sh:707
+command	_step	dispatch, bin/swarm.sh:708
+command	_conductor	dispatch, bin/swarm.sh:710
+command	_brief	dispatch, bin/swarm.sh:711
+command	_review-brief	dispatch, bin/swarm.sh:712
+command	_board-rel	dispatch, bin/swarm.sh:713
+command	_target	dispatch, bin/swarm.sh:714
+command	_archive	dispatch, bin/swarm.sh:715
+command	_mtime	dispatch, bin/swarm.sh:716
+command	_trusted	dispatch, bin/swarm.sh:717
+command	_pane	dispatch, bin/swarm.sh:718
+command	_tell-queue-check	dispatch, bin/swarm.sh:719
+command	_close-when-idle	dispatch, bin/swarm.sh:720
+command	_fix-main	dispatch, bin/swarm.sh:721
+command	wait	dispatch, bin/swarm.sh:722
+setting	board_dir	CONFIG_KEYS, bin/swarm.sh:262
+setting	repos_dir	CONFIG_KEYS, bin/swarm.sh:262
+setting	base_branches	CONFIG_KEYS, bin/swarm.sh:262
+setting	sign_commits	CONFIG_KEYS, bin/swarm.sh:262
+setting	merge	CONFIG_KEYS, bin/swarm.sh:262
+setting	stall_minutes	CONFIG_KEYS, bin/swarm.sh:262
+setting	queue_minutes	CONFIG_KEYS, bin/swarm.sh:262
+setting	sonnet_share	CONFIG_KEYS, bin/swarm.sh:262
+setting	risky_effort	CONFIG_KEYS, bin/swarm.sh:262
+setting	escalate_after	CONFIG_KEYS, bin/swarm.sh:262
+setting	escalate_ladder	CONFIG_KEYS, bin/swarm.sh:262
+setting	step_up_findings	CONFIG_KEYS, bin/swarm.sh:262
+setting	top_rung_rounds	CONFIG_KEYS, bin/swarm.sh:262
+setting	builder_subagent_model	CONFIG_KEYS, bin/swarm.sh:262
+setting	goal	CONFIG_KEYS, bin/swarm.sh:262
+setting	codex_minutes	CONFIG_KEYS, bin/swarm.sh:262
+setting	fallback_reviewer	CONFIG_KEYS, bin/swarm.sh:262
+setting	lead	CONFIG_KEYS, bin/swarm.sh:262
+setting	merge_admin	CONFIG_KEYS, bin/swarm.sh:262
+setting	review_verify	CONFIG_KEYS, bin/swarm.sh:262
+setting	demote_kinds	CONFIG_KEYS, bin/swarm.sh:262
+setting	lead_epics	CONFIG_KEYS, bin/swarm.sh:262
+setting	commit_trailers	CONFIG_KEYS, bin/swarm.sh:262
+setting	agent_env	CONFIG_KEYS, bin/swarm.sh:262
+setting	usage_warn_percent	CONFIG_KEYS, bin/swarm.sh:262
+removed-setting	pr_per	REMOVED_KEYS, bin/swarm.sh:265
+removed-setting	finished	REMOVED_KEYS, bin/swarm.sh:265
+removed-setting	review_bot	REMOVED_KEYS, bin/swarm.sh:265
+removed-setting	keep_panes	REMOVED_KEYS, bin/swarm.sh:265
+removed-setting	lessons_file	load_config, bin/swarm.sh:283
+hook	PreToolUse hooks/merge-guard.sh	hooks/hooks.json
+hook	UserPromptSubmit hooks/agent-state.sh working	hooks/hooks.json
+hook	UserPromptSubmit hooks/user-caught-reminder.sh	hooks/hooks.json
+hook	PostToolUse hooks/agent-state.sh working	hooks/hooks.json
+hook	Stop hooks/agent-state.sh idle	hooks/hooks.json
+hook	Stop hooks/lead-stop.sh	hooks/hooks.json
+hook	StopFailure hooks/agent-state.sh idle	hooks/hooks.json
+hook	Notification hooks/agent-state.sh blocked	hooks/hooks.json
+hook	SessionStart hooks/agent-state.sh idle	hooks/hooks.json
+hook	SessionEnd hooks/agent-state.sh release	hooks/hooks.json
+hook	bin/gh-shim/gh	PATH, bin/swarm.sh:229-233
