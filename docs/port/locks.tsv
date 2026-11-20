@@ -1,0 +1,68 @@
+# docs/port/locks.tsv: every place swarm-dev takes a lock, in the code the v0.32 port starts from.
+# 21 lock files, taken with 7 protocols. tests/port_locks_test.sh fails on a take site that has no row here, or that a function takes more often than its row's n.
+# A take site is a lock primitive, or a call to a function that holds one. Each row is keyed by file, function and expr, never by line.
+# lock: the lock file, under the project unless it starts with <TMPDIR>. A call that takes two lock files names both, joined by " + ".
+# A lock that starts with <caller's path> is a path the function's callers pass. Their rows name it, so the count above leaves it out.
+# protocol: perl-mkdir is mkdir(2) through perl, since uutils mkdir lets two racing callers both succeed (board.sh, state_lock).
+# mkdir-pid is a plain mkdir with the holder's pid in a file inside. mkdir is a plain mkdir with nothing inside.
+# link-pid is a pid file hard-linked into place, so no reader sees it half written. noclobber is bash's set -C: the create fails when the file is there.
+# o-excl is a file opened with O_CREAT|O_EXCL that holds the pid. flock is flock(2) on an open file.
+# stale: how the code breaks a lock that a killed holder left behind.
+# expr: for a primitive, the lock path as written there; for a call, the call itself. Whitespace is collapsed.
+# n: how many times that function takes that expr.
+#lock	protocol	stale	file	function	expr	n
+.swarm/panes/<agent>.sign.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, nothing is logged	bin/lib/agents.sh	agent_stalled	sign_held "$1" "${slug}" "${own}"	1
+.swarm/panes/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, the read runs without the lock	bin/lib/agents.sh	herdr_wait	pane_check "${name}" "${target}"	1
+.swarm/lead/agents-workspace.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	lead_agents_lock	"$1.lock"	1
+.swarm/lead/agents-workspace.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	lead_agents_workspace	lead_agents_lock "${rec}"	1
+<caller's path>.lock	perl-mkdir	older than a minute (find -mmin +1): removed; the take fails after 5 s	bin/lib/agents.sh	note_lock	"$1.lock"	1
+.swarm/inbox/<conductor>.later	noclobber	older than 2 x NOTE_WAKE_SECS + 60 s (180 s by default): removed; the create then runs	bin/lib/agents.sh	note_wake	note_wake_later "$1" "$2"	1
+.swarm/inbox/<conductor>.later	noclobber	older than 2 x NOTE_WAKE_SECS + 60 s (180 s by default): removed; the create then runs	bin/lib/agents.sh	note_wake_later	"${later}"	1
+.swarm/inbox/<conductor>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	note_wake_later	note_lock "$2"	1
+.swarm/inbox/<conductor>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	note_wake_now	note_lock "$2"	2
+.swarm/panes/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, the read runs without the lock	bin/lib/agents.sh	pane_check	"${lock}"	2
+.swarm/agents.tsv.lock	perl-mkdir	never: the write dies after STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/agents.sh	record_agent	state_lock "${AGENTS_LOG}.lock"	1
+.swarm/panes/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, the read runs without the lock	bin/lib/agents.sh	settle	pane_check "${name}" "${target}" "${resumed_sum:-}"	1
+.swarm/panes/<agent>.sign.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, nothing is logged	bin/lib/agents.sh	sign_held	"${lock}"	2
+.swarm/panes/<agent>.sign.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, nothing is logged	bin/lib/agents.sh	stall_reads	sign_held "$1" "${slug}" "${own}"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_claim	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_queue	note_lock "${q}"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_queue_handoff	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_queue_look	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_queue_stamp	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_requeue	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_take	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_undelivered	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_unqueue	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/tells/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed, then taken	bin/lib/agents.sh	tell_unsend	note_lock "${TELL_QUEUE}/$1"	1
+.swarm/panes/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, the read runs without the lock	bin/lib/agents.sh	wait_agent	pane_check "${name}" "${target}"	1
+.swarm/board-state/<stories|epics>/<slug>.lock	perl-mkdir	never: the write dies after STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/board.sh	protected_record	state_lock "${s}.lock"	1
+.swarm/reconcile.lock	perl-mkdir	never: dies after RECONCILE_LOCK_WAIT (300 s); a die inside frees it through the subshell's EXIT trap	bin/lib/board.sh	reconcile	state_lock "${lock}"	1
+<caller's path>	perl-mkdir	never: dies after SWARM_LOCK_WAIT, else STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/board.sh	state_lock	"$1"	1
+.swarm/board-state/<stories|epics>/<slug>.lock	perl-mkdir	never: the write dies after STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/board.sh	state_set	state_lock "${s}.lock"	1
+<TMPDIR>/swarm-dash-ci-<uid>/<key>.run	flock	none to break: the kernel drops it when the refresh that holds it ends, however it ends	bin/lib/dash_slow.py	-	start_refresh(project, m.group(1), cache)	1
+<TMPDIR>/swarm-dash-ci-<uid>/<key>.run	flock	none to break: the kernel drops it when the refresh that holds it ends, however it ends	bin/lib/dash_slow.py	start_refresh	fd	1
+.swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	ladder_step	step_lock "${lock}"	1
+.swarm/lead/pid + .swarm/lead/pid.reclaim	link-pid + perl-mkdir	the holder function finds no live holder: removed under its .reclaim, then linked again	bin/lib/lifecycle.sh	lead_lock	pid_lock "${LEAD_PID}" "$$" lead_holder	1
+.swarm/lead/review-<slug>.restart.lock	perl-mkdir	never: tried once; until it goes, the story gets its no-review line with no restart	bin/lib/lifecycle.sh	no_review_line	review_restart "${slug}" "${url}" "${n}"	1
+<caller's path>	link-pid	the holder function finds no live holder: removed under its .reclaim, then linked again	bin/lib/lifecycle.sh	pid_lock	"$1"	1
+<caller's path>.reclaim	perl-mkdir	never: the take dies after 5 s, naming it	bin/lib/lifecycle.sh	pid_lock	"$1.reclaim"	1
+.swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	restart_build	step_lock "${lock}"	1
+.swarm/lead/review-<slug>.restart.lock	perl-mkdir	never: tried once; until it goes, the story gets its no-review line with no restart	bin/lib/lifecycle.sh	review_restart	"${lock}"	1
+.swarm/agents.tsv.lock	perl-mkdir	never: the write dies after STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/lifecycle.sh	start_rung	state_lock "${AGENTS_LOG}.lock"	1
+.swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	step_lock	"$1"	2
+.swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	step_up_resume	step_lock "${lock}"	1
+.swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	top_rung_hold	step_lock "${lock}"	1
+.swarm/upgrade.pid + .swarm/upgrade.pid.reclaim	link-pid + perl-mkdir	the holder function finds no live holder: removed under its .reclaim, then linked again	bin/lib/lifecycle.sh	upgrade_lock	pid_lock "${UPGRADE_PID}" "$$ ${2:--} $1" upgrade_holder	1
+.swarm/merge-<owner>-<repo>-<base>.lock + .swarm/merge-<owner>-<repo>-<base>.lock.clear	mkdir-pid + mkdir	a dead pid, or no pid after MERGE_LOCK_PIDLESS (10 s): removed under its .clear, then taken	bin/lib/merge.sh	base_wait	merge_lock "${repo}" "${base}" "GitHub's merge of ${base} made ${head:0:7}, ${state}: once that merge is done, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"	1
+.swarm/fix-main.<owner>-<repo>-<base>.lock	perl-mkdir	never: dies after STATE_LOCK_WAIT (10 s); a die inside frees it through the subshell's EXIT trap	bin/lib/merge.sh	clear_red_main	state_lock "${lock}"	1
+.swarm/first-green/<owner>+<repo>#<n>	mkdir	never: the marker stays, so each PR logs one first-green; it is removed only when that line cannot be written	bin/lib/merge.sh	first_green	"${mark}"	1
+.swarm/fix-main.<owner>-<repo>-<base>.lock	perl-mkdir	never: dies after STATE_LOCK_WAIT (10 s); a die inside frees it through the subshell's EXIT trap	bin/lib/merge.sh	fix_main	state_lock "${lock}"	1
+.swarm/merge-<owner>-<repo>-<base>.lock	mkdir-pid	a dead pid, or no pid after MERGE_LOCK_PIDLESS (10 s): removed under its .clear, then taken	bin/lib/merge.sh	merge_lock	"${lock}"	1
+.swarm/merge-<owner>-<repo>-<base>.lock.clear	mkdir	older than MERGE_LOCK_PIDLESS (10 s): removed, and the take fails this time	bin/lib/merge.sh	merge_lock	merge_lock_clear "${lock}" "${pid}"	1
+.swarm/merge-<owner>-<repo>-<base>.lock.clear	mkdir	older than MERGE_LOCK_PIDLESS (10 s): removed, and the take fails this time	bin/lib/merge.sh	merge_lock_clear	"$1.clear"	1
+.swarm/merge-<owner>-<repo>-<base>.lock + .swarm/merge-<owner>-<repo>-<base>.lock.clear	mkdir-pid + mkdir	a dead pid, or no pid after MERGE_LOCK_PIDLESS (10 s): removed under its .clear, then taken	bin/lib/merge.sh	merge_pr	merge_lock "${repo}" "${base}"	1
+.swarm/panes/<agent>.lock	perl-mkdir	older than a minute (find -mmin +1): removed and tried once more; if that fails, the read runs without the lock	bin/lib/merge.sh	status_report	pane_check "${name}" "${pane}"	1
+.swarm/first-green/<owner>+<repo>#<n>	mkdir	never: the marker stays, so each PR logs one first-green; it is removed only when that line cannot be written	bin/lib/merge.sh	wait_pr	first_green "${repo}" "${n}" "${branch}" "${head}"	1
+.swarm/poll-cache/<key>.lock	o-excl	a dead pid, or held past the cache's max age: released by the next reader, which takes it then	bin/lib/poll_cache.py	lock	path	1
+.swarm/poll-cache/<key>.lock	o-excl	a dead pid, or held past the cache's max age: released by the next reader, which takes it then	bin/lib/poll_cache.py	through	lock(lk)	1
