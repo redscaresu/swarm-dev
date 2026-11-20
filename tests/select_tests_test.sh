@@ -15,9 +15,10 @@
 # --run hands --known's list to a stub make with JOBS=4, naming the paths it leaves to CI, or runs
 # nothing and says so; it never runs every test. --functions names the bin/ functions and dispatch arms a change reaches,
 # from both sides of the diff, and the functions that run a changed .py; a line in no function, or a
-# .py no function runs, gives full. Last, --check-map: it names each unmapped path under bin/, scripts/,
-# commands/, hooks/ and docs/, refuses a map that lists a missing test, and passes the real repo's
-# ls-files.
+# .py no function runs, gives full. A Go file under cmd/ selects doc_check_test.sh alone. Last,
+# --check-map: it names each unmapped path under bin/, scripts/, commands/, hooks/ and docs/, and each
+# unmapped Go file, go.mod or go.sum anywhere, refuses a map that lists a missing test, and passes the
+# real repo's ls-files.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -53,7 +54,7 @@ mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" 
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh rules.md; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -226,6 +227,8 @@ check "a test selects itself and the four tests that read every test file" "$(se
 check "a new untracked test selects itself and those four" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
 check "a test helper selects the test that names it and removed_test.sh, which greps every tests/*.sh" \
   "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh)"
+check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, and no other" \
+  "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" tests/doc_check_test.sh
 check "a board story selects nothing" "$(sel "echo 1 >> board/stories/a.md; ${commit}")" ""
 check "a board README selects the test that checks it against its template" "$(sel "echo 1 >> board/stories/README.md; ${commit}")" \
   tests/board_readme_test.sh
@@ -376,10 +379,11 @@ check "--run with only an unmapped file runs nothing, exits 0 and says CI covers
 # --check-map, on a map with no row for any of these, then on one that lists a missing test.
 M="${tmp}/map"; mkdir -p "${M}/scripts"; git init -q "${M}"
 printf 'board/**\tnone\n' > "${M}/scripts/test-map.tsv"
-out="$(cd "${M}" && printf '%s\n' bin/new.sh scripts/new.sh commands/new.md hooks/new.sh docs/new.md README.md .github/x.yml board/a.md \
+UNMAPPED=(bin/new.sh scripts/new.sh commands/new.md hooks/new.sh docs/new.md cmd/swarm/main.go internal/x/y.go go.mod tools/z.go)
+out="$(cd "${M}" && printf '%s\n' "${UNMAPPED[@]}" README.md .github/x.yml board/a.md main.golden go.mod.bak \
   | bash "${SEL}" --check-map)" && rc=0 || rc=$?
-check "--check-map names each unmapped path under bin, scripts, commands, hooks and docs, and fails" "${out}|${rc}" \
-  "$(printf 'select-tests: %s: no row in scripts/test-map.tsv matches it\n' bin/new.sh scripts/new.sh commands/new.md hooks/new.sh docs/new.md)|1"
+check "--check-map names each unmapped path under bin, scripts, commands, hooks and docs, and each unmapped Go file, and fails" "${out}|${rc}" \
+  "$(printf 'select-tests: %s: no row in scripts/test-map.tsv matches it\n' "${UNMAPPED[@]}")|1"
 printf 'docs/**\tnamed tests/gone_test.sh\n' > "${M}/scripts/test-map.tsv"
 out="$(cd "${M}" && bash "${SEL}" --check-map < /dev/null 2>&1)" && rc=0 || rc=$?
 check "a map that lists a missing test is refused" "${out}|${rc}" "select-tests: scripts/test-map.tsv:1: tests/gone_test.sh does not exist|2"

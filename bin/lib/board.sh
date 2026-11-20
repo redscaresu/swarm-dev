@@ -2507,15 +2507,34 @@ plan_hld() {
   echo "${f}"
 }
 
-# protected_paths [any-case] — the paths on stdin, one a line, that only the user changes, in the order
-# given: those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any
-# repo: what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD,
-# the names as written; protected_hold holds a story PR touching one under merge = agent, with any-case
-# in any case of letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as
-# hooks/x.sh.
+# OWN_PROTECTED — the paths only the user changes in this plugin's own repo, on top of the ones every
+# repo has (protected_paths): the four Go packages that hold its guard, merge, release and agent-start
+# rules, and its plugin manifests. An extended regex of whole directories, each with its trailing slash,
+# so internal/guardian/ is none of them.
+OWN_PROTECTED='internal/guard/|internal/merge/|internal/release/|internal/agentenv/|\.claude-plugin/'
+
+# own_repo <owner/repo> — whether <owner/repo> is this plugin's own repo (plugin_repo), both in lower
+# case, since a PR URL keeps the case it was written in: exit 0 when it is, 1 when it is not, and 2 when
+# plugin_repo cannot answer (plugin.json cannot be read or names no GitHub repository).
+own_repo() {
+  local own
+  own="$(plugin_repo)" || return 2
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]
+}
+
+# protected_paths <owner/repo> [any-case] — the paths on stdin, one a line, that only the user changes
+# in <owner/repo>, the PR's repo, in the order given: those under .claude/, .github/ or hooks/, and a
+# root Makefile, GNUmakefile or makefile (in any repo: what checks a merge or what the agents may do);
+# and those under OWN_PROTECTED in this plugin's own repo (own_repo), or in every repo when own_repo
+# cannot answer (it fails closed). pr_hld puts a PR touching one under no HLD, the names as written;
+# protected_hold holds a story PR touching one under merge = agent, with any-case in any case of
+# letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as hooks/x.sh.
 protected_paths() {
-  local i=""; [[ "${1:-}" != any-case ]] || i=i
-  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true   # loose-match: ok the variable is the -i flag; the pattern is literal
+  local i="" rc=0 re='\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$'
+  [[ "${2:-}" != any-case ]] || i=i
+  own_repo "$1" || rc=$?
+  [[ ${rc} -eq 1 ]] || re+="|${OWN_PROTECTED}"
+  grep "-${i}E" "^(${re})" || true   # loose-match: ok the variables are the -i flag and a regex built from constant literals
 }
 
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
@@ -2557,7 +2576,7 @@ pr_hld() (
   fi
   st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
-  [[ -z "$(protected_paths <<< "${info}")" ]] || return 0
+  [[ -z "$(protected_paths "${repo}" <<< "${info}")" ]] || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
   # A PR that touches the board's hld/ is under none, but for the board PR that plans an HLD, whose
   # head can be read.
