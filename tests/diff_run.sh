@@ -3,7 +3,8 @@
 # <tree-b>, and compare what the two runs did.
 #
 #   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>]
-#                          [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
+#                          [--stage <n>] [--only <slug>] [--base [--branch <ref>]...] [--draft]
+#                          <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
 #                      its group (default 10); one still alive then is red, by its argv, and is killed
@@ -15,6 +16,10 @@
 #                      first, so only a difference no entry's hunk covers is red
 #   --only <slug>      apply that one story's entry alone (from any stage, or up to --stage's), to
 #                      check it against the story's own merge commit
+#   --base             tree-a is a PR's base and tree-b its head: apply only the entries of the stories
+#                      --branch names (from any stage), so a PR passes with its own entry and no other's
+#   --branch <ref>     with --base, a head branch; story/<slug> names story <slug>, whose entry applies
+#                      when it has one, and any other ref names none (a merge group gives one per PR)
 #   --draft            print each difference as the hunks that would cover it, to edit into an entry
 #
 # A fixture is a function fx_<name> in a tests/diff_fixtures_<area>.sh file. Every such file in this
@@ -57,7 +62,7 @@
 # swarm-<name>. (bin/lib/merge.sh's names) <tmp>; and, in .swarm/run-times.tsv, the seconds column
 # (1.234) <seconds> and the load column (0.52, or -) <load>. A value of another shape is left as it is.
 #
-# With --stage, --only or --draft, tests/diff_allow.py compares the streams once every fixture has
+# With --stage, --only, --base or --draft, tests/diff_allow.py compares the streams once every fixture has
 # run. The entries apply to a's streams in the order their PRs merged (tests/diff_allow.py's
 # merge_order: by the first-parent commit that added each, then by stage and PR number); a
 # hunk for a fixture outside the run is skipped, and one that does not apply on a fixture the run
@@ -75,12 +80,12 @@ BOUND=10
 TIMEOUT=300
 MAX_PROCS=200
 KEEP=""
-STAGE="" ONLY="" DRAFT=""
+STAGE="" ONLY="" DRAFT="" BASE="" BRANCHES=()
 STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '5,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '5,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
@@ -91,6 +96,8 @@ while [[ $# -gt 0 ]]; do
     --keep) [[ -n "${2-}" ]] || bad "--keep takes a directory"; KEEP="$2"; shift 2 ;;
     --stage) [[ "${2-}" =~ ^[1-9][0-9]*$ ]] || bad "--stage takes a stage number above 0, not '${2-}'"; STAGE="$2"; shift 2 ;;
     --only) [[ "${2-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || bad "--only takes a story slug, not '${2-}'"; ONLY="$2"; shift 2 ;;
+    --base) BASE=1; shift ;;
+    --branch) [[ -n "${2-}" ]] || bad "--branch takes a branch name"; BRANCHES+=("$2"); shift 2 ;;
     --draft) DRAFT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
@@ -122,6 +129,14 @@ ALLOW_DIR="$(cd "${HERE}/.." && pwd -P)/scripts/allow"
 allow=()
 [[ -z "${STAGE}" ]] || allow+=(--stage "${STAGE}")
 [[ -z "${ONLY}" ]] || allow+=(--only "${ONLY}")
+if [[ -n "${BASE}" ]]; then
+  [[ -z "${STAGE}${ONLY}" ]] || bad "--base takes neither --stage nor --only: it applies the head's own stories' entries alone"
+  allow+=(--base)
+  for b in ${BRANCHES[@]+"${BRANCHES[@]}"}; do
+    if [[ "${b}" =~ ^story/([a-z0-9][a-z0-9-]*)$ ]]; then allow+=(--story "${BASH_REMATCH[1]}")
+    else echo "--base: ${b} is no story/<slug> branch, so it names no entry"; fi
+  done
+elif [[ ${#BRANCHES[@]} -gt 0 ]]; then bad "--branch goes with --base"; fi
 [[ ${#allow[@]} -eq 0 ]] || python3 "${HERE}/diff_allow.py" check "${ALLOW_DIR}" "${allow[@]}" > /dev/null || exit 2
 [[ -z "${DRAFT}" ]] || allow+=(--draft)
 

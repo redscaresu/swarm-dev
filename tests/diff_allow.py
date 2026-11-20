@@ -5,6 +5,8 @@ their hunks to the old tree's streams and compare the result with the new tree's
   python3 tests/diff_allow.py check <allow-dir> [--stage N] [--only <slug>]
   python3 tests/diff_allow.py compare <allow-dir> <work> [--stage N] [--only <slug>] [--draft]
           [--red <fixture>]... -- <fixture>...
+  python3 tests/diff_allow.py compare <allow-dir> <work> --base [--story <slug>]... [--draft]
+          [--red <fixture>]... -- <fixture>...
 
 check parses the entries a run would read (with neither option, every entry on disk) and checks the
 directory's layout: README.md and stage-<n>/ directories only, each holding <slug>.md files only.
@@ -12,7 +14,8 @@ compare reads <work>/<fixture>.a/out/ and <work>/<fixture>.b/out/, diff_run.sh's
 fixture that ran, applies the entries' hunks to a's, and prints DIFF <fixture> <stream> and a diff
 for each stream that still differs (with --draft, the hunks that would cover it), ALLOW-FAIL for a
 hunk that does not apply, and same <fixture> for a fixture that is not red (--red names those diff_run
-already found red). The files stream is split: files is its list of written and deleted paths, and
+already found red). --base applies the entries of the --story slugs alone, from every stage, and a
+slug with no entry is no error: a story that changes no output has none. The files stream is split: files is its list of written and deleted paths, and
 file:<path> the content of one written file. scripts/allow/README.md gives the entry format.
 
 Exit 0 when nothing differs and every hunk on a fixture that ran applied, 1 when something differs or
@@ -229,10 +232,12 @@ def merge_order(allow_dir):
     return order
 
 
-def load(allow_dir, stage, only):
+def load(allow_dir, stage, only, stories=None):
     """The entries of stage-1 through stage-<stage> (every stage when stage is None), in the order
     their PRs merged (merge_order), then by stage and PR number: one no commit added yet comes after
-    those, and with no git every entry goes by stage and PR number. With only, that slug's entry alone."""
+    those, and with no git every entry goes by stage and PR number. With only, that slug's entry alone;
+    with stories (a list, for --base), the entries of those slugs alone, none when no slug has one.
+    Every entry in range is parsed either way, so a malformed one is an error whichever applies."""
     entries, slugs, prs = [], {}, {}
     for n, d in check_layout(allow_dir):
         if stage is not None and n > stage:
@@ -251,7 +256,18 @@ def load(allow_dir, stage, only):
         entries = [e for e in entries if e.slug == only]
         if not entries:
             raise Bad(f"--only {only}: no {only}.md in {allow_dir}/stage-*/" + ("" if stage is None else f" up to stage-{stage}"))
+    if stories is not None:
+        entries = [e for e in entries if e.slug in stories]
     return entries
+
+
+def base_line(allow_dir, stories, entries):
+    """--base's first line: which stories' entries apply, so an empty list reads as what it means."""
+    if not stories:
+        return f"allow: --base names no story, so no entry in {rel(allow_dir)} applies and every difference is red"
+    have = {e.slug for e in entries}
+    parts = [s + ("" if s in have else " (no entry)") for s in stories]
+    return f"allow: --base applies the entries of {', '.join(parts)} alone; every other entry is left to --stage"
 
 
 def parse_files(data):
@@ -488,6 +504,8 @@ def main(argv):
     ap.add_argument("--stage", type=int)
     ap.add_argument("--only")
     ap.add_argument("--draft", action="store_true")
+    ap.add_argument("--base", action="store_true")
+    ap.add_argument("--story", action="append", default=[])
     ap.add_argument("--red", action="append", default=[])
     ap.add_argument("fixtures", nargs="*")
     args = ap.parse_args(argv)
@@ -496,15 +514,25 @@ def main(argv):
     try:
         if args.stage is not None and args.stage < 1:
             raise Bad("--stage takes a stage number above 0")
-        read = args.mode == "check" or args.stage is not None or args.only is not None
-        entries = load(allow_dir, args.stage, args.only) if read else []
+        if args.base and (args.stage is not None or args.only is not None):
+            raise Bad("--base takes neither --stage nor --only: it applies the --story entries alone")
+        if args.story and not args.base:
+            raise Bad("--story goes with --base")
+        for slug in args.story:
+            if not SLUG_RE.match(slug):
+                raise Bad(f"--story takes a story slug, not {slug!r}")
+        stories = list(dict.fromkeys(args.story)) if args.base else None
+        read = args.mode == "check" or args.stage is not None or args.only is not None or args.base
+        entries = load(allow_dir, args.stage, args.only, stories) if read else []
         if args.mode == "check":
             for e in entries:
                 emit(f"parsed {rel(e.path)} ({e.slug}, #{e.pr}, {e.kind}): {len(e.hunks)} hunks".encode())
             if not entries:
                 emit(f"no entry file in {rel(allow_dir)}/stage-*/".encode())
             return 0
-        if read and not entries:
+        if args.base:
+            emit(base_line(allow_dir, stories, entries).encode())
+        elif read and not entries:
             upto = "every stage" if args.stage is None else ("stage-1" if args.stage == 1 else f"stage-1 through stage-{args.stage}")
             emit(f"allow: no entry file in {rel(allow_dir)}, {upto}, so every difference is red".encode())
         ran = set(args.fixtures)

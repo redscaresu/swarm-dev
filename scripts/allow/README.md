@@ -127,3 +127,17 @@ A symbolic link cannot be changed by a hunk.
    ```
 
 `tests/diff_allow_test.sh` parses every entry file on disk, so a malformed one fails CI.
+
+## On each PR
+
+The `diff-run` CI job runs the PR's base against its head:
+
+```bash
+bash tests/diff_run.sh --base --branch story/<slug> <base-tree> <head-tree>
+```
+
+`--base` applies only the entries of the stories `--branch` names, from any stage.
+A PR on branch `story/<slug>` names its own story, so only its own entry applies.
+Every other entry, on the base or added by the PR, is left to `--stage`, and is never applied, so it is never red either.
+A branch that is not `story/<slug>` names no story, and then every difference is red.
+A merge queue's group holds several PRs, so the job passes one `--branch` per PR in the group, as `scripts/diff-run-branches.sh` reads them.
