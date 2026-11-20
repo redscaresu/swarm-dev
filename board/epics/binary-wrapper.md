@@ -21,6 +21,7 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Windows
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/command_names_test.sh, tests/config_test.sh, tests/doc_check_test.sh, tests/events_test.sh, tests/port_names_test.sh, tests/skill_test.sh. Each keeps the assertion its go_check column names.
 - stage: v0.32.0. The wrapper runs on bash 3.2 and passes shellcheck.
 - While any command is bash, bin/swarm.sh keeps the one copy of what runs around every command: the project lookup, the SWARM_FORBID_PROJECT refusal (bin/swarm.sh:201-211), the shim on PATH (:229-233), the workspace label, the settings and the outcome line (main, :1287). A ported command's arm in main moves to Go with its port. The frame itself moves in port-frame. The HLD's three exceptions do not cover a second copy of the frame: contradiction 15.
 - One marker file per ported command, so two port PRs never edit the same line (HLD:182-183). No marker routes by flag: the first port of a command with several forms (wait, merge) takes the name and hands a form still in bash to a `_` name.

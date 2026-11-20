@@ -16,6 +16,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any new line or setting
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/roles_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - This is the first command port, and all 60 helpers go before any command (HLD:266-268): it depends on every helper epic, directly or through another.
 - The frame stays bash (binary-wrapper): these commands get the project and settings from it.

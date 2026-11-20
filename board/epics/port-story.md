@@ -18,6 +18,7 @@ Stage 3 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Changing a brief's text
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/epic_goal_test.sh, tests/fail_lines_test.sh, tests/next_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P8.
 - The briefs are prompts: a changed byte changes what agents do, so they are compared as text.
 - The rules' text (merge_rule, guard_rule and the like, bin/lib/build.sh:21-407) is shared by the three briefs. It is ported once, here.

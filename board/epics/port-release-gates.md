@@ -16,6 +16,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any new gate or case
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/non_fix_test.sh, tests/retro_done_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - The Go sits in the protected release package: the user merges every PR here.
 - non_fix_change's cache is keyed by its rule version, the board's path and both SHAs (bin/lib/board.sh:1590,1697). The Go keeps the key and the file's format.
