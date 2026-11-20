@@ -7,7 +7,7 @@
 # column, that row missing, an extra gh call and an extra herdr call. (3) A time stamp is masked, but a
 # one-byte change on its line is red. (4) An unanswered gh call fails with the shim's own line while a
 # real gh sits on PATH, the caller's or a fixture's own, and a stub's answer reaches the command.
-# (5) A gh call a backgrounded child makes after the command exits is compared, and a process alive
+# (5) A gh call a backgrounded child makes after the command exits is compared, in its step, and a process alive
 # past --bound is red by its argv. (6) A copy's swarm.sh that forks past --max-procs is killed and
 # named, and none of its processes is left; a stub's own gh call is refused, so none loops back
 # through the shim; a command past --timeout is killed and named; and a tree with no plugin.json
@@ -161,9 +161,11 @@ rm -rf "${K}"
 # (5) A child the command leaves running calls gh a second after the command exits.
 late() { printf '(sleep 1; gh api %s > /dev/null 2>&1) &\n%s\nexit 0\n' "$2" "${3-}" > "$1/late.sh"; }
 late "${A}" late-a; late "${B}" late-b
-if run 1 "${A}" "${B}" probe_late > "${ROOT}/why" && [[ "$(diffs)" == "probe_late calls:fg;" ]] \
-  && grep -qxF '+gh api late-b' "${ROOT}/out"; then ok "a backgrounded child's late gh call is compared"
-else bad "a backgrounded child's late gh call is compared" "$(cat "${ROOT}/why")"; fi
+# Its step is labelled by its argv and first call, so each side's step is one the other lacks.
+if run 1 "${A}" "${B}" probe_late > "${ROOT}/why" \
+  && [[ "$(diffs)" == "probe_late calls:[bash <tree>/late.sh] gh api late-a;probe_late calls:[bash <tree>/late.sh] gh api late-b;" ]] \
+  && grep -qxF '+gh api late-b' "${ROOT}/out"; then ok "a backgrounded child's late gh call is compared, in its step"
+else bad "a backgrounded child's late gh call is compared, in its step" "$(cat "${ROOT}/why")"; fi
 late "${A}" late-a "sleep 37.25 & echo \$! > ${A}/stuck.pid"; late "${B}" late-a "sleep 37.25 & echo \$! > ${B}/stuck.pid"
 if run 1 --bound 2 "${A}" "${B}" probe_late > "${ROOT}/why" && grep -qE '^STUCK probe_late \(a\): still running 2s after the command exited: sleep 37.25$' "${ROOT}/out" \
   && grep -qE '^STUCK probe_late \(b\): ' "${ROOT}/out"; then ok "a process past the bound is red by its argv"
