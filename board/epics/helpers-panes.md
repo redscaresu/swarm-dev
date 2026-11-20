@@ -16,6 +16,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Changing how a stuck or stalled agent is told apart
 
 **Constraints:**
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/agent_state_test.sh. Each keeps the assertion its go_check column names.
 - Port rules P1 to P6 and P8.
 - The inline sites embed Python that imports a helper through SWARM_LIB: contradiction 2. Each becomes a call to the binary, so this epic edits loop code that stage 3 ports later. The list in port-inventory says which sites are this epic's; readers-exit checks that none is left anywhere.
 - Four sites also import report.session_log (bin/lib/agents.sh:1237,1251; bin/lib/lifecycle.sh:1178,4011), which is why this depends on helpers-shared.
