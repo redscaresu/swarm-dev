@@ -22,7 +22,8 @@
 # a command that runs python3 -c 1 || true is red, naming the command and the program; one whose build
 # runs python3 and whose command does not is green; python3 named on one fixture's line is the real one
 # in another's command; a gh stub's own python3 is not counted; and a command diff_run.sh cut short
-# (TIMEOUT, RUNAWAY, or STUCK past --bound) is named, since its empty log proves nothing. When the list is empty, they are
+# (TIMEOUT, RUNAWAY, or STUCK past --bound) is named, since its empty log proves nothing; and a fixture
+# whose command never started (its FX_CWD missing) is not counted as run. When the list is empty, they are
 # all that runs, and the test says so.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -38,7 +39,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 DR_PID=""
 trap '[[ -z "${DR_PID}" ]] || { kill -TERM "${DR_PID}" 2>/dev/null; wait "${DR_PID}" 2>/dev/null; }; stop_test_group; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
-export HOME="${ROOT}/home"; mkdir -p "${HOME}" "${ROOT}/stubs" "${ROOT}/log" "${ROOT}/cmd" "${ROOT}/roots"
+export HOME="${ROOT}/home"; mkdir -p "${HOME}" "${ROOT}/stubs" "${ROOT}/log" "${ROOT}/cmd" "${ROOT}/roots" "${ROOT}/started"
 fails=0
 ok() { echo "ok   $1"; }
 bad() { echo "FAIL $1: $2"; fails=$((fails + 1)); }
@@ -48,15 +49,17 @@ bad() { echo "FAIL $1: $2"; fails=$((fails + 1)); }
 NOPY_BASH="$(command -v bash)"
 export NOPY_BASH
 
-# nopy_wrap <stub dir> <cmd file> <roots file> — in a wrapper fixture's build, after fx_<name>: write
-# the command as the fixture set it to <cmd file> and the fixture root (diff_run.sh's ROOT) to <roots
-# file>, then run the command through a launcher that puts <stub dir> first on PATH.
+# nopy_wrap <stub dir> <cmd file> <roots file> <started file> — in a wrapper fixture's build, after
+# fx_<name>: write the command as the fixture set it to <cmd file> and the fixture root (diff_run.sh's
+# ROOT) to <roots file>, then run the command through a launcher that puts <stub dir> first on PATH and
+# appends a line to <started file> just before it execs the command. Only that line shows the command
+# started: diff_run.sh can fail before it (a missing FX_CWD, an unreadable FX_STDIN) once the build is done.
 nopy_wrap() {
   local q=""
   printf -v q ' %q' "${FX_CMD[@]}"; printf '%s\n' "${q# }" > "$2"
   printf '%s\n' "${ROOT}" >> "$3"
-  # shellcheck disable=SC2016 # the launcher's own $1, $PATH and $@
-  FX_CMD=("${NOPY_BASH}" -c 'PATH="$1:${PATH}"; export PATH; shift; exec "$@"' nopy-launcher "$1" "${FX_CMD[@]}")
+  # shellcheck disable=SC2016 # the launcher's own $1, $2, $PATH and $@
+  FX_CMD=("${NOPY_BASH}" -c 'PATH="$1:${PATH}"; export PATH; printf "started\n" >> "$2"; shift 2; exec "$@"' nopy-launcher "$1" "$4" "${FX_CMD[@]}")
 }
 export -f nopy_wrap
 
@@ -99,7 +102,7 @@ add() {
   eval "fx_nopy__${fx}() {
     declare -F fx_${fx} > /dev/null || { echo 'nopy: no fixture fx_${fx} in tests/diff_fixtures_*.sh' >&2; return 1; }
     fx_${fx}
-    nopy_wrap '${ROOT}/stubs/${fx}' '${ROOT}/cmd/${fx}' '${ROOT}/roots/${fx}'
+    nopy_wrap '${ROOT}/stubs/${fx}' '${ROOT}/cmd/${fx}' '${ROOT}/roots/${fx}' '${ROOT}/started/${fx}'
   }"
   export -f "fx_nopy__${fx}"
   WRAPPERS+=("nopy__${fx}")
@@ -121,12 +124,16 @@ fx_nopy_self_gh() {
 # slow machine the bound takes far longer than its seconds; diff_run.sh kills the sleep at the bound.
 # shellcheck disable=SC2034
 fx_nopy_self_stuck() { FX_CMD=(bash -c 'sleep 300 & echo left'); }
-export -f fx_nopy_self_starts fx_nopy_self_quiet fx_nopy_self_other fx_nopy_self_gh fx_nopy_self_stuck
+# A build that ends, then a cwd diff_run.sh cannot cd into, so no command starts.
+# shellcheck disable=SC2034
+fx_nopy_self_nocwd() { FX_CWD="${ROOT}/missing"; FX_CMD=(true); }
+export -f fx_nopy_self_starts fx_nopy_self_quiet fx_nopy_self_other fx_nopy_self_gh fx_nopy_self_stuck fx_nopy_self_nocwd
 add self nopy_self_starts python3
 add self nopy_self_quiet python3
 add self nopy_self_other awk
 add self nopy_self_gh python3
 add self nopy_self_stuck python3
+add self nopy_self_nocwd python3
 
 listed=()
 n=0
@@ -167,8 +174,8 @@ reds() {
 }
 # stdout <fixture> — what its command printed, on side a.
 stdout() { cat "${ROOT}/keep/nopy__$1/a/stdout" 2>/dev/null || true; }
-# ran <fixture> — its build reached nopy_wrap, so its command ran under the stubs.
-ran() { [[ -s "${ROOT}/cmd/$1" ]]; }
+# ran <fixture> — the launcher ran, on a side at least, so its command started under the stubs.
+ran() { [[ -s "${ROOT}/started/$1" ]]; }
 # cut <fixture> — diff_run.sh's TIMEOUT, RUNAWAY and STUCK lines for it: a command it killed, or one that
 # left a process past --bound, may have stopped before the call its line bars, so its empty log proves
 # nothing.
@@ -200,6 +207,11 @@ else bad "self gh" "logged '$(calls nopy_self_gh)', stdout '$(stdout nopy_self_g
 if [[ "$(cut nopy_self_stuck)" == "STUCK nopy__nopy_self_stuck "* ]] && [[ -z "$(cut nopy_self_quiet)" ]]; then
   ok "a command diff_run.sh cuts short is named, and only that one"
 else bad "self stuck" "cut '$(cut nopy_self_stuck)', quiet's '$(cut nopy_self_quiet)'"; fi
+
+# A command that never started is told from one that did, though both builds ended.
+if [[ -s "${ROOT}/cmd/nopy_self_nocwd" ]] && ! ran nopy_self_nocwd && ran nopy_self_quiet; then
+  ok "a fixture whose build ended but whose command never started is not counted as run"
+else bad "self nocwd" "its build wrote '$(cat "${ROOT}/cmd/nopy_self_nocwd" 2>/dev/null)', and it counts as run"; fi
 
 # Each listed fixture: green when it ran to its end and its stubs logged nothing.
 for fx in ${listed[@]+"${listed[@]}"}; do
