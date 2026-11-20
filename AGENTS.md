@@ -181,7 +181,8 @@ scripts/build.sh      the release contract: builds the four swarm-<os>-<arch> bi
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference*.md    every rule, setting, command and log; reference.md lists which file holds each §
-board/                this repo's own board (board_dir = board); docs/ holds user docs only
+board/                this repo's own board (board_dir = board); docs/ holds user docs, and docs/port/ is the one
+                      contributor folder under it: the lists the Go port is checked against
 skills/swarm-dev/     the plugin skill that answers "how do I use swarm-dev?"
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
@@ -215,6 +216,7 @@ map does not know. CI's sharded run is the gate: `test` is the required check, a
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
   gets SIGPIPE.
