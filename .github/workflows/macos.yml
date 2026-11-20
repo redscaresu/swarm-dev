@@ -1,0 +1,75 @@
+name: macOS
+
+# Two of the four release binaries are for macOS, and every job in ci.yml runs on Linux. This job runs
+# the Go tests and a small subset of the bash tests on macOS arm64, under macOS's own bash 3.2.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  # A merge queue tests each PR on top of main and the PRs queued ahead of it (swarm.sh merge).
+  # board-only.sh runs everything on it.
+  merge_group:
+
+# Least-privilege default: every job only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  macos-tests:
+    runs-on: macos-15 # arm64
+    permissions:
+      contents: read
+      checks: read     # the gate reads main's check runs for a release PR
+      statuses: read   # and its commit statuses
+    env:
+      # The bash tests this job runs, kept small: the full suite runs on Linux in ci.yml.
+      #   tests/build_test.sh          scripts/build.sh, the release contract, on BSD tools (shasum -a 256 -c)
+      #   tests/test_helpers_test.sh   the prelude every test sources, and its process-group cleanup
+      #   tests/env_allowlist_test.sh  the environment an agent starts with (AGENT_ENV in bin/lib/agents.sh)
+      SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base
+          persist-credentials: false
+      - name: Gate a board-only or version-only PR
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GH_TOKEN: ${{ github.token }}
+        # The base's copy when it has one: a PR is never judged by a gate it changed.
+        run: |
+          git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
+          bash "${RUNNER_TEMP}/board-only.sh"
+      - name: Set up Go
+        if: steps.gate.outputs.board_only != 'true'
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Put macOS's bash 3.2 first on PATH
+        if: steps.gate.outputs.board_only != 'true'
+        # PATH takes directories, so /bin/bash gets one of its own, ahead of the runner's Homebrew bash 5.
+        # $GITHUB_PATH puts it first for every later step: make test runs `bash scripts/test.sh`, and each
+        # test starts with #!/usr/bin/env bash.
+        run: |
+          mkdir "${RUNNER_TEMP}/bash32"
+          ln -s /bin/bash "${RUNNER_TEMP}/bash32/bash"
+          echo "${RUNNER_TEMP}/bash32" >> "${GITHUB_PATH}"
+      - name: Run the Go tests
+        if: steps.gate.outputs.board_only != 'true'
+        run: go test ./...
+      - name: Check bash on PATH is 3.2
+        if: steps.gate.outputs.board_only != 'true'
+        run: |
+          version="$(bash --version | head -n 1)"
+          echo "${version}"
+          case "${version}" in
+            *"version 3.2."*) ;;
+            *) echo "bash on PATH is not 3.2: $(command -v bash)" >&2; exit 1 ;;
+          esac
+      - name: Run the bash subset (make test)
+        if: steps.gate.outputs.board_only != 'true'
+        run: make test TESTS="${SUBSET}" JOBS=2
