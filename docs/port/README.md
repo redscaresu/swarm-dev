@@ -54,7 +54,9 @@ The rows of tests.tsv, names.tsv and fields.tsv stay as the record.
 
 A port PR keeps each test above green, or edits the row it breaks in the same PR.
 A port epic's plan reads the tests.tsv rows whose `epic` column names it.
-The `go_check` of each of those rows is a check the epic must add.
+A row whose `go_check` states an assertion is a check the epic must add.
+A row whose `go_check` is empty needs nothing.
+A row whose `go_check` says `retired-with:` needs no new check, since no Go check replaces its rule.
 The reviewer reads the deleted bash against the Go, rule by rule, with these lists as the checklist.
 That is step 6 of the port's method (`board/hld/2026-11-18-swarm-dev-v0-32-go-rewrite.md:262`).
 A name, lock, field or code that is in a list and not in the Go is a finding.
@@ -73,18 +75,19 @@ Nothing else may claim that leave.
 Each count below is lines at command position in `bin/swarm.sh`, `bin/lib/*.sh` and `hooks/*.sh` (14 files), taken at main 923cc02e, with an argument after the name.
 Comment lines are skipped.
 A word in a message, such as "within 5 s" in an error text, is not counted.
+A case arm's `)` counts as a command boundary only at the start of a line.
 Run this from the repo root, with the name in place of `within`:
 
 ```bash
-perl -ne 'next if /^\s*#/; $n += () = /(?:^|\$\(|[|&;{()!]|\b(?:then|do|else|if|while|until)\b|=)\s*(?:\w+=(?:"[^"]*"|\S+)\s+)*within\s+\S/g; END { print "$n\n" }' bin/swarm.sh bin/lib/*.sh hooks/*.sh
+perl -ne 'next if /^\s*#/; $n += () = /(?:^|\$\(|[|&;{(!]|^\s*(?:[^\s()"\x27]|"[^"]*")*\)|\b(?:then|do|else|if|while|until)\b|=)\s*(?:\w+=(?:"[^"]*"|\S+)\s+)*within\s+\S/g; END { print "$n\n" }' bin/swarm.sh bin/lib/*.sh hooks/*.sh
 ```
 
 - `die`: 536 call sites in 9 of 14 files.
   Defined in `bin/swarm.sh`.
-- `within`: 91 call sites in 8 of 14 files.
+- `within`: 90 call sites in 8 of 14 files.
   Defined twice: `bin/lib/merge.sh` and `hooks/lead-stop.sh`, which takes a deadline, not a number of seconds.
   A plain grep for `within` and an argument, skipping comment lines, gives 114 lines, because it also counts the word in messages.
-  The epic's 155 and the survey's 112 come from other greps and do not match 91.
+  The epic's 155 and the survey's 112 come from other greps and do not match 90.
 - `scaled`: 9 call sites in 4 of 14 files.
   Defined in `bin/lib/agents.sh`.
 - `nap`: 12 call sites in 4 of 14 files.
