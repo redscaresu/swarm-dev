@@ -3,8 +3,9 @@
 # <tree-b>, and compare what the two runs did.
 # With --times N each fixture runs N times on each tree, and every run is compared.
 #
-#   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--times <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
 #   bash tests/diff_run.sh [those options] [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [those options] [--times <n>] <tree-a> <tree-b> [fixture...]
 #   bash tests/diff_run.sh [those options] --base [--branch <ref>]... [--draft] <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
@@ -143,10 +144,10 @@
 # list of written and deleted paths, and file:<path> one written file's content. scripts/allow/README.md
 # gives the entry format; a malformed entry stops the run before any fixture, with exit 2.
 # --base has it compare them too, with the entries of the stories --branch names.
-# The entries apply to the two trees' first runs alone, which it reads as <fixture>.<a|b>, a link to
-# that tree's first run. With --times, each repeat is still compared with its own tree's first run
-# as it is, since no entry covers a tree that differs from itself.
-# A background step's stream has the same name there as here, calls:[<argv>] <first call>.
+# It compares each tree's first run; with --times, each repeat is still compared with its tree's
+# first run by diff_run.sh itself. Each background step goes to it as two streams, steps (the
+# labels, sorted) and step.<k> (the calls of the k-th), which it reads as the stream calls:<label>,
+# the step's name here, so an entry's ## heading can name one.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
 # diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
@@ -169,7 +170,7 @@ STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '6,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '6,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
@@ -905,8 +906,13 @@ for fx in "${names[@]}"; do
     done
   done
   if [[ -n "${broken}" ]]; then status=2; continue; fi
-  # With an allow list, tests/diff_allow.py compares the two trees' first runs once every fixture has run.
-  [[ ${#allow[@]} -gt 0 ]] || compare "${fx}" "${WORK}/${fx}.a.1/out" "${WORK}/${fx}.b.1/out" a b "" || red=1
+  if [[ ${#allow[@]} -gt 0 ]]; then
+    # diff_allow.py compares <fixture>.a/out/ with <fixture>.b/out/: each tree's first run.
+    ln -s "${fx}.a.1" "${WORK}/${fx}.a"; ln -s "${fx}.b.1" "${WORK}/${fx}.b"
+    ran+=("${fx}")
+  else
+    compare "${fx}" "${WORK}/${fx}.a.1/out" "${WORK}/${fx}.b.1/out" a b "" || red=1
+  fi
   # Each repeat against its own tree's first run.
   for ((n = 2; n <= TIMES; n++)); do
     for side in a b; do
@@ -914,9 +920,6 @@ for fx in "${names[@]}"; do
     done
   done
   if [[ ${#allow[@]} -gt 0 ]]; then
-    # tests/diff_allow.py reads a tree's run as <fixture>.<a|b>: a link to its first run.
-    for side in a b; do ln -s "${fx}.${side}.1" "${WORK}/${fx}.${side}"; done
-    ran+=("${fx}")
     [[ -z "${red}" ]] || { reds+=(--red "${fx}"); [[ ${status} -eq 2 ]] || status=1; }
     continue
   fi

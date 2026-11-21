@@ -8,8 +8,9 @@
 # the paths merges, a --board PR reads no compare, and under merge = human merge_grant still refuses one
 # under an HLD granting merge, the names as written (Hooks/x.sh is not hooks/x.sh to it). In the
 # plugin's own repo (plugin.json's repository, its URL in any case) internal/guard/, internal/merge/,
-# internal/release/, internal/agentenv/ and .claude-plugin/ hold too, in any case of letters, but not
-# internal/guardian/; in o/r they merge, unless plugin.json names no repository, which holds them
+# internal/release/, internal/agentenv/, internal/layers/ and .claude-plugin/ hold too, in any case of
+# letters, but not internal/guardian/ or internal/layersx/; in o/r they merge, unless plugin.json names
+# no repository, which holds them
 # saying plugin_repo could not answer. On merge_fixture.sh, whose gh stub answers
 # compare/main...<head> with ${FX}/compare.main, else the PR's files.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -130,7 +131,8 @@ is "merge = human, granted, a story PR changing Hooks/x.sh merges: the grant loo
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
 
 # --- In the plugin's own repo (plugin.json's repository, read as merge_rules_test.sh reads it), a story
-# PR that changes one of its four Go packages or .claude-plugin/ is held too, in any case of letters.
+# PR that changes one of its four Go packages, internal/layers/ (the checks that keep their rules in
+# them) or .claude-plugin/ is held too, in any case of letters.
 OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${REPO}/.claude-plugin/plugin.json")"
 # own_fresh [owner/repo] — fresh, with story s listing PR 7 of [owner/repo] (the plugin's own repo, as
 # written) as OWN_URL, and the board's origin that repo.
@@ -138,7 +140,7 @@ own_fresh() {
   OWN_URL="https://github.com/${1:-${OWN_REPO}}/pull/7"
   fresh; item s "status: review" "prs: ${OWN_URL}"; echo "{\"nameWithOwner\":\"${OWN_REPO}\"}" > "${FX}/origin"
 }
-for p in internal/guard/x.go internal/merge/x.go internal/release/x.go internal/agentenv/x.go .claude-plugin/marketplace.json; do
+for p in internal/guard/x.go internal/merge/x.go internal/release/x.go internal/agentenv/x.go internal/layers/x_test.go .claude-plugin/marketplace.json; do
   own_fresh; changes "${p}"; merge "${OWN_URL}"
   held_s "the plugin's own repo: a story PR changing ${p}" "${p}"
 done
@@ -152,10 +154,13 @@ for p in Internal/Merge/x.go .Claude-Plugin/x.json; do
   own_fresh; changes "${p}"; merge "${OWN_URL}"
   held_s "the plugin's own repo: a story PR changing ${p}" "${p}"
 done
-# A whole directory with its slash: internal/guardian/ is not internal/guard/.
-own_fresh; changes internal/guardian/x.go; merge "${OWN_URL}"
-is "the plugin's own repo: a story PR changing internal/guardian/x.go merges" "${OK}" "$(events | paste -sd'|' -)"
-check "the plugin's own repo: a story PR changing internal/guardian/x.go: gh pr merge ran" merged
+# A whole directory with its slash: internal/guardian/ is not internal/guard/, and internal/layersx/ is
+# not internal/layers/.
+for p in internal/guardian/x.go internal/layersx/x.go; do
+  own_fresh; changes "${p}"; merge "${OWN_URL}"
+  is "the plugin's own repo: a story PR changing ${p} merges" "${OK}" "$(events | paste -sd'|' -)"
+  check "the plugin's own repo: a story PR changing ${p}: gh pr merge ran" merged
+done
 # In o/r those paths are no one's: the PR merges.
 fresh; changes internal/merge/x.go .claude-plugin/plugin.json; merge "${URL}"
 is "o/r: a story PR changing internal/merge/x.go and .claude-plugin/plugin.json merges" "${OK}" "$(events | paste -sd'|' -)"
