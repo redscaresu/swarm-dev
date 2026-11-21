@@ -1,5 +1,5 @@
 # Run times, a flow section (flow_report.py gives its globals): .swarm/run-times.tsv beside events.tsv,
-# one row per status, next or dash run (bin/swarm.sh's timed): its start (UTC), command, seconds and
+# one row per status or next run (bin/swarm.sh's timed): its start (UTC), command, seconds and
 # 1-minute load average. Over the rows whose local day is in the window, TSV command runs median_s
 # p90_s over_60s: per command, in name order, its runs, the median and p90 (nearest rank) seconds and
 # the share of runs over 60 s. Then, after a blank line, a by-load block, TSV command load runs
@@ -12,7 +12,7 @@
 import datetime, os, re, statistics
 
 SLOW_S = 60
-COMMANDS = ("dash", "next", "status")
+COMMANDS = ("next", "status")
 SECONDS = re.compile(r"[0-9]+(\.[0-9]+)?")
 LOAD_LOW = 10    # a 1-minute load under this is the <10 band
 LOAD_HIGH = 20   # from LOAD_LOW up to under this is 10-20; this and over is 20+
@@ -45,7 +45,7 @@ for f in lines:
         by_load.setdefault((f[1], BANDS.index(band(f[3]))), []).append(secs)
 
 if not os.path.exists(log):
-    print(f"no run times logged: no {log} yet (status, next and dash write it)")
+    print(f"no run times logged: no {log} yet (status and next write it)")
 elif not runs:
     print(f"no run times logged in the window ({since} to {until})")
 else:

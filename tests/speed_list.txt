@@ -3,5 +3,4 @@
 # adds the commands it ports, each on a line of its own.
 next
 status
-dash
 usage

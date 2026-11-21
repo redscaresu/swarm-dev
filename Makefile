@@ -10,22 +10,19 @@ hooks:
 # files in SERIAL one at a time, each with a TMPDIR of its own. It prints a "run" line as a file starts,
 # ok or FAIL with its seconds as it ends, each failed file's output after its phase, and fails if any
 # file failed. swarm.sh's fixed sleeps run at a hundredth (SWARM_SLEEP_SCALE, unless set).
-# SERIAL: files whose timing does not hold up beside the others: dash_watch's pty frames and
-# dash_wait's millisecond slices are timed against a render or a poll that slows under load,
-# review_agent's fast waits and dash_stalls' stall times against a timeout, and sleep_scale's own
-# make test runs against a 5 s bound.
+# SERIAL: files whose timing does not hold up beside the others: wait_stall's millisecond slices are
+# timed against a poll that slows under load, review_agent's fast waits against a timeout, and
+# sleep_scale's own make test runs against a 5 s bound.
 TESTS ?= tests/*_test.sh
-SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh \
-  tests/dash_stalls_test.sh tests/sleep_scale_test.sh
-# SLOW: the files long enough to need a CI shard of their own: dash_check, dash_time_limit, queue,
+SERIAL ?= tests/wait_stall_test.sh tests/review_agent_test.sh tests/sleep_scale_test.sh
+# SLOW: the files long enough to need a CI shard of their own: queue,
 # tell_queue, wait_lead, wait_pr, and merge_test with the two files split from it (merge_rules,
 # merge_queue; all three on tests/merge_fixture.sh). They start first, CI's SHARD=i/N split gives each
 # SLOW and SERIAL file a shard of its own, so ci.yml's shard count is at least the two lists' length
 # (tests/test_shard_test.sh), and a SLOW file has three times the TEST_FILE_TIMEOUT. A file joins SLOW
 # when the shard it shares runs longer than the SLOW shards do.
-SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh tests/dash_check_test.sh \
-  tests/queue_test.sh tests/wait_pr_test.sh tests/tell_queue_test.sh tests/wait_lead_test.sh \
-  tests/dash_time_limit_test.sh
+SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh \
+  tests/queue_test.sh tests/wait_pr_test.sh tests/tell_queue_test.sh tests/wait_lead_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 # The recipe's shell execs the runner, so make's own child is scripts/test.sh and the TERM make passes

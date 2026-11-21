@@ -3,7 +3,7 @@
 # story's builder without counting an attempt and starts the ladder's next model in the same worktree
 # and branch, in the build's own role family, with a handover brief, logging one escalate line; a
 # start that fails stops at the failing step and leaves step-up --resume to start the rung; at the top
-# rung or with the ladder empty it refuses. Then outcomes and dash read sonnet -> opus -> fable chains
+# rung or with the ladder empty it refuses. Then outcomes reads sonnet -> opus -> fable chains
 # of step-ups: one attempt each, each replaced build closed, only the step to fable paired with the
 # Fable build and counted as an escalation, and the rung's start taken from its step-up. herdr, gh and
 # claude (tests/claude_stub.sh) are stubs on PATH: herdr records each call, and fails tab create
@@ -541,15 +541,12 @@ rm -f "${ROOT}/keep"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable
-# build's escalate column is the opus -> fable step, never the sonnet -> opus one. dash counts one
-# escalation, and the Fable builder's row says where it came from and when, and is up since its
-# step-up. s3 went up the same chain twice yesterday with no session logs, so every build starts at
+# build's escalate column is the opus -> fable step, never the sonnet -> opus one. s3 went up the same chain twice yesterday with no session logs, so every build starts at
 # midnight: the step-ups still pair with their own builds, in order. s4 had a sonnet and an opus
 # build that were attempts of their own, then a sonnet build stepped up to opus: the step-up takes
 # the pair started on its day, never the older one. s5 did the same within one day, each build with a
 # session log: the step-up takes the pair whose opus build started nearest it.
 Q="${ROOT}/q"; mkdir -p "${Q}/.swarm/state" "${Q}/docs/stories" "${ROOT}/projects/q"; : > "${Q}/docs/stories/README.md"; git -C "${Q}" init -q
-NOW="$(python3 -c 'import datetime; print(int(datetime.datetime(2026, 10, 10, 12).timestamp()))')"
 for s in 1:09:00 2:10:00 3:11:00; do
   printf '{"type":"user","cwd":"%s/q-wt/s2","timestamp":"2026-10-10T%s:01Z"}\n' "${ROOT}" "${s#*:}" > "${ROOT}/projects/q/q${s%%:*}.jsonl"
 done
@@ -584,24 +581,6 @@ check "a step-up takes the pair of builds started on its day, never an older pai
   "$(printf '%s\n' "0	1	" "0	2	" "1	3	step-up:stalled" "0	3	")" "$(awk -F'\t' '$2 == "s4"' <<< "${qout}" | cut -f13,17,23)"
 check "within one day too, the step-up takes the pair whose new build started nearest it" \
   "$(printf '%s\n' "0	1	" "0	2	" "1	3	step-up:stalled" "0	3	")" "$(awk -F'\t' '$2 == "s5"' <<< "${qout}" | cut -f13,17,23)"
-# dash: s2's Fable builder is working in pane w2:p8, its session q3 busy.
-QBIN="${ROOT}/q-bin"; mkdir -p "${QBIN}"
-cat > "${QBIN}/herdr" <<'EOF'
-#!/bin/sh
-case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"s2","agent_status":"working","pane_id":"w2:p8"}]}}' ;;
-  "pane list")  echo '{"result":{"panes":[{"pane_id":"w2:p8"}]}}' ;;
-  *) exit 1 ;;
-esac
-EOF
-chmod +x "${QBIN}/herdr"; echo "w2:p8 s2" > "${Q}/.swarm/state/s2"
-printf '[{"sessionId":"q3","status":"busy"}]' > "${ROOT}/q-claude.json"
-qdash="$(cd "${Q}" && env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/q-claude.json" SWARM_DASH_NOW="${NOW}" COLUMNS=100 LINES=80 PATH="${QBIN}:${STUB_BIN}:${PATH}" bash "${SWARM}" dash 2>&1)"
-check "dash counts one escalation today" "yes" "$(has "1 escalation today" "${qdash}")"
-check "and the stepped-up Fable builder's row says it came from opus, and when" "yes" \
-  "$(grep -qE '● s2 +escalate +fable·xhigh .*from opus · 11:00' <<< "${qdash}" && echo yes || echo "no, got: ${qdash}")"
-check "and it is up since its step-up, not since the first build" "yes" \
-  "$(grep -qE '● s2 +up 1h00m' <<< "${qdash}" && echo yes || echo "no, got: ${qdash}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

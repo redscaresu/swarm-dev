@@ -73,8 +73,6 @@ conduct	1	bad epic name, missing epic file, name clash or a refused start; says 
 config	0	printed the config or one key	bin/swarm.sh:main	tests/removed_test.sh
 config	1	the key asked for is not a known one; says which	bin/swarm.sh:show_config	none
 cost	0	prints that cost moved into flow's cost section	bin/swarm.sh:main	tests/removed_test.sh
-dash	0	the board was drawn, or --check found every figure agrees	bin/swarm.sh:main	tests/dash_check_test.sh,tests/dash_layout_test.sh
-dash	1	bad flag, no board or not a swarm project; says why on stderr	bin/lib/dash.sh:dash	tests/dash_layout_test.sh,tests/dash_check_test.sh
 dataset	0	dataset.jsonl was written, or no finished story left it as it was	bin/swarm.sh:main	tests/dataset_test.sh
 dataset	1	extra argument, no agents log, outcomes failed or gh down; says why	bin/lib/reports.sh:dataset_report	tests/dataset_test.sh
 dialog	0	the story's dialog answer was logged	bin/swarm.sh:main	none
@@ -152,7 +150,7 @@ story	1	not running inside a herdr pane (HERDR_ENV is not 1); says so on stderr	
 story	1	story not ready, not a code story, build exists or the start failed	bin/lib/build.sh:build_story	tests/env_allowlist_test.sh,tests/board_state_test.sh
 story	1	too many arguments or an unknown flag; says which	bin/swarm.sh:dispatch	none
 swarms	0	the swarms on this machine listed	bin/swarm.sh:main	tests/swarms_test.sh
-swarms	1	herdr gave no workspace, pane or agent list, or cut it short	bin/lib/dash.sh:swarms	tests/swarms_test.sh
+swarms	1	herdr gave no workspace, pane or agent list, or cut it short	bin/lib/agents.sh:swarms	tests/swarms_test.sh
 swarms	1	an argument was given; swarms takes none	bin/swarm.sh:dispatch	tests/swarms_test.sh
 tell	0	the findings, nudge or resume was sent, queued, or noted	bin/swarm.sh:main	tests/next_test.sh
 tell	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
@@ -172,7 +170,7 @@ wait	0	the agent is idle, done or gone, or the lead has news	bin/swarm.sh:main	t
 wait	1	the timeout passed and the agent was still busy	bin/lib/agents.sh:wait_agent	tests/wait_past_test.sh,tests/epic_wait_session_test.sh
 wait	1	bad option mix, or idle with no findings file at the timeout	bin/lib/lifecycle.sh:wait_command	tests/wait_lead_test.sh,tests/review_agent_test.sh,tests/wait_past_test.sh
 wait	1	wait --lead timed out with nothing new, or its lock failed	bin/lib/lifecycle.sh:wait_lead	tests/wait_lead_test.sh
-wait	3	wait --stall: the builder stalled	bin/lib/agents.sh:wait_agent	tests/agent_liveness_test.sh,tests/dash_wait_test.sh
+wait	3	wait --stall: the builder stalled	bin/lib/agents.sh:wait_agent	tests/agent_liveness_test.sh,tests/wait_stall_test.sh
 wait	4	the agent is stuck, such as a model error it cannot resume	bin/lib/agents.sh:wait_agent	tests/api_model_error_test.sh
 wait	5	wait --idle ended 0 on something other than idle or done	bin/lib/lifecycle.sh:wait_command	tests/nudge_idle_test.sh
 wait	129	wait --lead got a HUP	bin/lib/lifecycle.sh:lead_signal	tests/wait_lead_test.sh

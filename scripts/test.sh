@@ -46,9 +46,8 @@ stop_group() {
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
 # test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
-# the lead exported, SWARM_PROJECT and SWARM_AGENT among them, which name its real project. And
-# SWARM_NO_CI_REFRESH is set, so a dash test starts no detached ci refresh, which outlives the test
-# and runs flow, and gh, on a project. The file runs from its TMPDIR, outside any git repo, with
+# the lead exported, SWARM_PROJECT and SWARM_AGENT among them, which name its real project. The file
+# runs from its TMPDIR, outside any git repo, with
 # SWARM_PROJECT naming a stand-in project of the job's own, as a pane's names the lead's real one:
 # tests/test_helpers.sh, which every test sources first, drops it, and a file whose swarm.sh still
 # reaches the stand-in fails, naming what it left there; a call a test leaves unpinned (no cd into
@@ -58,7 +57,7 @@ stop_group() {
 # themselves. MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
 # make a test runs starts clean, whatever make test was given (SHARD, TESTS).
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
-export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
+export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
 limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
   run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log="" reap_tail=""

@@ -110,7 +110,7 @@ Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each s
 still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` does. A start that
 fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
 status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
-started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
+started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `/epic` reads next's step with `swarm.sh _step`, which starts nothing.
 
 **Workspace labels.** herdr's workspaces span every project on the machine, so each label swarm.sh
 gives one carries the project's label, joined to the rest by ` · `:
@@ -195,7 +195,7 @@ does: a session with no agent's environment (no `SWARM_AGENT` or `SWARM_GH_CALLE
 project, from a folder that is not a worktree. A lead whose folder is in no project, such as a board
 kept outside the repo, belongs to the project `SWARM_PROJECT` names. Nothing is renamed from an
 agent's pane, outside herdr, without herdr's socket (`HERDR_SOCKET_PATH`), by a `swarm.sh` another
-one runs (`dash --project` runs one for each project it draws), by a command run from one project's
+one runs (a release's `swarm.sh merge --release` runs `swarm.sh upgrade` for each project with agents), by a command run from one project's
 folder for another (`SWARM_PROJECT`), by a test hook (a command starting `_`), or by a command whose
 stderr goes to `/dev/null`, as the Stop hook's do, since a refusal said there would be lost.
 
@@ -245,7 +245,7 @@ ready story waits only on the user, so it gets no line. Nor does an epic with `p
 children are the user's), one with `unasked_plan:` set (the gate already shows its plan or the user's
 decline), or a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
 cut, and the gate lists it until then). The epic the step `next` takes names (`plan-epic <epic>`) gets none
-either: the lines are for capacity no step uses. `next`, `status` and `dash` drop that epic's line;
+either: the lines are for capacity no step uses. `next` and `status` drop that epic's line;
 `wait --lead` takes no step, so it prints every such epic's line. The exit is the epic's case: `tell
 the user it can start (/swarm-dev:epic <epic>)` for a draft, which nothing plans and only the user
 agrees (or, staged under an HLD that grants `epics`, the `stage` step sets active);
@@ -359,7 +359,7 @@ put back as it was given after them.
 `.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
 reads a key from that file first and from the item's front matter second, so a key with no line
-there, as on an existing board, reads from the file. `dash` reads its board rows the same way. A line
+there, as on an existing board, reads from the file. A line
 with no value clears the key, and swarm.sh writes no line that would only repeat the file's value.
 Beside each line it keeps a `<key>@base:` line with the file's value at the time.
 Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
@@ -557,7 +557,7 @@ options among the pane's last lines with no input box under them, so a prompt qu
 limit reached" with "limit resets" or "Continuing shortly") is handled the same way, with no keys
 sent, while the session is busy or waiting; an idle session under that line is idle. Neither counts as a nudge or a resume, and neither turns into `stuck: no output` however long
 it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane moves on, `status`
-and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
+shows `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, own work in the session log or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
 worktree, its own work in its session log, a PR update, a swarm action on its story, a background
@@ -807,18 +807,7 @@ builder or that close did not hold. `next` says
 run: busy is working, idle is idle, waiting is WAITING with what it waits for, and a recorded
 session with no entry in the list (`gone`: the session ended) or no state in it (`unknown`, also
 when there is no `claude` to ask) needs a look. herdr's word stands only for codex agents, agents
-with no session recorded, and retired panes. `swarm.sh dash` shows the
-same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
-merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), agents whose session is gone or unknown, agents whose login expired, empty panes, stalled
-agents), each active epic with a bar of its finished stories (finished story files are deleted,
-so they are counted from history: a deletion counts once per slug, and only when it closed the story,
-never a re-scope) and its live agents and open PRs beneath it,
-and the recent events with how long ago; idle agents and blocked or later items are counts. One
-status vocabulary runs through it (● working, ○ ready, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you or a
-session gone or unknown, ? a herdr state dash does not know).
-`--tree` shows the agents by workspace and tab and `--ladder` the model per role; `dash --watch
-[seconds]` redraws it in place until `q`, with `t` and `l` toggling the two. Both only read: they never change the board, the state or the logs, and never open
-or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
+with no session recorded, and retired panes.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
@@ -1200,9 +1189,7 @@ over them says each reason is the builder's claim, not a fact, and that codex ig
 With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
 unchanged. When codex hits a usage or rate limit, cannot reach its provider, or times out, the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
-codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
-`.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
-row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
+codex-review stops codex the same way and exits only once it is gone. codex stays in the caller's
 process group, so a harness that kills that group kills codex too. On macOS a KILL to the group can
 miss a child that codex forks while the KILL is sent, so a harness that must leave nothing STOPs the
 group first. Every brief says to run it in the
@@ -1290,16 +1277,6 @@ Start a fresh conductor for one epic.
 `swarm.sh conduct --backlog` starts one for the ready stories that have no epic.
 `watch --backlog` follows their PRs.
 Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight).
-
-**`swarm.sh dash --watch`**
-Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in.
-`swarm.sh dash --project <dir>` (repeatable) draws several projects.
-Each frame's herdr, Claude Code and gh reads, each agent's pane read included, share 30 seconds (`SWARM_REPORT_SECONDS`), the gh reads at most half of them; a read still running then is stopped, a later one is skipped, and the frame is drawn from the rest with a last line naming them: `skipped (over 30 s): gh PR states, herdr agent list`.
-A PR a cut gh read did not reach keeps the state from whichever run last read it, until one reaches it again.
-With `--project` each project's frame has 30 seconds of its own.
-`swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs.
-Its frame, and the `status` and `next` it compares with, read everything in full.
-With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)).
 
 **`swarm.sh next`**
 Print the next step on the first line, and why on the lines after it.
