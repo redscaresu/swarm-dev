@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # port_names_test.sh — every name docs/port/names.tsv freezes from v0.31.3 is still there. A command is
-# still an arm of bin/swarm.sh's dispatch or its early case (read as tests/doc_check_test.sh reads them);
+# still one of swarm.sh's commands (tests/swarm_commands.sh: an arm of dispatch or its early case, or a
+# ported command's marker under bin/ported/);
 # a setting gets a `<key> = ` line from `swarm.sh config` in a stand-in project; a config that sets a
 # removed setting still loads, with a warning naming it when its where starts with REMOVED_KEYS; an
 # event hook is still run by hooks/hooks.json on its event, and its script exists; bin/gh-shim/gh, which
 # swarm.sh puts on PATH, exists and can be run. Each failure names docs/port/names.tsv and the name.
 # The settings and removed settings are checked from outside, through swarm.sh config, so the check
-# holds once config is ported. When binary-wrapper moves a ported command's arm out of dispatch,
-# this test must read that command's marker file too.
+# holds once config is ported, and a command whose arm a port moves out of dispatch is found by its marker.
 # It reads files by path, never through git, so it runs the same on a copy of the tree without .git.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
+# shellcheck source=tests/swarm_commands.sh
+source "$(dirname "${BASH_SOURCE[0]}")/swarm_commands.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAMES="docs/port/names.tsv"
@@ -25,19 +27,6 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 
 gone() { echo "FAIL ${NAMES}: $1 $2 is gone: $3"; fails=$((fails + 1)); }
-
-# arms — every command bin/swarm.sh runs, one a line: dispatch's arms and the early case's.
-arms() {
-  python3 - "${REPO}/bin/swarm.sh" <<'EOF'
-import re, sys
-src = open(sys.argv[1]).read()
-body = src.split("\ndispatch() {", 1)[1].split("\n  esac", 1)[0]
-early = src.split('\ncase "${1:-}" in', 1)[1].split("\nesac", 1)[0]
-commands = {a for arms in re.findall(r"^    ([a-z_|-]+)\)", body, re.M) for a in arms.split("|")}
-commands |= set(re.findall(r"^  ([a-z_-]+)\)", early, re.M))
-print("\n".join(sorted(commands)))
-EOF
-}
 
 # event_hooks — one `<event> <command>` line for each command hooks/hooks.json runs, as names.tsv
 # spells it: the plugin root and the quotes dropped.
@@ -64,7 +53,7 @@ for want in ${WANT_ROWS}; do
   else echo "FAIL ${NAMES}: want ${want#*=} ${want%%=*} rows, got ${got}"; fails=$((fails + 1)); fi
 done
 
-have_arms="$(arms)"
+have_arms="$(swarm_commands "${REPO}")" || exit 1
 have_hooks="$(event_hooks)"
 proj="${ROOT}/proj"; mkdir -p "${proj}/.claude/swarm"; : > "${proj}/.claude/swarm/config"
 code=0; shown="$(swarm_config "${proj}")" || code=$?
@@ -73,7 +62,7 @@ code=0; shown="$(swarm_config "${proj}")" || code=$?
 while IFS=$'\t' read -r kind name where; do
   case "${kind}" in
     command)
-      grep -qxF -- "${name}" <<< "${have_arms}" || gone command "${name}" "no arm of bin/swarm.sh's dispatch or early case" ;;
+      grep -qxF -- "${name}" <<< "${have_arms}" || gone command "${name}" "no arm of bin/swarm.sh's dispatch or early case, and no marker under bin/ported/" ;;
     setting)
       grep -q "^${name} = " <<< "${shown}" || gone setting "${name}" "swarm.sh config prints no '${name} = ' line" ;;
     removed-setting)

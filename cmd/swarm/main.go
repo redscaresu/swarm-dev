@@ -1,27 +1,43 @@
-// Command swarm is the Go port of bin/swarm.sh. No command is ported yet: every run prints that on
-// stderr and exits 2.
+// Command swarm is the Go port of bin/swarm.sh. It runs one entry of its table by dispatch name,
+// inside the frame bin/swarm.sh hands it (frame.go). No command is ported yet: the table holds only
+// wrapper-fixture, for the wrapper's tests.
 package main
 
 import (
-	"fmt"
-	"io"
 	"os"
+
+	"github.com/redscaresu/swarm-dev/internal/adapter/store"
 )
 
-// notPorted is the line every run prints on stderr while no command is ported.
-const notPorted = "swarm: no command is ported yet"
-
-// exitUsage is the exit code of a run that does nothing: no command is ported yet.
+// exitUsage is the exit code of a run that does nothing: a name with no entry, or an entry that needs
+// the frame run without it.
 const exitUsage = 2
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stderr))
+	c := &call{
+		stdin:  os.Stdin,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		frame:  readFrame(os.Environ()),
+		store:  store.Files{},
+	}
+	os.Exit(run(entries, os.Args[1:], c))
 }
 
-// run runs swarm with args (os.Args without the program name), writes its messages to stderr and
-// returns the exit code. No command is ported yet, so it ignores args.
-func run(args []string, stderr io.Writer) int {
-	// The code already says the run did nothing; a stderr that fails to take the line cannot change it.
-	_, _ = fmt.Fprintln(stderr, notPorted)
-	return exitUsage
+// run runs the entry of table that args[0] names, with the rest of args as its arguments, and returns
+// its exit code. A name with no entry, and an entry that needs the frame when c has none, fail with one
+// line and exitUsage.
+func run(table map[string]entry, args []string, c *call) int {
+	name := ""
+	if len(args) > 0 {
+		name, c.args = args[0], args[1:]
+	}
+	e, ok := table[name]
+	if !ok {
+		return c.die(exitUsage, "the binary has no command '"+name+"'")
+	}
+	if e.needsFrame && c.frame.project == "" {
+		return c.die(exitUsage, name+" needs the frame bin/swarm.sh sets up: run it through bin/swarm.sh")
+	}
+	return e.run(c)
 }
