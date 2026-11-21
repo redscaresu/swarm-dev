@@ -10,13 +10,16 @@ their hunks to the old tree's streams and compare the result with the new tree's
 
 check parses the entries a run would read (with neither option, every entry on disk) and checks the
 directory's layout: README.md and stage-<n>/ directories only, each holding <slug>.md files only.
-compare reads <work>/<fixture>.a/out/ and <work>/<fixture>.b/out/, diff_run.sh's streams for each
-fixture that ran, applies the entries' hunks to a's, and prints DIFF <fixture> <stream> and a diff
+compare reads <work>/<fixture>.a.1/out/ and <work>/<fixture>.b.1/out/, diff_run.sh's streams for each
+tree's first run of each fixture that ran (a directory that is missing is an error, never an empty
+run), applies the entries' hunks to a's, and prints DIFF <fixture> <stream> and a diff
 for each stream that still differs (with --draft, the hunks that would cover it), ALLOW-FAIL for a
 hunk that does not apply, and same <fixture> for a fixture that is not red (--red names those diff_run
 already found red). --base applies the entries of the --story slugs alone, from every stage, and a
 slug with no entry is no error: a story that changes no output has none. The files stream is split: files is its list of written and deleted paths, and
-file:<path> the content of one written file. scripts/allow/README.md gives the entry format.
+file:<path> the content of one written file. A background step's calls, which diff_run.sh leaves in
+step.<k> with the step's label on line <k> of steps, are the stream calls:<label>, as diff_run.sh
+names it. scripts/allow/README.md gives the entry format.
 
 Exit 0 when nothing differs and every hunk on a fixture that ran applied, 1 when something differs or
 a hunk did not apply, 2 on a malformed entry, a bad layout or a bad argument.
@@ -28,8 +31,9 @@ import re
 import subprocess
 import sys
 
-ORDER = ("stdout", "stderr", "exit", "files")
-STREAM_RE = re.compile(rb"^(stdout|stderr|exit|files|file:\S.*|calls:[a-z0-9_-]+)$")
+ORDER = ("stdout", "stderr", "exit", "files", "calls:fg")
+STREAM_RE = re.compile(rb"^(stdout|stderr|exit|files|file:\S.*|calls:\S.*)$")
+STEP_FILE_RE = re.compile(r"^step\.[1-9][0-9]*$")
 FIXTURE_RE = re.compile(rb"^[A-Za-z0-9_]+$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 STAGE_RE = re.compile(r"^stage-([1-9][0-9]*)$")
@@ -299,15 +303,29 @@ def parse_files(data):
 
 
 def read_side(out):
-    """The plain streams ({name: lines}), the files list and records of one side's out/ directory."""
-    plain, inv, records = {}, [], {}
-    for name in sorted(os.listdir(out)) if os.path.isdir(out) else []:
+    """The plain streams ({name: lines}), the files list and records of one side's out/ directory.
+    A background step's file, step.<k>, is the stream calls:<label>, its label line <k> of steps."""
+    plain, inv, records, steps, labels = {}, [], {}, {}, []
+    # diff_run.sh makes out/ before it runs a fixture, so a missing one is a path this script has wrong:
+    # read as an empty run, two of them would compare the same.
+    if not os.path.isdir(out):
+        raise Bad(f"{out}: no such directory, so the run's streams cannot be read")
+    for name in sorted(os.listdir(out)):
         with open(os.path.join(out, name), "rb") as f:
             data = f.read()
         if name == "files":
             inv, records = parse_files(data)
+        elif name == "steps":
+            labels = [line.rstrip(b"\n").decode("utf-8", "surrogateescape") for line in split(data)]
+        elif STEP_FILE_RE.match(name):
+            steps[int(name[len("step."):])] = split(data)
         else:
             plain[name] = split(data)
+    # One file per label, and no two labels alike: a step no label names would be compared with nothing.
+    if sorted(steps) != list(range(1, len(labels) + 1)) or len(set(labels)) != len(labels):
+        raise Bad(f"{out}: its step.<k> files are not, one for one, the labels its steps file lists")
+    for k, lines in steps.items():
+        plain["calls:" + labels[k - 1]] = lines
     return plain, inv, records
 
 
@@ -440,8 +458,8 @@ def record_lines(recs):
 def compare_fixture(fx, work, entries, as_draft):
     """Apply every entry's hunks for fx to its a side, then report what differs from b. True when
     something differs or a hunk did not apply."""
-    a = Side(os.path.join(work, f"{fx}.a", "out"))
-    b_plain, b_inv, b_recs = read_side(os.path.join(work, f"{fx}.b", "out"))
+    a = Side(os.path.join(work, f"{fx}.a.1", "out"))
+    b_plain, b_inv, b_recs = read_side(os.path.join(work, f"{fx}.b.1", "out"))
     b_plain["files"] = b_inv
     red = False
     for e in entries:
