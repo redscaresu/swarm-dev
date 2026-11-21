@@ -21,5 +21,7 @@ Needs no other story. Run it first: release-refs, release-install-proof and rele
 - Each refusal records GitHub's rule message (a repository rule violation naming the rule, not a 404) and the ref's SHA read before and after, unchanged.
 - Change nothing on redscaresu/swarm-dev but the You: step's environment and key.
 
+The throwaway repo starts with no branch protection, since pushing history copies no rulesets. Before testing push refusal, add a ruleset on the copy's main (no direct push, pull request required) as well as the candidate rulesets on stable and prerelease, so a refused push can be shown (codex).
+
 **Done when:**
 - This story's file records the copy's name and each branch's SHA before the rulesets. With a run URL or command output each, it records: whether the token's fast-forward of prerelease across a range that changes .github/workflows/ passed with no ruleset, or GitHub's refusal; the ruleset JSON; for the credential release-workflow will use, its allowed fast-forward and each refused force move, push and deletion, each with GitHub's rule message and the ref's SHA unchanged; the lead's allowed force-push and refused deletions; and, if the deploy key is used, the environment's branch policy, the secret's name and the refused PR job.
