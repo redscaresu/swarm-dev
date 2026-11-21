@@ -352,8 +352,9 @@ VH="${ROOT}/vhome"; mkdir -p "${VH}/.claude-plugin"; echo '{"version": "1.2.3"}'
 P="${ROOT}/version"; LOG="${P}/.swarm/events.tsv"
 # evv <args...> — append_event in one process with SWARM_HOME at VH, with swarm.sh's own plugin_version;
 # between the two appends plugin.json changes, which the second must not read.
-evv() { PROJECT_DIR="${P}" SWARM_HOME="${VH}" HERDR_PANE_ID=w:me bash -c 'eval "$(grep "^plugin_version()" "$1")"; source "$2/agents.sh"; shift 2
-  append_event "$@"; echo "{\"version\": \"9.9.9\"}" > "${SWARM_HOME}/.claude-plugin/plugin.json"; append_event "$@"' _ "${SWARM}" "${LIB}" "$@" 2>> "${ERR}"; }
+# The sed program that finds plugin_version goes in as an argument: bash 3.2 brace-expands it inside "$(...)".
+evv() { PROJECT_DIR="${P}" SWARM_HOME="${VH}" HERDR_PANE_ID=w:me bash -c 'eval "$(sed -n "$3" "$1")"; source "$2/agents.sh"; shift 3
+  append_event "$@"; echo "{\"version\": \"9.9.9\"}" > "${SWARM_HOME}/.claude-plugin/plugin.json"; append_event "$@"' _ "${SWARM}" "${LIB}" '/^plugin_version() {$/,/^}$/p' "$@" 2>> "${ERR}"; }
 evv x t 'ok (round 2)' round=2
 check "version cases: append_event with a field writes that field, then version=, after the outcome; version= is read once per process" \
   same "$(cut -f5 "${LOG}")" "$(printf 'ok (round 2)%sround=2 version=1.2.3\n' "${SEP}" "${SEP}")"

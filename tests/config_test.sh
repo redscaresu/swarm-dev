@@ -429,6 +429,36 @@ check "a newer version is out: warn, and name the update command" "swarm-dev ${h
   "$(first "${out}")|$(grep -q "WARNING: swarm-dev 99.0.0 is out" <<< "${out}" && echo yes || echo no)|$(grep -qx '  swarm.sh update' <<< "${out}" && echo yes || echo no)"
 check "the same version: no warning" "swarm-dev ${have}" "$(ver "$(published "${have}")")"
 check "the lookup fails (offline): no warning, no error" "swarm-dev ${have}|0" "$(ver "file://${ROOT}/missing.json")|$?"
+# With python3 on PATH a stub that logs each call and fails, version still reads plugin.json.
+NOPY="${ROOT}/nopy"; mkdir -p "${NOPY}"
+printf '#!/bin/sh\necho "$*" >> "%s/calls"\nexit 1\n' "${NOPY}" > "${NOPY}/python3"; chmod +x "${NOPY}/python3"
+check "version reads plugin.json without python3: the stub logs no call" "swarm-dev ${have}|" \
+  "$(PATH="${NOPY}:${PATH}" ver "file://${ROOT}/missing.json")|$(cat "${NOPY}/calls" 2>/dev/null)"
+# pv <json> — swarm.sh's own plugin_version on <json>, under set -euo pipefail: its stdout, then |, then its exit status.
+# The sed program goes in as an argument: bash 3.2 brace-expands {...,...} in a "$(... "...")" even quoted.
+PV_SED='/^plugin_version() {$/,/^}$/p'
+# shellcheck disable=SC2016 # the inner bash expands $1, $2 and $3
+pv() { bash -c 'set -euo pipefail; eval "$(sed -n "$3" "$1")"; rc=0
+  out="$(printf "%s" "$2" | plugin_version)" || rc=$?; printf "%s|%s" "${out}" "${rc}"' _ "${SWARM}" "$1" "${PV_SED}"; }
+# py_version <json> — python3's json.load value of the top-level version.
+py_version() { printf '%s' "$1" | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["version"])'; }
+pv_same() { # <name> <json> <want>: python3's value is <want>, and plugin_version prints it and exits 0
+  check "plugin_version: $1" "$3|$3|0" "$(py_version "$2")|$(pv "$2")"
+}
+pv_same "pretty-printed" $'{\n  "name": "x",\n  "version": "1.2.3"\n}\n' 1.2.3
+pv_same "minified" '{"name":"x","version":"1.2.3"}' 1.2.3
+pv_same "version not the first key" '{"name": "x", "keywords": ["a", "b"], "version": "0.9.1", "license": "MIT"}' 0.9.1
+pv_same "a nested object's version before the top-level one is not taken" \
+  '{"author": {"name": "a", "version": "9.9.9"}, "version": "1.0.0"}' 1.0.0
+pv_same "a nested object's version after the top-level one is not taken" '{"version": "1.0.0", "author": {"version": "9.9.9"}}' 1.0.0
+pv_same "a string with braces, a colon and an escaped quote before the version" \
+  '{"description": "a {brace} b: c \"q\" } {", "version": "2.0.0"}' 2.0.0
+pv_same "two top-level versions: the last, as json.load" '{"version": "1.0.0", "version": "1.0.1"}' 1.0.1
+check "plugin_version: only a nested version exits 1, printing nothing" "|1" "$(pv '{"author": {"version": "9.9.9"}}')"
+check "plugin_version: a numeric version exits 1, printing nothing" "|1" "$(pv '{"version": 1.2}')"
+check "plugin_version: empty input exits 1, printing nothing" "|1" "$(pv '')"
+check "plugin_version: a file cut off before its top-level object closes exits 1, printing nothing" "|1" \
+  "$(pv '{"name": "x", "version": "1.2.3", "author": {"name": "a"')"  # vacuous-test: ok, cut off on purpose
 
 # --- Folder trust: an agent in a folder Claude Code does not trust stalls on its trust prompt, so
 # the start is refused. Trust is keyed on the git root (a worktree's main checkout); outside git,

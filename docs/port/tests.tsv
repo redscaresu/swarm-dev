@@ -31,7 +31,7 @@ tests/codex_unavailable_test.sh	py	rewrite-from-outside		helpers-shared
 tests/command_names_test.sh	text	rewrite-from-outside	the bare /swarm scan also reads every Go file under cmd/ and internal/, so no message a user reads tells them to type /swarm	binary-wrapper
 tests/concurrency_check_test.sh	py	rewrite-from-outside		helpers-shared
 tests/conductor_close_test.sh	lib	rewrite-from-outside		port-close
-tests/config_test.sh	text	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms	binary-wrapper
+tests/config_test.sh	text,python3-stub	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms	binary-wrapper
 tests/cost_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/dataset_test.sh	py,python3-stub	rewrite-from-outside		helpers-reports
 tests/diff_allow_test.sh	text	rewrite-from-outside	retired-with: port-next	port-next
