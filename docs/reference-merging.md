@@ -1227,6 +1227,47 @@ On a pass, merge prints `retro gate: v<new> is a minor; <board>/retros/v<new>.md
 In swarm-dev's own repo the patch's line is `retro gate: v<new> is a patch; every change since v<old> is from a fix: true or port: true story, a fix-main build or a change only under tests/`.
 On a board outside the project's repo, git holds no retro file or story history to read, so the gate refuses every release, and the refusal ends `merge it yourself if it may ship without a retro`.
 
+### Publishing a release
+
+In swarm-dev's own repo, `.github/workflows/release.yml` runs on every push to `main`.
+Each of its two jobs runs `scripts/publish-release.sh plan`, which prints the steps the push needs: `none`, or some of `draft`, `attach`, `publish` and `move`, in that order.
+A push with no bump plans `none` and makes no gh call, so it publishes nothing and moves nothing.
+
+The `build` job has only `contents: read`.
+Its token cannot see a draft release, so its plan decides only whether to build.
+When that plan names `attach`, the job builds the four binaries with `scripts/build.sh`.
+It checks that `dist/` holds exactly the files `scripts/build.sh --list` names, that `SHA256SUMS` lists each binary, and that `sha256sum -c` passes.
+It then uploads `dist/` as an artifact kept for one day.
+
+The `publish` job runs only when the build job's plan is not `none`.
+It alone has `contents: write`, `id-token: write` and `attestations: write`.
+It runs plan again with its write token and takes only the steps that this plan prints, in this order:
+
+1. With `attach`: download the build job's artifact, check it as the build job did, and attest the four binaries.
+   All three come before the draft, so a bad artifact leaves no draft.
+2. `draft`: `gh release create v<version> --draft --target <commit> --generate-notes`.
+3. `attach`: upload the four binaries and `SHA256SUMS` to the draft with `--clobber`, replacing any file it holds.
+   It fails if the release is no longer a draft.
+4. `publish`: `gh release edit v<version> --draft=false`, which creates the tag `v<version>` on the commit.
+   It fails if the tag is not on the commit.
+5. `move`: fast-forward `prerelease` to the commit, then read the branch back and print where it moved from and to.
+   GitHub refuses a move that is not a fast-forward.
+
+A move-only run downloads, checks and attests nothing.
+A step that fails stops the job and no later step runs, so `prerelease` stays where it was.
+The move comes last, so `prerelease` moves only once the release is published with every file.
+The workflow never moves `stable`.
+`prerelease` must exist: plan refuses a bump when it is missing, since a release never creates it.
+Runs go one at a time, in the `release` concurrency group.
+GitHub cancels a run still waiting its turn when a newer push's run queues behind it.
+
+Re-run a red or cancelled run on a bump's push with 'Re-run all jobs', never 'Re-run failed jobs'.
+The artifact lasts one day, and the build job rebuilds whenever the plan still needs `attach`.
+The publish job downloads only the artifact its own attempt built, so a 'Re-run failed jobs' that still needs `attach` fails at the download, before any draft.
+The rerun plans again and finishes what the failed run left: it attaches and publishes a draft, and for a published release with every file it only moves `prerelease`.
+It never replaces a file of a published release: plan names `attach` only for a draft or a new release, and refuses a published release that lacks a file.
+After a rollback moves `prerelease` back by hand, 'Re-run all jobs' on a release's run moves it forward again, to that release's commit.
+
 ## Commands
 
 **`swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <head> <base>`**
