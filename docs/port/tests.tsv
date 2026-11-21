@@ -34,6 +34,7 @@ tests/conductor_close_test.sh	lib	rewrite-from-outside		port-close
 tests/config_test.sh	text	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms	binary-wrapper
 tests/cost_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/dataset_test.sh	py,python3-stub	rewrite-from-outside		helpers-reports
+tests/diff_run_test.sh	lib	rewrite-from-outside		helpers-shared
 tests/doc_check_test.sh	text	rewrite-from-outside	doc_check reads the command and setting names from the Go dispatch table and settings list as well as the bash, and fails when it finds none	binary-wrapper
 tests/dropped_lines_test.sh	py	rewrite-from-outside		helpers-dropped-lines
 tests/env_allowlist_test.sh	lib	rewrite-from-outside		port-status

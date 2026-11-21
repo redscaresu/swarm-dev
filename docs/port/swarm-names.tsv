@@ -28,7 +28,7 @@ SWARM_CODEX_RETRY_SECONDS	seam	bin/swarm.sh
 SWARM_CODEX_SECONDS	seam	bin/swarm.sh
 SWARM_CONDUCTOR_POLL	seam	bin/lib/agents.sh
 SWARM_CONDUCTOR_SLICE_MS	seam	bin/lib/agents.sh
-SWARM_DASH_NOW	seam	bin/lib/clock.py bin/lib/flow_ci_health.py
+SWARM_DASH_NOW	seam	bin/lib/clock.py bin/lib/flow_ci_health.py internal/clock/clock.go
 SWARM_DEPS	handoff	bin/lib/flow_report.py bin/lib/reports.sh
 SWARM_DROPPED_FETCH_WAIT	seam	bin/lib/merge.sh
 SWARM_ESCALATE_MODEL	handoff	bin/lib/outcomes_rows.py bin/lib/reports.sh
@@ -105,7 +105,7 @@ SWARM_RUN_TIMED	handoff	bin/lib/agents.sh bin/swarm.sh
 SWARM_SEP	handoff	bin/lib/agents.sh
 SWARM_SESSIONS	handoff	bin/lib/merge.sh bin/lib/status_report.py
 SWARM_SET	handoff	bin/lib/board.sh
-SWARM_SLEEP_SCALE	seam	bin/lib/agents.sh bin/lib/report.py bin/swarm.sh hooks/lead-stop.sh
+SWARM_SLEEP_SCALE	seam	bin/lib/agents.sh bin/lib/report.py bin/swarm.sh hooks/lead-stop.sh internal/clock/clock.go
 SWARM_STALL_POLL_MS	seam	bin/lib/agents.sh
 SWARM_STALL_READS	handoff	bin/lib/agents.sh bin/lib/lifecycle.sh
 SWARM_START_TRY	handoff	bin/lib/build.sh bin/lib/lifecycle.sh

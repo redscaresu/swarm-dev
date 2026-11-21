@@ -165,7 +165,13 @@ bin/lib/*.sh          the commands by group (agents, board, build, lifecycle, me
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
-cmd/swarm/            the Go command, the module's only package; no command is ported yet
+cmd/swarm/            the Go command, the wiring layer; no command is ported yet
+internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
+                      with no methods yet, and the store's types
+internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
+                      and store/ (.swarm/ and the board's files)
+internal/clock/       the one package that may read the time
+internal/layers/      the Go checks that give each package its layer, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),
@@ -212,9 +218,25 @@ Run `scripts/select-tests.sh --run` before a push. It never runs the full suite,
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
 14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
+The `speed` job (`.github/workflows/speed.yml`) runs on each PR that is not board-only.
+It installs strace, then runs `tests/speed_run.sh --require-count` with the PR's base as tree a and the PR's merge commit as tree b.
+The merge commit is the head merged into the base, which GitHub checks out, so the run measures only the PR's own change.
+Its log has one row for each command in `tests/speed_list.txt`, with each tree's median wall time and process starts.
+It fails a command the merge commit runs slower than the base by more than 20% and at least 100 ms, and a run where strace cannot count.
+A self-check step then times a copy of the merge commit with one extra exec (`/usr/bin/true` after `bin/swarm.sh`'s shebang) on the `usage` command.
+It fails unless the copy counts exactly one more process start than the merge commit.
+A run by hand (`workflow_dispatch`) takes a `base` ref, such as a tag, to time the dispatched ref against.
+It is not a required check, but `swarm.sh merge` waits for it like every other pull_request workflow, and a red run holds the merge.
+A port epic adds each command it ports to `tests/speed_list.txt`, one fixture name to a line.
+Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file, or the run is red.
+
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Go layers: a rules package (every package but `cmd/` and those under it, `internal/iface`, `internal/clock` and the four adapters under `internal/adapter/`) starts no process, touches no file, uses no network and imports no adapter.
+  Only `internal/clock` reads the time.
+  The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
+  `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
@@ -292,6 +314,8 @@ never `[[wikilinks]]`.
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+`macos-tests` (`.github/workflows/macos.yml`) runs `go test ./...` and a small subset of the bash tests on macOS arm64, under macOS's bash 3.2.
+It is not required on `main`, but `swarm.sh merge` waits for it green, as for every workflow a PR runs.
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag and, for a numeric `x.y.z` tag, every one is a fix: a patch), the lead cuts a

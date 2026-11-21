@@ -45,10 +45,11 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names epic_briefs plan_epic upgrade; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
-BIN_FLOOR=(); for t in agent_state command_names doc_check events_fixture events_tail_agents events_tail_flow events_tail_lead events_tail_merge events_tail_stall events lib_path loose_match outcome_scan removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
-SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh)
+BIN_FLOOR=(); for t in agent_state command_names doc_check events_fixture events_tail_agents events_tail_flow events_tail_lead events_tail_merge events_tail_stall events lib_path loose_match outcome_scan removed roles skill timeouts port_sites port_swarm_names port_locks port_names port_fields; do BIN_FLOOR+=("tests/${t}_test.sh"); done
+HOOK_FLOOR=("${SHELL_FLOOR[@]}" tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
+SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
 RULES_FLOOR=(tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh)
-TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh)
+TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh)
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
@@ -56,6 +57,7 @@ for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md 
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
 for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo floor' > "${G}/tests/diff_run_test.sh"
+echo 'echo floor' > "${G}/tests/diff_run_hooks_test.sh"
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -216,22 +218,23 @@ check "an unstaged command selects the command floor and the test that names it,
 check "a command only its own test names still selects command_names_test.sh, which greps every command" \
   "$(sel "echo 1 >> commands/plan-epic.md; ${commit}")" "$(lines "${CMD_FLOOR[@]}" tests/names_plan_epic_test.sh)"
 check "a staged hook selects the shell-scan floor and the test that names it, no other" "$(sel 'echo 1 >> hooks/merge-guard.sh; git add -A')" \
-  "$(lines "${SHELL_FLOOR[@]}" tests/names_guard_test.sh)"
+  "$(lines "${HOOK_FLOOR[@]}" tests/names_guard_test.sh)"
 check "a script selects the test that names it, alone" "$(sel "echo 1 >> scripts/board-only.sh; ${commit}")" tests/names_gate_test.sh
 check "the gh shim selects the shell-scan and removed-name floor and the test that names it, no other" "$(sel "echo 1 >> bin/gh-shim/gh; ${commit}")" \
   "$(lines "${SHIM_FLOOR[@]}" tests/names_shim_test.sh)"
 check "scripts/test.sh selects every test" "$(sel "echo 1 >> scripts/test.sh; ${commit}")" "${ALL}"
 check "the Makefile selects every test" "$(sel "echo 1 >> Makefile; ${commit}")" "${ALL}"
 check "a bin/lib file's top level selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
-check "a test selects itself and the four tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
+check "a test selects itself and the five tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
   "$(lines "${TEST_FLOOR[@]}" tests/x_test.sh)"
-check "a new untracked test selects itself and those four" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
-check "a test helper selects the test that names it and removed_test.sh, which greps every tests/*.sh" \
-  "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh)"
-check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, and removed_test.sh" \
-  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/removed_test.sh)"
-check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, and no other" \
-  "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" tests/doc_check_test.sh
+check "a new untracked test selects itself and those five" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
+check "a test helper selects the test that names it, removed_test.sh, which greps every tests/*.sh, and port_tests_list_test.sh" \
+  "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
+check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, diff_run_hooks_test.sh, which runs the hook ones, removed_test.sh and port_tests_list_test.sh" \
+  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
+check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, and the port tests that scan Go, and no other" \
+  "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
+  "$(lines tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
 check "a board story selects nothing" "$(sel "echo 1 >> board/stories/a.md; ${commit}")" ""
 check "a board README selects the test that checks it against its template" "$(sel "echo 1 >> board/stories/README.md; ${commit}")" \
   tests/board_readme_test.sh
@@ -290,7 +293,7 @@ check "a function no test reaches selects every test, and says so" \
 # step_one still selects its tests.
 check "--known keeps a hook's floor when no test names it, and names the hook" \
   "$(sel "echo 1 >> hooks/agent-state.sh; ${commit}" --known)|$( (cd "${G}" && { bash "${SEL}" --known > /dev/null; } 2>&1) )" \
-  "$(lines "${SHELL_FLOOR[@]}")|select-tests: hooks/agent-state.sh: not run here, as CI's full run covers it: no test names agent-state.sh"
+  "$(lines "${HOOK_FLOOR[@]}")|select-tests: hooks/agent-state.sh: not run here, as CI's full run covers it: no test names agent-state.sh"
 check "--known keeps a bin/ path's floor when it cannot follow it, selects for the bin/ path it can, and names the first" \
   "$(sel "perl -pi -e 's/echo d;/echo e;/' bin/lib/top.sh; perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}" --known)|$( (cd "${G}" && { bash "${SEL}" --known > /dev/null; } 2>&1) )" \
   "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh tests/top_test.sh "${BIN_FLOOR[@]}")|select-tests: bin/lib/top.sh: not run here, as CI's full run covers it: bin/lib/top.sh:top_dir: top_dir runs outside any function, at bin/lib/top.sh:4"

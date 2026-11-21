@@ -338,7 +338,8 @@ Repeat until a step below says stop:
      `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
      a ready story's builder it closes the pane and then restarts or holds the story, as a
      `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
-     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     pane. That restart starts the builder in a fresh session, since a resumed one comes back in
+     manual mode. The line comes once per stop: again once the agent has moved on, after a turn that ends
      on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
      `idle: <story> is ready with no build, exit: <exit>` line, or an `idle: epic <epic> ...` line, is
