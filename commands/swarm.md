@@ -291,8 +291,8 @@ Repeat until a step below says stop:
      If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
      review agent does, with `swarm.sh review <slug> --head <the head you reviewed> <PR URL>` and,
      under `merge = agent` or when `swarm.sh grants <PR URL>` lists `merge`,
-     `swarm.sh merge --head <that head> <PR URL>`. A clean run of yours clears nothing: the line stays in `status` and on
-     the dashboard until a review agent starts on the PR, findings go to the builder, or the PR
+     `swarm.sh merge --head <that head> <PR URL>`. A clean run of yours clears nothing: the line stays in `status`
+     until a review agent starts on the PR, findings go to the builder, or the PR
      merges and the story leaves the board.
      A line with no PR URL names a `gh pr list` that finds the PR first. A line with
      `(started N of 3)` after the PR URL means `wait --lead` has already run try N of a
@@ -557,7 +557,7 @@ Repeat until a step below says stop:
      says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open. An
      epic leaves the stage when its `stage:` or `hld:` is dropped. Tell the user both as you hand
      them the PR, then go back to 1. For as long as the PR's worktree exists, `next` goes on to the
-     steps after this one, and the gate, `status` and `dash` list `stage PR awaiting merge: v<S>`,
+     steps after this one, and the gate and `status` list `stage PR awaiting merge: v<S>`,
      whether its epics are still drafts or the merge has made them active. On that line, finish the
      edit first, since a run that stopped between the edits left some of the stage's epics drafts:
      every draft epic in the worktree that carries `stage: v<S>` and an `hld:` naming an agreed HLD
@@ -717,16 +717,12 @@ Repeat until a step below says stop:
        `<url> is MERGED, not open` (the user merged it) or `unconfirmed (...)` and `gh pr view` shows
        it MERGED, merge stopped before it waited for CI on the base or ran the upgrade: look at CI on
        the base yourself, check the tag and the release, and tell the user the plugin update did not
-       run. Then run `swarm.sh dash --check`, which compares every figure dash shows with the command
-       that owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
-       figure can move between the two reads; if it fails again, file a `kind: code` story naming the
-       fields it printed. Remove the worktree and the branch, and go back to 1.
+       run. Remove the worktree and the branch, and go back to 1.
      - It refused because of the PR: a version not greater than the base's, more changed than the
        version, a fix on it, a missing docs PR or `Docs: none` line, a head that moved, or a PR that is
        CLOSED. The lead acts, under both settings: do what the refusal says (a fix or the docs goes to
        the base first, as above; merge origin/<base> into the PR; or remove this worktree and the
-       `release/v<new>` branch, close the PR and cut the release again). Run `swarm.sh dash --check` as
-       above, then stop and go back to 1 once that is done.
+       `release/v<new>` branch, close the PR and cut the release again). Then stop and go back to 1.
      - It refused at the retro gate, under both settings.
        `v<new> is a minor, and ...: run its retro first` means the minor's retro is not done: keep the PR, the worktree and the branch, and do the retro step (`next` prints `retro v<new>`).
        Once `next` prints `release v<new>`, this arm uses the open PR.
@@ -735,10 +731,10 @@ Repeat until a step below says stop:
        Cut no patch again while that change is on the base: `next` offers none then.
        The next release is a minor, after its retro.
        When the refusal ends `merge it yourself if it may ship without a retro` (a board outside the repo), keep the PR and tell the user it waits on their merge.
-       Run `swarm.sh dash --check` as above, then go back to 1.
+       Then go back to 1.
      - Any other refusal: under `merge = human` the release-grant refusal ("waits on the user's merge"),
        a merge queue, a failed fetch of the base, a missing `v<version>` tag, a gh error. Keep the
-       worktree and the branch. Run `swarm.sh dash --check` as above. Tell the user what the refusal
+       worktree and the branch. Tell the user what the refusal
        printed and that the PR waits on their merge, show what `swarm.sh status` lists under Waiting on
        you, and stop. Under `merge = agent` that holds for the merge-queue refusal and a missing tag,
        which only the user clears; for any other refusal, tell the user what it printed and stop.
@@ -811,8 +807,8 @@ Where a step starts a review agent, read the new head's diff yourself, then run 
 - `held:`: the user merges the PR.
   Tell them it waits on their merge.
 
-Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
-count it:
+Log every time a person had to step in, the moment it happens, so `swarm.sh flow`
+counts it:
 
 - `swarm.sh intervene lead-hand <cause> "<what you did>"` when you acted by hand where a command
   should have (you typed into a stalled agent's pane, merged or edited something yourself).
@@ -873,8 +869,8 @@ More rules for the lead:
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
-  `swarm.sh status` or `swarm.sh dash`, never from a pane read alone. `dash` shows `working <N>m` or
-  `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. For
+  `swarm.sh status`, never from a pane read alone. `status` shows the agent's state and acts on
+  nothing. For
   `stall_minutes`, a story's builder shows life through worktree commits, edits and PR updates, an
   agent with no story (a planner or conductor) through its own `events.tsv` lines, and any agent
   through its session log, a test suite running in its pane and a background task its session

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dash_finished_test.sh — bin/lib/dash_finished.py on a fixture repo whose board is board/: a commit
+# finished_test.sh — bin/lib/finished.py on a fixture repo whose board is board/: a commit
 # that deletes a story file and changes only the board's own files (hld/, .obsidian/) is not the
 # story's own work, so the story does not count as finished; one that also changes code does, and so
 # does one that changes board/README.md.bak (the board's own README.md is that file alone). Each story
@@ -8,7 +8,7 @@ set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
-FINISHED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/lib/dash_finished.py"
+FINISHED="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/lib/finished.py"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT

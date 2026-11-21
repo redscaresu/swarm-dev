@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # agent_liveness_test.sh — `swarm.sh status` reads each agent's pane once (pane_check): a pane whose
 # last turn ended on an `API Error:` line or an auto mode denial logs one api-error or auto-denied
-# incident, once per occurrence, and the time its pane last changed lands in .swarm/panes, which
-# dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists this project's agents (and
+# incident, once per occurrence, and the time its pane last changed lands in .swarm/panes. herdr and gh are stubs on PATH: herdr lists this project's agents (and
 # another project's) and prints ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per
 # epic. Then deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
 # sends the brief again only to an agent idle or done there. Last, sign_blocked, with the signer stubbed,
@@ -155,24 +154,6 @@ n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
   for i in 1 2 3 4 5 6 7 8; do pane_check s-race w:1 > /dev/null & done; wait
   wc -l < "${EVENTS_LOG}"' _ "${HERE}")"
 check "eight reads of one stop at once log one event" test "${n// /}" = 1
-
-# dash shows the minutes since a pane last changed beside its agent, when status or wait read it within
-# stall_minutes (the record's mtime), and its working count still agrees with status's
-# (dash_defects_test's assertion).
-FX="${ROOT}/fx"; mkdir -p "${FX}"
-# shellcheck source=fixtures/dash/two_projects.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
-source "${HERE}/fixtures/dash/two_projects.sh" "${FX}"
-A="${FIXTURE_A}"
-mkdir -p "${A}/.swarm/panes"; printf '1 2\t%s\n' "$((SWARM_DASH_NOW - 720))" > "${A}/.swarm/panes/a-building"
-touch_ago 1 "${A}/.swarm/panes/a-building"
-frame() { rm -f "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_W=100 "${FIXTURE_SWARM}" dash); }
-out="$(frame)"
-check "dash shows 12m beside an agent whose pane last changed 12 minutes ago" grep -qE '● a-building .*  pane 12m' <<< "${out}"
-check "an agent with no pane record shows no pane age" lacks 'conduct-alpha-core .*pane' "${out}"
-n="$(HERDR_ENV=1 SWARM_PROJECT="${A}" "${FIXTURE_SWARM}" status | grep -c '^  [^ ]*  *working  \[' || true)"
-check "dash counts the ${n} agents status lists as working" grep -q " ${n} agents working" <<< "${out}"
-touch_ago 30 "${A}/.swarm/panes/a-building"
-check "a pane record no one read for stall_minutes shows no pane age" lacks 'a-building .*pane' "$(frame)"
 
 # flow counts the stops per epic: s-err is e1's builder (its outcomes row), conduct-e1 its conductor,
 # conduct-e2 a conductor that stopped before any builder of e2 started, s-err-done s-err retired.

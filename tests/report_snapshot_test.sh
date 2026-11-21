@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# report_snapshot_test.sh — a report (status, next, each dash frame) reads the board's files once, at
+# report_snapshot_test.sh — a report (status, next) reads the board's files once, at
 # report_start (board_snapshot), and fm and get_fm answer from that read.
 # - On a fixture board with state files (a key set in state, a @base the item no longer matches, a key
 #   only in a story's body, an empty value, a value cleared in state, a key in state that swarm.sh does

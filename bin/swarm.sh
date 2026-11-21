@@ -27,7 +27,6 @@
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it with the tab's id, t1 (w1:t3) (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
 #   swarm.sh swarms                                         every swarm herdr runs on this machine: each `swarm-lead · <project>` workspace as a project, with its dir, then its workspaces (the lead's first) with their agents; a workspace is a project's by its label and its dir, never by a prefix of another project's label or a dir name two projects share
-#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's), a builder not while its Claude review agent is busy on the old version; one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock [--startable <epic>|--backlog]         mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone
@@ -188,16 +187,7 @@ find_project() {
   main_checkout "$(pwd -P)" || die "not in a swarm project: no .claude/swarm/config above here and not in a git repo"
 }
 
-# dash --project draws only the projects it names, so it runs anywhere: with no project here, the
-# cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
-# lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
-# NO_PROJECT is 1 when the cwd stands in, so run_time_start logs no row there.
-NO_PROJECT=""
-if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
-  PROJECT_DIR="$(find_project 2>/dev/null)" || { PROJECT_DIR="$(pwd -P)"; NO_PROJECT=1; }
-else
-  PROJECT_DIR="$(find_project)"
-fi
+PROJECT_DIR="$(find_project)"
 # A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
 # set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
 # SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
@@ -218,9 +208,8 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # on), goes through bin/gh-shim, which logs it to this project's .swarm/gh-calls.tsv for flow's
 # gh_calls section, with the agent that ran it (SWARM_GH_CALLER, which launch_file sets) and, for
 # this command's own calls, `swarm.sh <command>` as its via: the outermost command's, so what a
-# command runs through another swarm.sh (dash --check's status, merge's wait) counts as the command
-# that caused it. launch_file drops the via, so an agent's own swarm.sh starts afresh. A dash
-# --project runs swarm.sh again for each project, so each one's calls land in its own log.
+# command runs through another swarm.sh (merge's wait) counts as the command
+# that caused it. launch_file drops the via, so an agent's own swarm.sh starts afresh.
 GH_VIA="${1:-}"
 # Set when another swarm.sh runs this one, which passes its SWARM_GH_VIA on (lead_rename reads it).
 NESTED_CALL="${SWARM_GH_VIA:+1}"
@@ -250,7 +239,8 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long, a rate-limit retry included
 CFG_fallback_reviewer="" # empty: a codex usage or rate limit, unreachable codex or timeout skips codex's review; else a review agent on this model reviews in its place
-CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
+# shellcheck disable=SC2034 # lead: nothing reads it since dash was deleted; a config that sets it still loads
+CFG_lead=off            # kept so a config that sets it still loads
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_review_verify=ci    # full: a review agent's round 1 may run the selected tests and check mutation proofs; ci: every round trusts CI
 CFG_demote_kinds=""      # empty: off; else finding kinds, comma-separated, that rounds before the round cap send only as a regression or a now-false line
@@ -435,7 +425,7 @@ base_for() {
 
 # The model and effort for each role. This is the one place the policy lives
 # (docs/reference-models.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
-# knows, by group: the usage message and `dash` read it.
+# knows, by group: the usage message reads it.
 ROLE_GROUPS="design:epic,epic-review,hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review,review-fallback"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
@@ -569,8 +559,6 @@ source "${SWARM_HOME}/bin/lib/board.sh"
 source "${SWARM_HOME}/bin/lib/merge.sh"
 # shellcheck source=bin/lib/lifecycle.sh
 source "${SWARM_HOME}/bin/lib/lifecycle.sh"
-# shellcheck source=bin/lib/dash.sh
-source "${SWARM_HOME}/bin/lib/dash.sh"
 # shellcheck source=bin/lib/handover.sh
 source "${SWARM_HOME}/bin/lib/handover.sh"
 # agent_env's names, each checked for its form by load_config, which runs before agents.sh is loaded.
@@ -579,8 +567,7 @@ for _key in ${CFG_agent_env}; do
   ! reserved_env "${_key}" \
     || die "${SRC_agent_env}: agent_env: ${_key} is reserved: every agent gets it already, herdr or the lead's own session sets it, or it loads code"
 done
-# INTERVENE_KINDS: the times a person stepped in that intervene logs, and the kinds dash's speedometer
-# counts (dash passes them as DASH_INTERVENE_KINDS).
+# INTERVENE_KINDS: the times a person stepped in that intervene logs.
 INTERVENE_KINDS="lead-hand user-caught"
 
 # INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
@@ -652,7 +639,6 @@ dispatch() {
              else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   timed next next_report ;;
     status) timed status status_report "${1:-}" ;;
-    dash)   timed dash dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     upgrade) require_herdr; upgrade_agents "$@" ;;
     cost)   moved cost "flow's cost section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
@@ -705,8 +691,7 @@ dispatch() {
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
-    _step)  if [[ "${1:-}" == --dash ]]; then a="$(herdr agent list 2>/dev/null)" || a=""; dash_no_agent "${a}"; fi
-            next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds; --dash: dash --check's, its no-agent lines read as dash reads them
+    _step)  next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds
     _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
     _review-brief) review_brief "${1:?slug}" "${2:?PR URL}" "${3:?base}" "${4:?findings file}" "${5:?head}" "${6:-1}" ;;   # test hook: a story's review agent brief
@@ -730,22 +715,20 @@ dispatch() {
 # _close-when-idle closes a retired review pane or a reported conductor, and logs its own close-when-idle line (close_idle_wait).
 # The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
 # a conductor's watch's `pr-opened <slug>` when it says a story PR opened, and wait-pr's `first-green <slug>`, once per story PR.
-# outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
-# status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
+# outcomes (and flow and dataset, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
+# status and next each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
+READ_ONLY_COMMANDS="status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
-# run_time_drop — forget it, so the run logs no row (a watch whose first frame failed).
 # run_time_end — append the noted run's row, once: its start (UTC), command, seconds and load (- when
-# uptime gives none). dash --watch calls it after its first frame, which never returns. Only the
-# status, next and dash arms call these: _step and wait --lead read the board as next does, and log
-# nothing. A run that fails before its end logs no row, nor does one with no .swarm/ to log in, or
-# dash --project from outside a project, where the cwd stands in (NO_PROJECT). A clock (now_ms) or a
-# write that fails is skipped, and never fails the run. A run under
-# a timed one (dash --project's frames, dash --check's status, a watch that re-execs itself) is not
+# uptime gives none). Only the
+# status and next arms call these: _step and wait --lead read the board as next does, and log
+# nothing. A run that fails before its end logs no row, nor does one with no .swarm/ to log in.
+# A clock (now_ms) or a write that fails is skipped, and never fails the run. A run under
+# a timed one is not
 # timed: SWARM_RUN_TIMED, exported by the first, marks it. An agent never inherits it (launch_file
 # unsets it), though next starts conductors.
 RUN_TIMES_LOG="${PROJECT_DIR}/.swarm/run-times.tsv"
@@ -753,15 +736,12 @@ RUN_TIME=""
 timed() { run_time_start "$1"; shift; "$@"; run_time_end; }
 run_time_start() {
   [[ -z "${SWARM_RUN_TIMED:-}" ]] || return 0
-  export SWARM_RUN_TIMED=1   # set even outside a project, so the frames it draws stay untimed
-  [[ -z "${NO_PROJECT}" ]] || return 0
+  export SWARM_RUN_TIMED=1
   local load at ms
   load="$(LC_ALL=C uptime 2>/dev/null | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" || load=""
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && ms="$(now_ms 2>/dev/null)" || return 0
   RUN_TIME="$1 ${at} ${ms} ${load:--}"
 }
-# shellcheck disable=SC2329 # called from dash_watch, in bin/lib/dash.sh
-run_time_drop() { RUN_TIME=""; }
 run_time_end() {
   [[ -n "${RUN_TIME}" ]] || return 0
   local cmd at ms load now
@@ -916,8 +896,9 @@ codex_review() {
   left=$((CFG_codex_minutes * 60))
   [[ ! "${SWARM_CODEX_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || left="${SWARM_CODEX_SECONDS}"
   budget="${left}"
-  # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
+  # The run's marker: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
+  # Only the deleted dash read it; nothing reads it now.
   mkdir -p "${STATE_DIR}"
   for m in "${STATE_DIR}"/codex-review.*; do
     # Only a pid suffix: retire rewrites every state file through <file>.tmp.

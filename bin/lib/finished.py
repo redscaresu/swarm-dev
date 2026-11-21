@@ -6,7 +6,7 @@ def git(args, data=None):
                           capture_output=True, check=True).stdout
 KEY = re.compile(r"([A-Za-z_]+): *(.*)$")
 def front(text):
-    # The front matter's keys, as dash_fields reads a file's: only after a leading ---, up to the
+    # The front matter's keys: only after a leading ---, up to the
     # next; a key's first line wins, an empty value too; CRLF tolerated. No state file: these are
     # deleted versions, and a slug's state file may be a later story's.
     keys, lines = {}, [l.rstrip("\r") for l in text.split("\n")]
@@ -62,6 +62,6 @@ for slug, _, own in todo:
     pos += size + 1
     if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
         done.add(slug)
-        # One row per finished story, "-" for an empty value; dash_finished (dash.sh) leaves out an
+        # One row per finished story, "-" for an empty value; stories_finished (board.sh) leaves out an
         # after: story by board.sh's rule and counts the rest per epic.
         print("\t".join(["story", fm["epic"], fm.get("kind") or "-", fm.get("after") or "-"]))

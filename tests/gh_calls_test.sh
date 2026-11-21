@@ -185,29 +185,20 @@ check "a window with no lines says so" "$(cd "${P}" && PATH="${dir}/stub:${PATH}
 check "swarm.sh's own gh calls log with its command as via, outside any agent" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f2,3,5)" $'-\tswarm.sh flow\tgraphql'
 flow SWARM_GH_CALLER=b1 > /dev/null
 check "a builder's swarm.sh keeps the builder as the agent, so its calls count under its role" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f2,3)" $'b1\tswarm.sh flow'
-# A swarm.sh started by another (dash --check's status, merge's wait) keeps the outer command's via.
-flow SWARM_GH_VIA="swarm.sh dash" > /dev/null
-check "a swarm.sh run by another keeps the outer command as its via" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f3)" "swarm.sh dash"
+# A swarm.sh started by another (merge's wait) keeps the outer command's via.
+flow SWARM_GH_VIA="swarm.sh merge" > /dev/null
+check "a swarm.sh run by another keeps the outer command as its via" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f3)" "swarm.sh merge"
 # The shim on PATH but behind a folder with a gh: swarm.sh puts it first, so its calls still log.
 before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"
 (cd "${P}" && PATH="${dir}/stub:${REPO}/bin/gh-shim:${PATH}" env -u HERDR_ENV -u SWARM_GH_VIA -u SWARM_PROJECT SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-01 > /dev/null)
 check "swarm.sh puts the shim first when it is on PATH behind another gh" "$(( $(wc -l < "${P}/.swarm/gh-calls.tsv") > before ))" 1
 
-# A command run for another project (as dash --project runs swarm.sh for each) logs in that project's log.
+# A command run for another project (as upgrade runs swarm.sh for each) logs in that project's log.
 Q="${dir}/other"; mkdir -p "${Q}/.swarm" "${Q}/.claude/swarm"; : > "${Q}/.claude/swarm/config"; git -C "${Q}" init -q
 cp "${P}/.swarm/agents.tsv" "${Q}/.swarm/"   # so its flow runs gh (outcomes)
 before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"
 (cd "${P}" && PATH="${dir}/stub:${PATH}" env -u HERDR_ENV -u SWARM_GH_VIA SWARM_PROJECT="${Q}" SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-01 > /dev/null)
 check "a command for another project logs its gh calls there, not in the cwd's" "$(wc -l < "${P}/.swarm/gh-calls.tsv")|$(cut -f3 "${Q}/.swarm/gh-calls.tsv" | sort -u)" "${before}|swarm.sh flow"
-
-# dash's guard on gh: the shim on PATH alone is not a gh. Folders of the test's own, as a runner's
-# /usr/bin may hold a gh (gh_installed runs on builtins alone).
-mkdir -p "${dir}/empty"
-# shellcheck disable=SC2034 # SWARM_HOME is dash.sh's
-gh_on() ( SWARM_HOME="${REPO}"
-  # shellcheck source=bin/lib/dash.sh
-  source "${REPO}/bin/lib/dash.sh"; PATH="$1"; if gh_installed; then echo yes; else echo no; fi )
-check "dash looks past gh-shim for a gh: none behind it, one behind it" "$(gh_on "${REPO}/bin/gh-shim:${dir}/empty")|$(gh_on "${REPO}/bin/gh-shim:${dir}/empty:${dir}/stub")" "no|yes"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

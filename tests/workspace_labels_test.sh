@@ -377,7 +377,7 @@ not_lead() {
 }
 not_lead "a command with SWARM_AGENT set (a Claude agent's pane)" "${A}" SWARM_AGENT=build-s1 config board_dir
 not_lead "a command with SWARM_GH_CALLER set (any agent's pane)" "${A}" SWARM_GH_CALLER=build-s1 config board_dir
-not_lead "a swarm.sh another one runs (dash --project's, for another project)" "${K}" SWARM_GH_VIA="swarm.sh dash" SWARM_PROJECT="${B}" config board_dir
+not_lead "a swarm.sh another one runs (upgrade's, for another project)" "${K}" SWARM_GH_VIA="swarm.sh upgrade" SWARM_PROJECT="${B}" config board_dir
 not_lead "a test hook (as lead-stop.sh's _step)" "${A}" _name s1
 LEAD_ERR=/dev/null not_lead "a command whose stderr goes to /dev/null (as the Stop hook's do)" "${A}" config board_dir
 not_lead "a command for another project (SWARM_PROJECT) from a project's folder" "${A}" SWARM_PROJECT="${B}" config board_dir

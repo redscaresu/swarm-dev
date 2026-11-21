@@ -138,7 +138,7 @@ check "PATH (gh-shim first), HOME and TERM reach it with swarm.sh's values" "${S
   "$(var conduct-plain PATH)|$(var conduct-plain HOME)|$(var conduct-plain TERM)"
 check "gh-shim logs its gh calls under its own name, not as the command that started it" "conduct-plain|${p}/.swarm/gh-calls.tsv|" \
   "$(var conduct-plain SWARM_GH_CALLER)|$(var conduct-plain SWARM_GH_LOG)|$(var conduct-plain SWARM_GH_VIA)"
-check "a timed run's marker (SWARM_RUN_TIMED) does not reach it, so its own status, next and dash log their rows" "" \
+check "a timed run's marker (SWARM_RUN_TIMED) does not reach it, so its own status and next log their rows" "" \
   "$(var conduct-plain SWARM_RUN_TIMED)"
 check "the swarm.sh variables reach it: HERDR_ENV, and herdr's own for its pane" "1|$(pane_of conduct-plain)|w|${ROOT}/sock" \
   "$(var conduct-plain HERDR_ENV)|$(var conduct-plain HERDR_PANE_ID)|$(var conduct-plain HERDR_WORKSPACE_ID)|$(var conduct-plain HERDR_SOCKET_PATH)"

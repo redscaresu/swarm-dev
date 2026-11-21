@@ -4,7 +4,7 @@
 # after its step's why for every working conductor, naming it, for a head not yet sent (by watch or by
 # a tell note). With a live review agent on that head (.swarm/reviews/<slug>.head), a passing findings
 # file for it or for the head a base-merged line in events.tsv says it was made from, short of queue_minutes, for a lead story, or with a check or status that is not green on
-# any page (ci_gate's rule), neither does; `status` and `dash` never look. One repo next cannot resolve
+# any page (ci_gate's rule), neither does; `status` never looks. One repo next cannot resolve
 # is warned of, and the others still count, under bash 3.2 too. gh, herdr and claude are stubs on
 # PATH; gh logs every call to gh.log, and herdr lists the agents in agents ("<name> <pane>" lines).
 set -euo pipefail
@@ -166,8 +166,7 @@ green 31
 check "next prints the queued line under the conductor's wait, naming it, and none for the lead story's green PR" "${QN}" "$(nextq)"
 : > "${ROOT}/gh.log"
 (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status >/dev/null 2>&1) || true
-(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash >/dev/null 2>&1) || true
-check "status and dash, which read next_step, judge no PR queued (no CI read)" "0" "$(calls 'commits/')"
+check "status, which reads next_step, judges no PR queued (no CI read)" "0" "$(calls 'commits/')"
 
 # review-s1, open in a pane this project recorded, started on h1 and has written no findings file yet.
 echo h1 > "${p}/.swarm/reviews/s1.head"

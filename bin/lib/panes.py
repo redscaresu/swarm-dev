@@ -26,7 +26,7 @@ def pane_ids(pane, entries):
 # pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
 # labels). A workspace herdr gives no label for is "-". A tab herdr gives no label for (or no tab list)
 # is record, the name swarm-dev gave the tab (its tab record's), with the tab's id when herdr gave one,
-# `t1 (w1:t3)`, so where, status and dash's rows and tree all tell swarm-dev's name from herdr's label.
+# `t1 (w1:t3)`, so where's and status's rows all tell swarm-dev's name from herdr's label.
 def pane_where(pane, entries, labels, record="-"):
     ws, tab = pane_ids(pane, entries)
     return labels[0].get(ws) or "-", labels[1].get(tab) or (f"{record} ({tab})" if tab else record)
@@ -350,10 +350,10 @@ def usage_limit(text):
 READ_SECONDS = 10
 def pane_text(pane):
     # Under a report's deadline (SWARM_REPORT_END, an epoch to the millisecond, with SWARM_REPORT_SKIP_FILE:
-    # status sets them on status_report.py, dash on its python runs, in dash_deadline), the read takes at
+    # status sets them on status_report.py), the read takes at
     # most the time left, and one due at or past the deadline never starts. Either way it is recorded as
     # skipped, as report_read (merge.sh) records a read it cuts, under the name the shell's herdr wrapper
-    # gives the same read. With no deadline (dash --check, tidy, the agents.sh snippets), READ_SECONDS, and
+    # gives the same read. With no deadline (tidy, the agents.sh snippets), READ_SECONDS, and
     # nothing is recorded.
     timeout, end = READ_SECONDS, os.environ.get("SWARM_REPORT_END")
     if end:

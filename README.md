@@ -8,8 +8,6 @@ pull requests. You agree what to build with one agent. Other agents split it int
 build them in parallel and review each other's PRs. You watch, and the run stops whenever
 a decision is yours.
 
-![The swarm's dashboard on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
-
 ## Who it is for
 
 You have a GitHub repository, a piece of work bigger than one PR (a feature, a release, a
@@ -98,7 +96,6 @@ It stops only for decisions that are yours. The common ones:
 
 ## Watching it
 
-- `swarm.sh dash --watch`: the live dashboard in the recording above.
 - `swarm.sh status`: what needs a look and what waits on you.
 - `swarm.sh flow`: what the run cost, where the time went, and how the reviews did.
 - `swarm.sh retro`: the lists a retro goes through with you before a minor release.
