@@ -11,7 +11,7 @@ risk: high
 
 # release.yml builds in a read-only job, then a publish job verifies, attests, attaches and publishes, and only then moves prerelease
 
-Uses publish-plan's `scripts/publish-release.sh plan` and the move method release-ref-spike recorded. The user merges it (.github/ is held). publish-plan-recover changes no line the plan writes, so this story does not wait for it.
+Uses publish-plan's `scripts/publish-release.sh plan` and the move method release-ref-spike recorded (github.token; board/epics/release-ci.md § Spike results). The user merges it (.github/ is held). publish-plan-recover changes no line the plan writes, so this story does not wait for it.
 - Keep the path and the push-to-main trigger: release.yml is the signer `--list` names (build.sh:21; build_test.sh:55). Keep the `release` concurrency group (release.yml:14-17).
 - Job `build`, contents: read only: checkout at the pushed SHA with fetch-depth 0 (the plan reads BEFORE's plugin.json) and persist-credentials: false; run plan with REPO, SHA and BEFORE = github.event.before. When its steps contain `attach`: set up Go from go.mod with the setup-go pin from go.yml:60 and `cache: false` (go.yml:63; skeptic-release-workflow); run `scripts/build.sh`; check dist/ against `--list` and `sha256sum -c`; upload dist/ with the upload-artifact pin from scorecard.yml:52, retention-days 1. Output steps and tag.
 - Job `publish`, needs build, runs only when build's steps are not `none`. It alone has contents: write, id-token: write and attestations: write, set on the job (zizmor). It checks out, runs plan again with its write token (only that token sees drafts) and acts only on what that plan prints.

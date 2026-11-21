@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # runner_binary_test.sh — make test builds ./cmd/swarm once, before any test file starts, and hands it
 # to every test in SWARMDEV_BIN. Each case runs make test in a copy of the tree with no .git: the
-# Makefile, scripts/, cmd/ and go.mod, its main.go printing a word of this test's own, and test files of
-# its own, with a go wrapper first on PATH that logs each call. Over two files the run passes, both
-# files see one SWARMDEV_BIN, which prints the copy's word, not the outer tree's, and go ran one build.
+# Makefile, scripts/, cmd/ and go.mod, its cmd/swarm holding only a main.go that prints a word of this
+# test's own, and test files of its own, with a go wrapper first on PATH that logs each call. Over two
+# files the run passes, both files see one SWARMDEV_BIN, which prints the copy's word, not the outer
+# tree's, and go ran one build.
 # A make test of the copy that a test of that run starts, nested or top-level (TEST_SH_RUN unset),
 # builds nothing and sees the run's binary. With no go on PATH, the run fails in one line naming go
 # before any test file runs, and so does a main.go that does not compile, printing Go's error and the
@@ -43,7 +44,9 @@ mkdir -p "${C}/tests"
 cp -R "${REPO}/Makefile" "${REPO}/scripts" "${REPO}/cmd" "${REPO}/go.mod" "${C}/"
 CP="$(cd "${C}" && pwd -P)"   # the tree as scripts/test.sh names it
 WORD="copy-word-${RANDOM}${RANDOM}"
-rm -f "${C}/cmd/swarm/main_test.go"
+# Only the main.go below: the tree's other cmd/swarm files import internal/, which the copy leaves out,
+# so they would fail its build.
+rm -f "${C}"/cmd/swarm/*.go
 printf 'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println("%s") }\n' "${WORD}" > "${C}/cmd/swarm/main.go"
 # A test file of the copy writes a line to $SEEN: its name, the SWARMDEV_BIN it sees and what that prints.
 # shellcheck disable=SC2016 # the test file's own shell expands these
@@ -59,6 +62,14 @@ for x in nest:'' top:'-u TEST_SH_RUN'; do
       "${x#*:}" "${ROOT}" "${n}" "${ROOT}" "${n}" "${C}"
   } > "${C}/tests/${n}_test.sh"
 done
+# same_bin <name> — "same" when the make test that test <name> started saw a SWARMDEV_BIN, and it is the
+# one test <name> saw in run two; else what each saw, so a run that wrote no line fails too.
+same_bin() {
+  local inner outer
+  inner="$(cut -f2 "${ROOT}/$1.seen")" || inner=""
+  outer="$(awk -F'\t' -v n="$1" '$1 == n { print $2 }' "${ROOT}/two.seen")" || outer=""
+  if [[ -n "${inner}" && "${inner}" == "${outer}" ]]; then echo same; else echo "saw '${inner}', run two '${outer}'"; fi
+}
 # The go wrapper, first on PATH for each run: it logs its arguments to $GO_LOG, then runs the real go.
 mkdir -p "${ROOT}/wrap"
 # shellcheck disable=SC2016 # the wrapper's own shell expands these
@@ -92,10 +103,10 @@ o="$(TESTS="tests/nest_test.sh tests/top_test.sh" mk two)"
 check "a run whose tests start a make test of the copy, nested and top-level, passes and builds once" \
   "$(tail -1 <<< "${o}")|$(builds "${ROOT}/two.go")" "0|1"
 check "the nested make test builds nothing and sees the run's binary" \
-  "$(builds "${ROOT}/nest.go")|$([[ "$(cut -f2 "${ROOT}/nest.seen")" == "$(awk -F'\t' '$1 == "nest" { print $2 }' "${ROOT}/two.seen")" ]] && echo same)" \
+  "$(builds "${ROOT}/nest.go")|$(same_bin nest)" \
   "none|same"
 check "the top-level make test (TEST_SH_RUN unset) builds nothing and sees the run's binary" \
-  "$(builds "${ROOT}/top.go")|$([[ "$(cut -f2 "${ROOT}/top.seen")" == "$(awk -F'\t' '$1 == "top" { print $2 }' "${ROOT}/two.seen")" ]] && echo same)" \
+  "$(builds "${ROOT}/top.go")|$(same_bin top)" \
   "none|same"
 
 # No go on PATH: each directory of PATH that holds a go is replaced by a copy of it, as links, without go.
