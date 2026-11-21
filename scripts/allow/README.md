@@ -54,6 +54,7 @@ The streams are:
 - `files`: the list of files the run wrote and deleted, one `written <path>` or `deleted <path>` line each.
 - `file:<path>`: one written file's content, with its path as `files` lists it.
 - `calls:<step>`: the gh and herdr calls of one step, such as `calls:fg` for the foreground.
+- A background step's `<step>` is its label, `[<argv>] <first call>`, as a `DIFF` line and `--draft` print it.
 
 Paths and other run-specific values appear after the run's replacements and masks.
 So a path reads `<root>/proj/...`, and a time stamp reads `<time>`.
@@ -102,6 +103,9 @@ The result is then compared with the new tree's output.
 
 The run ends with one line per entry saying how many of its hunks applied.
 
+With `--times <n>`, the entries apply to the two trees' first runs.
+The run compares each repeat with its own tree's first run, with no entry applied, so a tree that differs from itself is always red.
+
 The `files` list decides which files exist, as each hunk applies.
 A `files` hunk that adds a `written <path>` line makes that file, empty until a `file:<path>` hunk gives it lines.
 One that removes a `written <path>` line drops the file and its content.
@@ -127,3 +131,17 @@ A symbolic link cannot be changed by a hunk.
    ```
 
 `tests/diff_allow_test.sh` parses every entry file on disk, so a malformed one fails CI.
+
+## On each PR
+
+The `diff-run` CI job runs the PR's base against its head:
+
+```bash
+bash tests/diff_run.sh --base --branch story/<slug> <base-tree> <head-tree>
+```
+
+`--base` applies only the entries of the stories `--branch` names, from any stage.
+A PR on branch `story/<slug>` names its own story, so only its own entry applies.
+Every other entry, on the base or added by the PR, is left to `--stage`, and is never applied, so it is never red either.
+A branch that is not `story/<slug>` names no story, and then every difference is red.
+A merge queue's group holds several PRs, so the job passes one `--branch` per PR in the group, as `scripts/diff-run-branches.sh` reads them.

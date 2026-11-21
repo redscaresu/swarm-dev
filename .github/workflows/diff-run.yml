@@ -1,0 +1,78 @@
+name: Differential run
+
+# tests/diff_run.sh on each PR: the base against the head, applying only the allow-list entries of
+# the head's own stories (--base), then the merge fixtures ten times, head against head (--times 10).
+# No push trigger, so it is no part of main's CI check (bin/lib/merge.sh's ci_gate main reads the
+# workflows whose `on: push` covers main). A dispatch runs one stage's allow lists from v0.31.2, for
+# the stage's exit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # A merge group's head holds every PR queued ahead: scripts/diff-run-branches.sh names them all.
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "The stage number <n>, such as 1: the allow lists scripts/allow/stage-1/ through stage-<n>/ apply, from v0.31.2"
+        required: true
+        type: string
+
+# Least-privilege default: every job only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  diff-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      checks: read          # the gate reads main's check runs for a release PR
+      statuses: read        # and its commit statuses
+      pull-requests: read   # a merge group's PRs, by head branch
+    env:
+      SWARM_TAG: v0.31.2    # the tree a dispatch's stage runs from
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base, and the base and v0.31.2 trees are worktrees
+          persist-credentials: false
+      - name: Gate a board-only or version-only PR
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          GH_TOKEN: ${{ github.token }}
+        # The base's copy when it has one: a PR is never judged by a gate it changed.
+        run: |
+          git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
+          bash "${RUNNER_TEMP}/board-only.sh"
+      - name: Run the differential run, the base against the head
+        if: steps.gate.outputs.board_only != 'true' && github.event_name != 'workflow_dispatch'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git worktree add --detach "${RUNNER_TEMP}/base" "${BASE_SHA}"
+          branches="$(bash scripts/diff-run-branches.sh)"
+          args=()
+          while IFS= read -r b; do [[ -z "${b}" ]] || args+=(--branch "${b}"); done <<< "${branches}"
+          bash tests/diff_run.sh --base "${args[@]}" "${RUNNER_TEMP}/base" "${GITHUB_WORKSPACE}"
+      - name: Run the merge fixtures ten times, head against head
+        if: steps.gate.outputs.board_only != 'true' && github.event_name != 'workflow_dispatch'
+        run: |
+          [[ -f tests/diff_fixtures_merge.sh ]] || { echo "no tests/diff_fixtures_merge.sh, so no merge fixture to run" >&2; exit 1; }
+          mapfile -t names < <(bash -c 'source tests/diff_fixtures_merge.sh && declare -F' | awk '$3 ~ /^fx_/ { print substr($3, 4) }')
+          [[ ${#names[@]} -gt 0 ]] || { echo "tests/diff_fixtures_merge.sh defines no fx_ fixture" >&2; exit 1; }
+          git worktree add --detach "${RUNNER_TEMP}/head" HEAD
+          bash tests/diff_run.sh --times 10 "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/head" "${names[@]}"
+      - name: Run one stage's allow lists from v0.31.2
+        if: steps.gate.outputs.board_only != 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          git worktree add --detach "${RUNNER_TEMP}/tag" "refs/tags/${SWARM_TAG}"
+          bash tests/diff_run.sh --stage "${STAGE}" "${RUNNER_TEMP}/tag" "${GITHUB_WORKSPACE}"

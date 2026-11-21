@@ -5,6 +5,8 @@ their hunks to the old tree's streams and compare the result with the new tree's
   python3 tests/diff_allow.py check <allow-dir> [--stage N] [--only <slug>]
   python3 tests/diff_allow.py compare <allow-dir> <work> [--stage N] [--only <slug>] [--draft]
           [--red <fixture>]... -- <fixture>...
+  python3 tests/diff_allow.py compare <allow-dir> <work> --base [--story <slug>]... [--draft]
+          [--red <fixture>]... -- <fixture>...
 
 check parses the entries a run would read (with neither option, every entry on disk) and checks the
 directory's layout: README.md and stage-<n>/ directories only, each holding <slug>.md files only.
@@ -14,6 +16,11 @@ for each stream that still differs (with --draft, the hunks that would cover it)
 hunk that does not apply, and same <fixture> for a fixture that is not red (--red names those diff_run
 already found red). The files stream is split: files is its list of written and deleted paths, and
 file:<path> the content of one written file. scripts/allow/README.md gives the entry format.
+--base applies the entries of the --story slugs alone, from every stage, and a slug with no entry is
+no error: a story that changes no output has none. check parses every entry with it, so a malformed
+one is an error whichever applies. An out/ directory compare cannot find is an error, never an empty
+run. A background step's calls, which diff_run.sh leaves in step.<k> with the step's label on line
+<k> of steps, are the stream calls:<label>, as diff_run.sh names it.
 
 Exit 0 when nothing differs and every hunk on a fixture that ran applied, 1 when something differs or
 a hunk did not apply, 2 on a malformed entry, a bad layout or a bad argument.
@@ -27,6 +34,9 @@ import sys
 
 ORDER = ("stdout", "stderr", "exit", "files")
 STREAM_RE = re.compile(rb"^(stdout|stderr|exit|files|file:\S.*|calls:[a-z0-9_-]+)$")
+# A background step's stream, calls:[<argv>] <first call>, and the file diff_run.sh leaves its calls in.
+STEP_STREAM_RE = re.compile(rb"^calls:\[.*\] \S.*$")
+STEP_FILE_RE = re.compile(r"^step\.[1-9][0-9]*$")
 FIXTURE_RE = re.compile(rb"^[A-Za-z0-9_]+$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 STAGE_RE = re.compile(r"^stage-([1-9][0-9]*)$")
@@ -101,6 +111,8 @@ def parse_heading(path, n, line):
     if len(words) < 2 or not words[1].strip():
         raise Bad(f"{path}:{n}: ## {words[0].decode()} names a whole fixture: name a stream and its lines")
     stream = words[1].strip()
+    if STEP_STREAM_RE.match(stream):
+        return words[0].decode(), stream.decode("utf-8", "surrogateescape")
     if not STREAM_RE.match(stream):
         raise Bad(f"{path}:{n}: {stream!r} is no stream: stdout, stderr, exit, files, file:<path> or calls:<step>")
     return words[0].decode(), stream.decode("utf-8", "surrogateescape")
@@ -254,6 +266,15 @@ def load(allow_dir, stage, only):
     return entries
 
 
+def base_line(allow_dir, stories, entries):
+    """--base's first line: which stories' entries apply, so an empty list reads as what it means."""
+    if not stories:
+        return f"allow: --base names no story, so no entry in {rel(allow_dir)} applies and every difference is red"
+    have = {e.slug for e in entries}
+    parts = [s + ("" if s in have else " (no entry)") for s in stories]
+    return f"allow: --base applies the entries of {', '.join(parts)} alone; every other entry is left to --stage"
+
+
 def parse_files(data):
     """diff_run.sh's files stream as its list of paths and a {path: [(kind, payload)]} of records,
     kind file (payload its content) or link (payload its target)."""
@@ -285,13 +306,28 @@ def parse_files(data):
 def read_side(out):
     """The plain streams ({name: lines}), the files list and records of one side's out/ directory."""
     plain, inv, records = {}, [], {}
+    # A background step's file, step.<k>, is the stream calls:<label>, its label line <k> of steps.
+    steps, labels = {}, []
+    # diff_run.sh makes out/ before it runs a fixture, so a missing one is a path wrong here or there:
+    # read as an empty run, two of them would compare the same.
+    if not os.path.isdir(out):
+        raise Bad(f"{out}: no such directory, so the run's streams cannot be read")
     for name in sorted(os.listdir(out)) if os.path.isdir(out) else []:
         with open(os.path.join(out, name), "rb") as f:
             data = f.read()
         if name == "files":
             inv, records = parse_files(data)
+        elif name == "steps":
+            labels = [line.rstrip(b"\n").decode("utf-8", "surrogateescape") for line in split(data)]
+        elif STEP_FILE_RE.match(name):
+            steps[int(name[len("step."):])] = split(data)
         else:
             plain[name] = split(data)
+    # One file per label, and no two labels alike: a step no label names would be compared with nothing.
+    if sorted(steps) != list(range(1, len(labels) + 1)) or len(set(labels)) != len(labels):
+        raise Bad(f"{out}: its step.<k> files are not, one for one, the labels its steps file lists")
+    for k, lines in steps.items():
+        plain["calls:" + labels[k - 1]] = lines
     return plain, inv, records
 
 
@@ -488,6 +524,8 @@ def main(argv):
     ap.add_argument("--stage", type=int)
     ap.add_argument("--only")
     ap.add_argument("--draft", action="store_true")
+    ap.add_argument("--base", action="store_true")
+    ap.add_argument("--story", action="append", default=[])
     ap.add_argument("--red", action="append", default=[])
     ap.add_argument("fixtures", nargs="*")
     args = ap.parse_args(argv)
@@ -496,6 +534,14 @@ def main(argv):
     try:
         if args.stage is not None and args.stage < 1:
             raise Bad("--stage takes a stage number above 0")
+        if args.base and (args.stage is not None or args.only is not None):
+            raise Bad("--base takes neither --stage nor --only: it applies the --story entries alone")
+        if args.story and not args.base:
+            raise Bad("--story goes with --base")
+        for slug in args.story:
+            if not SLUG_RE.match(slug):
+                raise Bad(f"--story takes a story slug, not {slug!r}")
+        stories = list(dict.fromkeys(args.story)) if args.base else None
         read = args.mode == "check" or args.stage is not None or args.only is not None
         entries = load(allow_dir, args.stage, args.only) if read else []
         if args.mode == "check":
@@ -504,6 +550,10 @@ def main(argv):
             if not entries:
                 emit(f"no entry file in {rel(allow_dir)}/stage-*/".encode())
             return 0
+        if args.base:
+            # Every entry is parsed, so a malformed one is an error; the --story slugs' alone apply.
+            entries = [e for e in load(allow_dir, None, None) if e.slug in stories]
+            emit(base_line(allow_dir, stories, entries).encode())
         if read and not entries:
             upto = "every stage" if args.stage is None else ("stage-1" if args.stage == 1 else f"stage-1 through stage-{args.stage}")
             emit(f"allow: no entry file in {rel(allow_dir)}, {upto}, so every difference is red".encode())
