@@ -21,11 +21,18 @@
 #   so both reads see the same commit): REF behind SHA keeps move; REF at SHA or past it drops move; a
 #   REF that has diverged refuses. It is read before the tag and the releases, so a release that cannot
 #   move is never drafted.
-# - The tag v<version>: no tag is the only state plan publishes from. An annotated tag refuses, and so
-#   does a tag on another commit (that version was released elsewhere) and a tag at SHA (the release
-#   exists).
-# - The releases, every page, matched by exact tag_name: none for v<version> gives draft attach publish,
-#   and move when ref_move keeps it. Any release for v<version> exists already and refuses, naming it.
+# - The tag v<version>: an annotated tag refuses, and so does a tag on another commit (that version was
+#   released elsewhere). No tag, or a tag at SHA, goes on to the releases.
+# - The releases, every page, matched by exact tag_name, and the tag decide the state, and each state
+#   adds move when ref_move keeps it:
+#   - No tag and no release: draft attach publish.
+#   - No tag and one draft whose target_commitish is SHA (a run that stopped before publish): attach
+#     publish, whatever files the draft holds, as attach replaces them (--clobber, on a draft only).
+#   - The tag at SHA and one published release holding every file scripts/build.sh --list names (each
+#     asset and the checksums file), uploaded (a run that stopped before move): move, or none.
+#   - Refused, naming the state: a published release missing a file (plan never writes to a published
+#     release), a draft at another commit, a published release with no tag, the tag at SHA with no
+#     published release, and two or more releases.
 # A draft has no tag yet, and only a token with write access sees drafts in the releases list. So a
 # plan run with a read-only token cannot see one: the publish job's plan, run with its write token, is
 # the one the workflow acts on.
@@ -37,7 +44,9 @@ PLUGIN=.claude-plugin/plugin.json
 SEMVER='^"[0-9]+\.[0-9]+\.[0-9]+"$'   # a version as version_at prints it
 SHA_RE='^[0-9a-f]{40}$'
 NEW_RELEASE="draft attach publish"
+FINISH_DRAFT="attach publish"
 MOVE_STEP=move
+BUILD="$(dirname "${BASH_SOURCE[0]}")/build.sh"   # the release contract: the files a release holds
 
 usage() { echo "usage: scripts/publish-release.sh plan" >&2; exit 2; }
 
@@ -104,9 +113,11 @@ ref_move() {
   esac
 }
 
-# no_tag — return when the tag v<version> does not exist; refuse, naming it, when it does.
-no_tag() {
+# read_tag — set TAG_AT to SHA when the tag v<version> is at SHA, and to nothing when there is no tag.
+# Refuses, naming it, an annotated tag and a tag on another commit.
+read_tag() {
   local at kind sha
+  TAG_AT=""
   gh_read "the tag ${TAG}" 404 "repos/${REPO}/git/ref/tags/${TAG}" || return 0
   at="$(jq -r --arg r "refs/tags/${TAG}" 'select(.ref == $r) | "\(.object.type) \(.object.sha)"' \
     <<< "${BODY}" 2> /dev/null)" || at=""
@@ -114,23 +125,72 @@ no_tag() {
   kind="${at%% *}" sha="${at#* }"
   [ "${kind}" = commit ] \
     || refuse "the tag ${TAG} is an annotated tag (its object is a ${kind}), and a release tags the commit itself"
-  [ "${sha}" != "${SHA}" ] \
-    || refuse "the tag ${TAG} is already at ${SHA:0:7}: its release exists, and plan does not finish one"
-  refuse "the tag ${TAG} is on ${sha:0:7}, not ${SHA:0:7}: that version was released from another commit"
+  [ "${sha}" = "${SHA}" ] \
+    || refuse "the tag ${TAG} is on ${sha:0:7}, not ${SHA:0:7}: that version was released from another commit"
+  TAG_AT="${SHA}"
 }
 
-# no_release — return when no release, draft or published, has the tag_name v<version>; refuse,
-# naming each, when one does.
-no_release() {
-  local found
+# read_releases — set RELEASES to the releases, draft or published, whose tag_name is v<version>, from
+# every page, as one JSON array, and FOUND to a phrase naming each in turn (`a draft, a published
+# release`), empty when there is none. Refuses when gh's answer is not a list of releases, or a release
+# for v<version> has no true or false draft.
+read_releases() {
   gh_read "the releases" - --paginate "repos/${REPO}/releases?per_page=100"
-  found="$(jq -rs --arg t "${TAG}" '
+  RELEASES="$(jq -cs --arg t "${TAG}" '
     if length > 0 and all(.[]; type == "array") then
-      [.[][] | select(type == "object" and .tag_name == $t) | if .draft then "a draft" else "a published release" end]
-      | join(", ")
+      [.[][] | select(type == "object" and .tag_name == $t)
+        | if (.draft | type) == "boolean" then . else error("no draft flag") end]
     else error("not a list") end' <<< "${BODY}" 2> /dev/null)" \
     || refuse "gh's answer for the releases is not a list of releases"
-  [ -z "${found}" ] || refuse "${TAG} already has ${found}: its release exists, and plan does not finish one"
+  FOUND="$(jq -r 'map(if .draft then "a draft" else "a published release" end) | join(", ")' \
+    <<< "${RELEASES}" 2> /dev/null)" || refuse "cannot name the releases for ${TAG}"
+}
+
+# release_files — set FILES to the files a release holds, one a line: each asset and the checksums file
+# that scripts/build.sh --list names. Refuses when --list fails, names no asset or not one checksums
+# file, or leaves a name empty, so an empty list never passes as a release holding every file.
+release_files() {
+  local list kind a b assets=0 sums=0
+  FILES=""
+  list="$("${BUILD}" --list 2> /dev/null)" || refuse "scripts/build.sh --list failed"
+  while IFS=$'\t' read -r kind a b; do
+    case "${kind}" in
+      asset) [ -n "${b}" ] || refuse "scripts/build.sh --list names an asset with no file"
+        FILES+="${b}"$'\n' assets=$((assets + 1)) ;;
+      checksums) [ -n "${a}" ] || refuse "scripts/build.sh --list names no checksums file"
+        FILES+="${a}"$'\n' sums=$((sums + 1)) ;;
+    esac
+  done <<< "${list}"
+  [ "${assets}" -gt 0 ] && [ "${sums}" -eq 1 ] \
+    || refuse "scripts/build.sh --list names ${assets} assets and ${sums} checksums files, not one or more and one"
+  FILES="${FILES%$'\n'}"
+}
+
+# finish_published — the tag is at SHA and its one release is published. With every file of
+# release_files uploaded to it, the plan is move, or none when ref_move dropped it; a file missing
+# refuses, naming each, as plan never writes to a published release.
+finish_published() {
+  local missing
+  release_files
+  missing="$(jq -r --arg f "${FILES}" '
+    ($f | split("\n")) - [.[0].assets[]? | select(type == "object" and .state == "uploaded") | .name]
+    | join(", ")' <<< "${RELEASES}" 2> /dev/null)" || refuse "cannot read the files of ${TAG}'s release"
+  [ -z "${missing}" ] \
+    || refuse "${TAG}'s published release lacks ${missing}, and plan never writes to a published release"
+  answer "${MOVE:-none}" "${TAG} at ${SHA:0:7} is published with every file; ${REF_WHY}"
+}
+
+# finish_draft — there is no tag, and v<version>'s one release is a draft. A draft of SHA plans attach
+# publish, and move when ref_move keeps it, whatever files the draft holds; a draft at any other
+# target_commitish (another commit, or a branch name) refuses, naming it.
+finish_draft() {
+  local target
+  target="$(jq -r '.[0].target_commitish | strings' <<< "${RELEASES}" 2> /dev/null)" || target=""
+  [ "${target}" = "${SHA}" ] || {
+    [[ ! "${target}" =~ ${SHA_RE} ]] || target="${target:0:7}"
+    refuse "${TAG} has a draft at '${target}', not ${SHA:0:7}, and plan finishes only a draft of the pushed commit"
+  }
+  answer "${FINISH_DRAFT}${MOVE:+ ${MOVE}}" "${TAG} has a draft at ${SHA:0:7} and no tag; ${REF_WHY}"
 }
 
 plan() {
@@ -155,9 +215,18 @@ plan() {
   TMP="$(mktemp -d)" || refuse "mktemp -d failed"
   trap 'rm -rf "${TMP}"' EXIT
   ref_move
-  no_tag
-  no_release
-  answer "${NEW_RELEASE}${MOVE:+ ${MOVE}}" "${TAG} at ${SHA:0:7} has no tag and no release; ${REF_WHY}"
+  read_tag
+  read_releases
+  # The state: the tag (at SHA, or none) and the releases for it. Anything not named is two or more.
+  case "${TAG_AT:+tag}/${FOUND}" in
+    /) answer "${NEW_RELEASE}${MOVE:+ ${MOVE}}" "${TAG} at ${SHA:0:7} has no tag and no release; ${REF_WHY}" ;;
+    "/a draft") finish_draft ;;
+    "tag/a published release") finish_published ;;
+    tag/ | "tag/a draft")
+      refuse "the tag ${TAG} is at ${SHA:0:7} with no published release (${FOUND:-no release}), and plan publishes only a release whose tag does not exist yet" ;;
+    "/a published release") refuse "${TAG} has a published release but no tag, and plan never writes to a published release" ;;
+    *) refuse "${TAG} has two or more releases (${FOUND}), and plan cannot tell which to finish" ;;
+  esac
 }
 
 [ "$#" -eq 1 ] && [ "$1" = plan ] || usage
