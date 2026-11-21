@@ -85,6 +85,7 @@ tests/merge_base_moved_test.sh	lib,py	rewrite-from-outside		helpers-ci-gate
 tests/merge_base_update_test.sh	lib	rewrite-from-outside		port-merge
 tests/merge_base_update_wait_test.sh	lib	rewrite-from-outside		port-wait-pr
 tests/merge_board_root_test.sh	lib	rewrite-from-outside		port-next
+tests/merge_ci_budget_test.sh	lib,py,python3-stub	rewrite-from-outside		helpers-ci-gate
 tests/merge_guard_test.sh	py,python3-stub	rewrite-from-outside		helpers-shared
 tests/merge_lock_test.sh	lib	rewrite-from-outside		port-merge
 tests/merge_note_test.sh	lib	rewrite-from-outside		port-board-readers

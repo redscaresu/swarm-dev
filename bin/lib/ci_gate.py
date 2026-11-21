@@ -1,7 +1,7 @@
 import calendar, json, os, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
-CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
+CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR, CI_COVERED = 0, 1, 2, 3, 4   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
 UNLISTED = 4   # behind's exit when the compare cannot list what the base gained (merge.sh's BEHIND_UNLISTED)
 # A gh error worth retrying, as merge.sh's WAIT_PR_TRANSIENT: matched against gh's own words only.
 TRANSIENT = re.compile(r"\b(rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234]))\b")
@@ -726,7 +726,98 @@ def by_rule(req, runs, items):
     return ([r for r in items if is_req(r, req)], [r for r in items if not is_req(r, req)] + runs,
             [c for c, a in req if not any(is_req(r, [(c, a)]) for r in items)])
 
-def main_ci(repo, sha, base, n, changed, secs, poll, grace):
+def ci_state(runs, items):
+    """What main_ci's next_poll compares between reads: each workflow run, check run and status, with its
+    status and conclusion, so a run that starts or ends changes it."""
+    return sorted((str(r.get("id") or r.get("html_url") or r.get("name")), str(r.get("status")), str(r.get("conclusion")))
+                  for r in runs + items)
+
+def next_poll(last, poll, cap, before, now):
+    """The seconds before main_ci's next read: poll when what it read changed since the read before
+    (before is None on the first read), else twice last, up to cap (never under poll)."""
+    if before is None or before != now:
+        return poll
+    return min(max(last * 2, poll), max(cap, poll))
+
+def alive(pid):
+    """Whether process pid runs (one another user owns counts); never a group, so pid must be over 0."""
+    if not (isinstance(pid, int) and pid > 0):
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OverflowError, ValueError):
+        return False
+    return True
+
+def wait_record(waits, rec):
+    """Write main_ci's record of its wait (rec) to waits/<sha>-<pid>.json, through a temp file so a reader
+    never sees half of it, and return its path."""
+    os.makedirs(waits, exist_ok=True)
+    path = os.path.join(waits, "%s-%d.json" % (rec["sha"], os.getpid()))
+    with open(path + ".tmp", "w") as fh:
+        json.dump(rec, fh)
+    os.replace(path + ".tmp", path)
+    return path
+
+def covering(waits, mine, ahead):
+    """Another live wait in waits, on the same repo and base, whose commit is ahead of mine (it holds
+    mine, read once per commit through the compare API into ahead) and whose expected workflows include
+    mine's: that wait's record, else None. A compare that fails is read again on the next poll."""
+    try:
+        names = sorted(os.listdir(waits))
+    except OSError:
+        return None
+    for f in names:
+        if not f.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(waits, f)) as fh:
+                r = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not (isinstance(r, dict) and r.get("repo") == mine["repo"] and r.get("base") == mine["base"]
+                and isinstance(r.get("sha"), str) and r["sha"] != mine["sha"] and isinstance(r.get("want"), list)
+                and set(mine["want"]) <= set(r["want"]) and isinstance(r.get("pid"), int) and alive(r["pid"])):
+            continue
+        if r["sha"] not in ahead:
+            try:
+                d = json.loads(gh("api", "repos/%s/compare/%s...%s" % (mine["repo"], mine["sha"], r["sha"])))
+                ahead[r["sha"]] = isinstance(d, dict) and d.get("status") == "ahead" and d.get("behind_by") == 0
+            except (Err, ValueError):
+                continue
+        if ahead[r["sha"]]:
+            return r
+    return None
+
+def main_ci(repo, sha, base, n, changed, secs, poll, grace, cap=None, waits=None):
+    """main_wait's wait, with no record of it when waits is empty or None (see main_wait)."""
+    if not waits:
+        return main_wait(repo, sha, base, n, changed, secs, poll, grace, cap, None)
+    mine = {"repo": repo, "base": base, "sha": sha, "pr": str(n), "pid": os.getpid(), "want": None}
+    path = None
+    try:
+        try:
+            path = wait_record(waits, mine)
+        except OSError as e:
+            print("warning: cannot record this wait in %s (%s), so no newer merge's wait can cover it" % (waits, e), file=sys.stderr)
+        return main_wait(repo, sha, base, n, changed, secs, poll, grace, cap, (waits, mine, path))
+    finally:
+        if path:
+            for p in (path, path + ".tmp"):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            try:
+                os.rmdir(waits)
+            except OSError:
+                pass
+
+def main_wait(repo, sha, base, n, changed, secs, poll, grace, cap, shared):
     """The merge commit needs no check run of its own: the expected workflows are what must run.
     With none expected, ok waits out grace seconds, so an app's checks or a status that appear just
     after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error.
@@ -739,8 +830,16 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
     finished (a red whose run, or rerun, outlasts the wait is red), with a fresh wait of secs; a transient gh error on the rerun
     is a missed poll, READ_TRIES in a row an error. ok then has a flaky line (flaky <run id> <attempt
     that failed> <its red checks>) per run whose rerun went green. A red line may have a second,
-    note: <why>, for a rerun that failed too, was refused or is under way."""
+    note: <why>, for a rerun that failed too, was refused or is under way.
+    It reads every poll seconds at first, and twice as long after each read that finds nothing
+    changed (next_poll), up to cap seconds (poll when None); a run that starts or ends brings it back
+    to poll. shared, when not None, is (waits dir, this wait's record, its path or None): once the
+    expected workflows are read they go in the record, and before each later read, a newer merge's
+    live wait that covers this one (covering) ends it, covered <its sha> <its PR> (CI_COVERED), so
+    only the base's newest merge reads CI on it."""
     want, start, missed, rerun_missed = None, time.time(), 0, 0
+    interval, before, ahead = poll, None, {}
+    cap = poll if cap is None else cap
     end, settled = start + secs, start + min(grace, secs)
     req, why = required(repo, base)
     if why:
@@ -749,17 +848,29 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
     # or its rerun not started; known: (run id, red line) of a rerun not finished; going: runs not finished
     again, stale, held, going, absent, known = {}, set(), [], set(), [], []
     while True:
+        if shared and want is not None:
+            r = covering(shared[0], shared[1], ahead)
+            if r:
+                return CI_COVERED, "covered %s %s" % (r["sha"], r.get("pr") or "-")
         try:
             if want is None:
                 want = expected(repo, sha, base, n, changed)
+                if shared and shared[2]:
+                    shared[1]["want"] = want
+                    try:
+                        wait_record(shared[0], shared[1])
+                    except OSError:
+                        pass
             runs, items = ci_items(repo, sha)
         except Err as e:
             missed += 1
             if missed == READ_TRIES:
                 raise Err("%s (%d reads in a row failed)" % (e, missed))
             wait = ["a read failed: %s" % e]
+            now = before
         else:
             missed = 0
+            now = ci_state(runs, items)
             # A rerun run reads pending until its new attempt shows, and its old red checks until they change.
             runs = [dict(r, status="rerun requested") if r.get("id") in again and (r.get("run_attempt") or 0) <= again[r["id"]][0] else r
                     for r in runs]
@@ -820,7 +931,8 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             if held or known:
                 return CI_RED, red_line(held + [x for _, x in known], [], sorted({i for i, _ in known} | (going & set(again))))
             return CI_TIMEOUT, "timeout (%s)" % "; ".join(wait + ["%s (required, no run on %s)" % (c, sha[:7]) for c in absent])
-        time.sleep(poll)
+        interval, before = next_poll(interval, poll, cap, before, now), now
+        time.sleep(max(0, min(interval, end - time.time())))
 
 def red_line(red, failed, under, refused=""):
     """main_ci's red: red <checks>, then note: <why> when the runs failed were rerun and failed too, a
@@ -950,7 +1062,8 @@ if __name__ == "__main__":
                 raise Err("gh listed no files, or fewer than the PR changes")
             print("\n".join(files))
         else:
-            rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
+            rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]),
+                              float(args[7]) if len(args) > 7 and args[7] else None, args[8] if len(args) > 8 else None)
             print(msg)
             sys.exit(rc)
     except Exception as e:
