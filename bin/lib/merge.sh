@@ -1172,7 +1172,8 @@ short_shas() {
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
 # passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
 # hooks/ or a root Makefile, and in this plugin's own repo internal/guard/, internal/merge/,
-# internal/release/, internal/agentenv/ or .claude-plugin/, a renamed file's old path too), which only
+# internal/release/, internal/agentenv/, internal/layers/ or .claude-plugin/, a renamed file's old path
+# too), which only
 # the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing; and, under either merge mode, it sets
 # no epic active with no ticket, or above the stage the base allows (epic_guard, read at the pinned

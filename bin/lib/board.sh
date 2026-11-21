@@ -2509,9 +2509,12 @@ plan_hld() {
 
 # OWN_PROTECTED — the paths only the user changes in this plugin's own repo, on top of the ones every
 # repo has (protected_paths): the four Go packages that hold its guard, merge, release and agent-start
-# rules, and its plugin manifests. An extended regex of whole directories, each with its trailing slash,
-# so internal/guardian/ is none of them.
-OWN_PROTECTED='internal/guard/|internal/merge/|internal/release/|internal/agentenv/|\.claude-plugin/'
+# rules, and its plugin manifests. internal/layers/ too: its Go checks keep those rules inside the four,
+# so a PR that could change it unheld could move a rule out of them and widen a check's short list in
+# one diff. internal/iface/ is not here: every port adds methods to it, so every port PR would wait for
+# the user. An extended regex of whole directories, each with its trailing slash, so internal/guardian/
+# and internal/layersx/ are none of them.
+OWN_PROTECTED='internal/guard/|internal/merge/|internal/release/|internal/agentenv/|internal/layers/|\.claude-plugin/'
 
 # own_repo <owner/repo> — whether <owner/repo> is this plugin's own repo (plugin_repo), both in lower
 # case, since a PR URL keeps the case it was written in: exit 0 when it is, 1 when it is not, and 2 when
