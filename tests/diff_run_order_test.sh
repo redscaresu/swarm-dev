@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # diff_run_order_test.sh — tests/diff_run.sh's order of stub calls, on two copies of the harness at
 # different paths. (1) Three fixtures whose gh calls from the background land at a random point among
-# the foreground's (an anonymous `( ... ) &` subshell, a detached `nohup bash swarm.sh ... &` run and
-# a setsid'd run, launched as bin/lib/lifecycle.sh launches its own) compare clean ten runs in ten,
-# each step in a stream of its own, and each is red under one global order (the harness changed to
-# put every call on calls:fg). (2) Two foreground calls swapped in one copy are red on calls:fg, and
+# the foreground's (an anonymous `( ... ) &` subshell, a detached `nohup bash swarm.sh ... &` run, a
+# setsid'd run launched as bin/lib/lifecycle.sh launches its own, and such a run started from inside a
+# subshell the command waits on at once, as bin/swarm.sh's dispatch starts lifecycle.sh's) compare
+# clean ten runs in ten, each step in a stream of its own, and each is red under one global order
+# (the harness changed to put every call on calls:fg). A job the command joins later with a plain
+# wait, after a call of its own, is a step, clean ten runs in ten. (2) Two foreground calls swapped in one copy are red on calls:fg, and
 # two calls swapped within a background step are red on that step, by its label. (3) A stub whose
 # answer alternates by run is red under --times 2, run 2 against run 1, and clean under --times 1.
 # A setsid'd step whose calls come a second after the command exits is waited for, and a setsid'd
@@ -49,6 +51,10 @@ cat > "${A}/tests/diff_fixtures_order.sh" <<'FX'
 fx_order_sub() { FX_CMD=(bash "${TREE}/sub.sh"); }
 fx_order_det() { FX_CMD=(bash "${TREE}/det.sh"); }
 fx_order_set() { FX_CMD=(bash "${TREE}/set.sh"); }
+# A setsid'd run that a waited subshell starts, as bin/swarm.sh's dispatch starts bin/lib/lifecycle.sh's.
+fx_order_dispatch() { FX_CMD=(bash "${TREE}/dispatch.sh"); }
+# A job the command joins later, with a call of its own before the plain wait.
+fx_order_join() { FX_CMD=(bash "${TREE}/join.sh"); }
 fx_order_setlate() { FX_CMD=(bash "${TREE}/setlate.sh"); }
 fx_order_nest() { FX_CMD=(bash "${TREE}/nest.sh"); }
 fx_order_gone() { FX_CMD=(bash "${TREE}/gone.sh"); }
@@ -89,7 +95,8 @@ trees() {
   for t in "${A}" "${B}"; do
     { echo '('; step_calls sub; echo ') > /dev/null 2>&1 &'; fg_calls; } > "${t}/sub.sh"
     { echo 'case "$1" in'; echo 'det) :'; step_calls det; echo ';;'; echo 'set) :'; step_calls set; echo ';;'
-      echo 'late) sleep 1; gh api late-1 > /dev/null 2>&1; gh api late-2 > /dev/null 2>&1 ;;'; echo 'esac'; } > "${t}/bin/swarm.sh"
+      echo 'late) sleep 1; gh api late-1 > /dev/null 2>&1; gh api late-2 > /dev/null 2>&1 ;;'
+      echo 'disp) :'; step_calls disp 1 2; echo 'sleep 1'; echo 'gh api disp-3 > /dev/null 2>&1 ;;'; echo 'esac'; } > "${t}/bin/swarm.sh"
     { echo 'nohup bash "$(dirname "$0")/bin/swarm.sh" det < /dev/null > /dev/null 2>&1 &'; fg_calls; } > "${t}/det.sh"
     { echo "nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \\"
       echo '  bash "$(dirname "$0")/bin/swarm.sh" set < /dev/null > /dev/null 2>&1 &'; fg_calls; } > "${t}/set.sh"
@@ -111,6 +118,17 @@ trees() {
     chmod +x "${t}/alt-stub"; rm -f "${t}/count"
     printf '#!/usr/bin/env bash\necho "stub: $*"\n' > "${t}/bash-stub"; chmod +x "${t}/bash-stub"
     printf '#!/usr/bin/env bash\ngh "$@" <&0 &\nwait "$!"\n' > "${t}/bin/gh-wrap"
+    # The command waits at once on a subshell (bin/swarm.sh runs its dispatch so), which starts a
+    # setsid'd run and goes on with its own calls through the gh-shim-like wrapper meanwhile; the run's
+    # last call comes after the command exits.
+    { echo '('; echo '  bash "$(dirname "$0")/bin/gh-wrap" api d-1 > /dev/null 2>&1'
+      echo "  nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \\"
+      echo '    bash "$(dirname "$0")/bin/swarm.sh" disp < /dev/null > /dev/null 2>&1 &'
+      echo '  for c in d-2 d-3 d-4; do bash "$(dirname "$0")/bin/gh-wrap" api "${c}" > /dev/null 2>&1; sleep 0.1; done'
+      echo ') & wait $!'; echo 'gh api d-5 > /dev/null 2>&1'; echo 'exit 0'; } > "${t}/dispatch.sh"
+    # Its first call lands during the command's own call on some runs and during the wait on others.
+    { echo '('; echo '  sleep "$((RANDOM % 2)).$((RANDOM % 10))"'; echo '  gh api join-1 > /dev/null 2>&1'; echo '  gh api join-2 > /dev/null 2>&1'
+      echo ') > /dev/null 2>&1 &'; echo 'gh api f-1 > /dev/null 2>&1'; echo 'wait'; echo 'exit 0'; } > "${t}/join.sh"
     wrap "${t}" w-1 w-2 w-3
   done
   # A background bash that runs exec gh: on a's side while the command still runs, on b's once it has
@@ -166,15 +184,15 @@ done
 # (1), and the step that ends early or late: three runs at once, each mostly asleep.
 trees
 K="${ROOT}/keep" KS="${ROOT}/keep-step" KL="${ROOT}/keep-late" KN="${ROOT}/keep-nest"
-start "${ROOT}/clean" "${A}/tests/diff_run.sh" --times 10 --keep "${K}" "${A}" "${B}" order_sub order_det order_set
-start "${ROOT}/global" "${GLOBAL}" --times 10 "${A}" "${B}" order_sub order_det order_set
+start "${ROOT}/clean" "${A}/tests/diff_run.sh" --times 10 --keep "${K}" "${A}" "${B}" order_sub order_det order_set order_dispatch order_join
+start "${ROOT}/global" "${GLOBAL}" --times 10 "${A}" "${B}" order_sub order_det order_set order_dispatch
 start "${ROOT}/step" "${A}/tests/diff_run.sh" --times 10 --keep "${KS}" "${A}" "${B}" order_step
 start "${ROOT}/late" "${A}/tests/diff_run.sh" --times 2 --keep "${KL}" "${A}" "${B}" order_setlate
 start "${ROOT}/nest" "${A}/tests/diff_run.sh" --times 3 --keep "${KN}" "${A}" "${B}" order_nest order_gone order_within order_exec order_solo
 finish
-if [[ "$(rc_of "${ROOT}/clean")" == 0 ]]; then ok "three fixtures with background steps compare clean ten runs in ten"
-else bad "three fixtures with background steps compare clean ten runs in ten" "exit $(rc_of "${ROOT}/clean"): $(cat "${ROOT}/clean")"; fi
-for fx in sub det set; do
+if [[ "$(rc_of "${ROOT}/clean")" == 0 ]]; then ok "the fixtures with background steps compare clean ten runs in ten"
+else bad "the fixtures with background steps compare clean ten runs in ten" "exit $(rc_of "${ROOT}/clean"): $(cat "${ROOT}/clean")"; fi
+for fx in sub det set dispatch join; do
   if grep -qxF "same order_${fx}" "${ROOT}/clean"; then ok "order_${fx} ran clean"; else bad "order_${fx} ran clean" "no 'same order_${fx}' line"; fi
 done
 # Each step's calls in a stream of their own, the foreground's on calls:fg, on both sides.
@@ -188,9 +206,23 @@ for side in a b; do
     else bad "order_${fx}'s step has a stream of its own (${side})" "steps: $(cat "${K}/order_${fx}/${side}/steps" 2>/dev/null), calls:fg: $(field "${K}/order_${fx}/${side}/calls:fg" 2>/dev/null)"; fi
   done
 done
+# The waited subshell is on the foreground path, and the setsid'd run it started is a step of its own,
+# its call after the command exited included.
+for side in a b; do
+  if [[ "$(field "${K}/order_dispatch/${side}/calls:fg")" == "gh api d-1;gh api d-2;gh api d-3;gh api d-4;gh api d-5;" \
+    && "$(cat "${K}/order_dispatch/${side}/steps" 2>/dev/null)" == "[bash <tree>/bin/swarm.sh disp] gh api disp-1" \
+    && "$(field "${K}/order_dispatch/${side}/step.1")" == "gh api disp-1;gh api disp-2;gh api disp-3;" ]]; then
+    ok "a setsid'd run a waited subshell starts is a step of its own (${side})"
+  else bad "a setsid'd run a waited subshell starts is a step of its own (${side})" \
+    "calls:fg: $(field "${K}/order_dispatch/${side}/calls:fg"), steps: $(cat "${K}/order_dispatch/${side}/steps" 2>/dev/null)"; fi
+done
+# A job joined later by a plain wait, after a call of the command's own, is a step whenever its calls come.
+if [[ "$(field "${K}/order_join/a/calls:fg")" == "gh api f-1;" && "$(cat "${K}/order_join/a/steps" 2>/dev/null)" == "[bash <tree>/join.sh] gh api join-1" ]]; then
+  ok "a job the command joins later is a step"
+else bad "a job the command joins later is a step" "calls:fg: $(field "${K}/order_join/a/calls:fg"), steps: $(cat "${K}/order_join/a/steps" 2>/dev/null)"; fi
 if [[ "$(rc_of "${ROOT}/global")" == 1 ]]; then ok "under one global order the run is red"
 else bad "under one global order the run is red" "exit $(rc_of "${ROOT}/global"): $(cat "${ROOT}/global")"; fi
-for fx in sub det set; do
+for fx in sub det set dispatch; do
   if grep -q "^DIFF order_${fx} calls:fg" "${ROOT}/global"; then ok "order_${fx} is red under one global order"
   else bad "order_${fx} is red under one global order" "no DIFF order_${fx} calls:fg line in: $(cat "${ROOT}/global")"; fi
 done

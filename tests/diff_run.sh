@@ -58,27 +58,40 @@
 # when: bash and sh start each `&` job with SIGINT and SIGQUIT ignored, and the shim reads that from
 # its own process, so a call inside a `( ... ) &` subshell, a `nohup ... &` run or a setsid'd one is
 # a background call whether its step ends before the command exits or after. A call with either as
-# it was is a foreground call, so `trap '' INT` alone moves none. The shim also logs the call's chain of ancestor pids, up to the command's own
-# (or to the top of the run's processes, once that has exited). No other process's signals can be
-# read on macOS, so the run learns them two ways: BASH_ENV runs a probe as each bash starts (a
-# script, bash -c, bin/gh-shim/gh; a subshell is a fork and runs none), which logs whether it started
-# with both ignored; and every process in a foreground call's chain is on the foreground path. A
-# background call whose parent is known to start on the foreground path, and is not the command, is
-# that parent's own `&` job, a foreground call: bin/gh-shim/gh starts every real gh so, and waits on
-# it. Its own pid must not have begun as a background bash that then ran exec gh. Any other
-# background call's step is the process just below its lowest ancestor known to be on the
-# foreground path (the command is), or the chain's top. A step is labelled by that process's argv
-# (the command's pid in it masked as <pid>) and its first call, and steps are matched by label, never
-# by position; two steps with one label are told apart by their calls. A call the run cannot place
-# is red (UNPLACED): one whose chain the shim could not read, and a foreground call made after the
-# command exited by a process that did not start in the background.
-# How some shapes are placed (bin/ and hooks/ have the first two, and none of the last three):
-#   - A subshell waited on at once (`( ... ) & wait $!`, as bin/lib/merge.sh runs reconcile and
-#     story_note) has its calls on calls:fg, in place: a step whose parent, at the step's first call,
-#     sleeps with that step as its only child is taken as waited on; where /proc names what it sleeps
-#     in (Linux), only a wait counts, and the parent's own list of children is read. A parent that has not yet reached its wait by then (the step
-#     has forked and started a gh by that time) would leave it a step of its own, and on macOS one
-#     blocked in a read with that step its only child would make the step look waited on.
+# it was is a foreground call, so `trap '' INT` alone moves none. The shim also logs the call's chain
+# of ancestor pids, up to the command's own (or to the top of the run's processes, once that has
+# exited), and marks each process its parent was waiting on: one whose parent sleeps in a wait with
+# it as its youngest child (bash forks a foreground command, then waits, so its newest child is the
+# one it waits on and an `&` job it forked earlier is older). No other process's signals can be read
+# on macOS, so the run learns them two ways: BASH_ENV runs a probe as each bash starts (a script,
+# bash -c, bin/gh-shim/gh; a subshell is a fork and runs none), which logs whether it started with
+# both ignored; and every process in a foreground call's chain is on the foreground path. A
+# background call's chain is walked down from the command, past each process on the foreground
+# path: one known so, or one its parent waited on. The first process past them is the call's step,
+# so a subshell the command waits on at once (as swarm.sh runs its dispatch) is a boundary, and a run
+# it starts in the background is a step of its own. With none past them, the call is a foreground
+# call. A leaf that is that first process, below a process on the foreground path that is not the
+# command, is that process's own `&` job, a foreground call: bin/gh-shim/gh starts every real gh so,
+# and waits on it. Its own pid must not have begun as a background bash that then ran exec gh. A
+# step is labelled by its process's argv (the command's pid in it masked as <pid>) and its first
+# call, and steps are matched by label, never by position; two steps with one label are told apart
+# by their calls. A call the run cannot place is red (UNPLACED): one whose chain the shim could not
+# read, and a foreground call made after the command exited by a process that did not start in the
+# background.
+# How some shapes are placed (bin/ and hooks/ have the first three, and none of the last three):
+#   - A subshell waited on at once (`( ... ) & wait $!`, as bin/swarm.sh runs dispatch and
+#     bin/lib/merge.sh runs reconcile and story_note) is on the foreground path, its calls on calls:fg
+#     in place. Where /proc names what its parent sleeps in (Linux), only a wait counts, and the
+#     parent's own list of children is read. A parent that has not yet reached its wait by the
+#     subshell's first call (the subshell has forked and started a gh by that time) would leave it a
+#     step of its own, and on macOS a parent blocked in a read with that subshell its youngest child
+#     would make it look waited on. A job the parent joins later is a step: one whose parent made a
+#     call through a newer child before its last call (`( ... ) & gh ...; wait`) was not waited on at
+#     once. One joined with no such call in between (`( ... ) & sleep 1; wait`) is placed by when its
+#     first call comes.
+#   - A run that such a subshell starts in the background (bin/lib/lifecycle.sh's nohup'd and setsid'd
+#     runs, which swarm.sh's dispatch starts, and note_wake_later's subshell) is a step of its own,
+#     labelled by its argv, and keeps its calls made after the command exits.
 #   - A `gh ... &` the command itself runs is a step (hooks/agent-state.sh runs herdr so, unwaited);
 #     one that a bash below the command runs and never waits on would be a foreground call.
 #   - A waited `gh ... &` that a shell other than bash runs is a step: only bash runs the probe.
@@ -287,7 +300,7 @@ normalize() {
 # escapes it.
 # Each line starts with the call's place: bg or fg (its own SIGINT and SIGQUIT both ignored or
 # not), a tab, its chain of pids from its own up (each "<pid>=w" when its parent sleeps
-# with it as its only child), ending in "top" when the chain reached the command's pid (in
+# in a wait with it as its youngest child), ending in "top" when the chain reached the command's pid (in
 # <meta>/group) or "-" when it stopped at a process outside the run first, and a tab; or "?", a tab
 # and "?" when the chain could not be read. Each pid in the chain goes to
 # <meta>/procs too, with its parent then and its argv: "<pid>\t<ppid>\t<argv>" lines.
@@ -335,7 +348,7 @@ place="$("${PERL}" -e '
   if (open(my $f, "<", $gf)) { $g = <$f> // ""; chomp $g; close $f }
   open(my $l, "-|", $ps, "-ww", "-A", "-o", "pid=,ppid=,pgid=,stat=,args=") or exit 1;
   my (%up, %grp, %stat, %argv, %kids);
-  while (<$l>) { chomp; s/^\s+//; my ($p, $u, $pg, $st, $a) = split /\s+/, $_, 5; ($up{$p}, $grp{$p}, $stat{$p}, $argv{$p}) = ($u, $pg, $st, $a // ""); $kids{$u}++ }
+  while (<$l>) { chomp; s/^\s+//; my ($p, $u, $pg, $st, $a) = split /\s+/, $_, 5; ($up{$p}, $grp{$p}, $stat{$p}, $argv{$p}) = ($u, $pg, $st, $a // ""); push @{$kids{$u}}, $p }
   close $l or exit 1;
   # Up to the command, whatever groups the chain crosses; past pid 1 or a missing parent it is the
   # chain of an orphan, cut where the group rule first fails.
@@ -361,14 +374,17 @@ place="$("${PERL}" -e '
   open(my $o, ">>", $pf) or exit 1;
   print $o join("", map { "$_\t$up{$_}\t$argv{$_}\n" } @chain);
   close $o or exit 1;
-  # A process whose parent sleeps with it as its only child is waited on, as `( ... ) & wait $!` leaves
-  # it: "<pid>=w". Where /proc names what the parent sleeps in (Linux), the parent itself is read, not
-  # ps: ps reads /proc one process at a time, so a child forked meanwhile can be missing. The parent
-  # must be in a wait before and between two reads of its own list of children, and both must be
-  # this one process; a parent blocked in a read or a FIFO open is not waiting. Where /proc names
-  # nothing (macOS, whose ps reads the whole table at once, or a kernel that hides it), sleeping with
-  # it as its only child is enough.
+  # A process is waited on when its parent sleeps in a wait and it is the youngest child of that parent (the
+  # highest pid): bash forks a foreground command and then waits, so its newest child is the one it
+  # waits on, and an `&` job it forked earlier is older. `( ... ) & wait $!` leaves its subshell so too:
+  # "<pid>=w". Where /proc names what the parent sleeps in (Linux), the parent itself is read, not ps:
+  # ps reads /proc one process at a time, so a child forked meanwhile can be missing. The parent must
+  # be in a wait before and between two reads of its own list of children, and this process must be
+  # the youngest in both; a parent blocked in a read or a FIFO open is not waiting. Where /proc names
+  # nothing (macOS, whose ps reads the whole table at once, or a kernel that hides it), the snapshot
+  # is read the same way, a sleeping parent taken as waiting.
   sub slurp { my ($f) = @_; open(my $h, "<", $f) or return ""; my $c = join("", <$h>); close $h; return $c }
+  sub youngest { my $y = -1; for (@_) { $y = $_ if $_ =~ /^\d+$/ && $_ > $y } return $y }
   sub waited_on {
     my ($u, $child) = @_;
     my $w1 = slurp("/proc/$u/wchan");
@@ -376,13 +392,13 @@ place="$("${PERL}" -e '
       return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4)/;
       my $cf = "/proc/$u/task/$u/children";
       if (-e $cf) {
-        # The list the kernel keeps holds a child not yet reaped too. Read twice around a second wchan, so a
-        # child forked or reaped between two reads shows in one of them.
-        my $one = sub { my @k = split " ", slurp($cf); @k == 1 && $k[0] eq $child };
+        # The list the kernel keeps holds a child not yet reaped too. Read twice around a second wchan,
+        # so a child forked or reaped between two reads shows in one of them.
+        my $one = sub { youngest(split " ", slurp($cf)) eq $child };
         return $one->() && slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4)/ && $one->() ? 1 : 0;
       }
     }
-    return ($stat{$u} // "") =~ /^S/ && ($kids{$u} // 0) == 1 ? 1 : 0;
+    return ($stat{$u} // "") =~ /^S/ && youngest(@{$kids{$u} // []}) eq $child ? 1 : 0;
   }
   print "$flag\t", join(" ", (map { waited_on($up{$_} // "", $_) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
 [[ "${place}" == [bf]g$'\t'* ]] || place=$'?\t?'
@@ -451,21 +467,19 @@ watch_group() {
 # place_calls <meta> <command pid> — split the calls in <meta>/calls by their place: <meta>/fg the
 # foreground calls, in order; <meta>/steps one block per background step, in the order the steps
 # made their first calls, each an "@@ [<argv>] <first call>" line and then the step's calls in order;
-# and <meta>/unplaced a "<call>\t<why>" line for each call the run cannot place. A process is known to
-# start on the foreground path when it is the command, a bash that <meta>/starts says started with
-# SIGINT or SIGQUIT as it was, or in a foreground call's chain above its own pid. A background call whose parent
-# is known so, and is not the command, is its parent's own `&` job (bin/gh-shim/gh starts the real gh
-# so, and waits on it): a foreground call, unless its own pid began as a background bash that exec'd
-# gh. Any other background call's step is the process in its chain just below the lowest known one,
-# or the chain's top; a step whose root was marked waited on (=w) at its first call is on the
-# foreground path, its calls in place. A chain the shim cut short, as a process above it had exited,
-# goes on through each top's parent as first seen (in <meta>/procs or <meta>/starts), so a worker
-# whose launcher exits keeps the launcher's step.
+# and <meta>/unplaced a "<call>\t<why>" line for each call the run cannot place. A process is on the
+# foreground path when it is the command, a bash that <meta>/starts says started with SIGINT or
+# SIGQUIT as it was, a process in a foreground call's chain, or one marked waited on (=w) by the first
+# call that saw it. A background call's step is the first process of its chain, walked down from the
+# command, that is none of these; with none, or with only its leaf below a process on the foreground
+# path that is not the command, it is a foreground call. A chain the shim cut short, as a process
+# above it had exited, goes on through each top's parent as first seen (in <meta>/procs or
+# <meta>/starts), so a worker whose launcher exits keeps the launcher's step.
 place_calls() {
   # shellcheck disable=SC2016 # perl's own variables
   DR_TOP="$2" perl -e '
     my $m = shift; my $g = $ENV{DR_TOP};
-    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, %waited_step, @order);
+    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, %waited_first, @order);
     if (open(my $f, "<", "$m/procs")) { while (<$f>) { chomp; my ($p, $u, $a) = split /\t/, $_, 3; $argv{$p} //= $a // ""; $first_up{$p} //= $u if ($u // 0) > 1 } }
     if (open(my $f, "<", "$m/starts")) {
       my %starts;
@@ -491,43 +505,59 @@ place_calls() {
       push @calls, { flag => $flag, chain => \@c, waited => \%w, end => $end // "", call => $call // "" };
     }
     for my $c (@calls) { next unless $c->{flag} eq "fg"; $fg_proc{$_} = 1 for @{$c->{chain}} }
-    for my $c (@calls) {
-      next unless $c->{flag} eq "bg";
-      my @ch = @{$c->{chain}};
-      # The command itself is no such parent: its own `gh ... &` or `(gh ...) &` (hooks/agent-state.sh
-      # runs herdr so) is a step, whether the command has exited by the call or not.
-      my $up = @ch > 1 ? $ch[1] : "";
-      # A leaf that began as a background bash and then ran exec gh (as bash -c "...; exec gh ..." & does) is not the `&`
-      # job of its parent: it stays a background call.
-      $c->{path} = "fg" if $up ne "" && $fg_proc{$up} && !(@ch && $bg_start{$ch[0]});
+    # Whether each process was waited on, as the first call that saw it found it. A parent waiting on
+    # a process at once forks nothing until it ends, so one whose parent made a call through a newer
+    # child (a higher pid) before its own last call was joined later (`( ... ) & gh ...; wait`), not
+    # waited on at once: it stays off the foreground path, whenever its first call came.
+    my (%parent, %last, @kid_calls);
+    for my $n (0 .. $#calls) {
+      my @ch = @{$calls[$n]{chain}};
+      for my $i (0 .. $#ch) {
+        $waited_first{$ch[$i]} //= $calls[$n]{waited}{$ch[$i]} ? 1 : 0;
+        $last{$ch[$i]} = $n;
+        my $u = $i < $#ch ? $ch[$i + 1] : ($calls[$n]{end} eq "top" ? $g : undef);
+        next unless defined $u;
+        $parent{$ch[$i]} //= $u;
+        push @kid_calls, [$u, $ch[$i], $n];
+      }
     }
-    for my $c (@calls) { next unless ($c->{path} // "") eq "fg" && $c->{flag} eq "bg"; my @ch = @{$c->{chain}}; $fg_proc{$_} = 1 for @ch[1 .. $#ch] }
+    for my $k (@kid_calls) {
+      my ($u, $e, $n) = @$k;
+      for my $x (keys %waited_first) {
+        next unless $waited_first{$x} && ($parent{$x} // "") eq $u && $e > $x && $n < $last{$x};
+        $waited_first{$x} = 0;
+      }
+    }
     open(my $fg, ">", "$m/fg") or die "diff_run: cannot write $m/fg\n";
     open(my $un, ">", "$m/unplaced") or die "diff_run: cannot write $m/unplaced\n";
     for my $c (@calls) {
       my ($chain, $end, $call) = ($c->{chain}, $c->{end}, $c->{call});
-      my $path = $c->{path} // ($c->{flag} eq "fg" || $c->{flag} eq "bg" ? $c->{flag} : "?");
+      my $path = $c->{flag} eq "fg" || $c->{flag} eq "bg" ? $c->{flag} : "?";
+      my $root;
+      if ($path eq "bg") {
+        if ($end ne "top") {
+          my %in = map { $_ => 1 } @$chain;
+          my $u;
+          while (@$chain && defined($u = $first_up{$chain->[-1]}) && $u ne $g && !$in{$u}++) { push @$chain, $u }
+        }
+        # Down from the command, past each process on the foreground path: one known so, or one its
+        # parent waited on (a waited subshell, the dispatch of swarm.sh among them, is a boundary, so a
+        # run it starts in the background is a step of its own). The first process past them is the
+        # step. A leaf that is that first one, below a process on the foreground path that is not the
+        # command, is the own `&` job of that process (bin/gh-shim/gh starts the real gh so, and waits on
+        # it): a foreground call. A `gh ... &` of the command itself (hooks/agent-state.sh runs herdr so) is
+        # a step, whether the command has exited by the call or not, and so is a leaf that began as a
+        # background bash and then ran exec gh (as bash -c "...; exec gh ..." & does).
+        my $k = $#$chain;
+        $k-- while $k >= 0 && ($fg_proc{$chain->[$k]} || $waited_first{$chain->[$k]});
+        if ($k < 0 || ($k == 0 && @$chain > 1 && !$bg_start{$chain->[0]})) { $path = "fg" } else { $root = $chain->[$k] }
+      }
       if ($path eq "fg") {
         if ($end eq "top") { print $fg "$call\n" }
         else { print $un "$call\tits process outlived the command but did not start in the background\n" }
         next;
       }
       if ($path ne "bg") { print $un "$call\tthe shim could not read its chain of pids\n"; next }
-      if ($end ne "top") {
-        my %in = map { $_ => 1 } @$chain;
-        my $u;
-        while (@$chain && defined($u = $first_up{$chain->[-1]}) && $u ne $g && !$in{$u}++) { push @$chain, $u }
-      }
-      my $i = 0; $i++ while $i < @$chain && !$fg_proc{$chain->[$i]};
-      # A leaf pid known on the foreground path too (a pid used twice) names no step.
-      if ($i == 0) { print $un "$call\tno process in its chain of pids starts a background step\n"; next }
-      my $root = $chain->[$i - 1];
-      # A step its parent waited on at its first call is on the foreground path, its calls in place.
-      $waited_step{$root} //= $c->{waited}{$root} ? 1 : 0;
-      if ($waited_step{$root}) {
-        if ($end eq "top") { print $fg "$call\n" } else { print $un "$call\tits waited step outlived the command\n" }
-        next;
-      }
       push @order, $root unless $step{$root};
       push @{$step{$root}}, $call;
     }
