@@ -55,3 +55,43 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Shared rules cited above:**
 - L2: Lead: cut a v0.32.x patch to the prerelease ref as ports merge (HLD:307). If the swarm stalls, revert or fix the port on main, move the ref back and restart the sessions (HLD:433-436). After each patch, and before and after each stable move, the lead checks that stable and prerelease point at their expected tags: the lead and every agent share one gh login, so the ruleset cannot tell an agent's push from the lead's.
+
+## Spike results (release-ref-spike, 2026-11-21)
+
+The lead ran release-ref-spike on the public copy https://github.com/redscaresu/swarm-dev-release-spike, made from swarm-dev's main (c3f732cd) and the tags v0.31.0 to v0.31.3.
+The copy is kept: release-install-proof, release-publish-proof and release-client's real-release check use it.
+Its Dependabot config was removed on the copy's main, so no update PRs open there.
+
+Branches, created before any ruleset and each read back with 200:
+- stable: cfe2a200 (v0.31.2)
+- prerelease: cfe2a200 (v0.31.2)
+- pre-marketplace: ba2d21f2, one orphan commit
+
+The move credential is `github.token`. No `release` environment or `PRERELEASE_PUSH_KEY` is needed.
+With no ruleset, the token's fast-forward of prerelease from v0.31.2 to the copy's main passed, across a range that changes `.github/workflows/` (build-check.yml, ci.yml, go.yml, macos.yml and speed.yml): https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44889504617 (cfe2a200 to c046ae95).
+The workflow (`.github/workflows/ref-move.yml` on the copy's main) runs `gh api -X PATCH repos/<repo>/git/refs/heads/<branch> -f sha=<sha> -F force=<bool>` (or `-X DELETE`) with `permissions: contents: write`.
+
+The rulesets, as GitHub read them back:
+
+```json
+{"id":27788795,"name":"no-delete","enforcement":"active","include":["refs/heads/stable","refs/heads/prerelease","refs/heads/pre-marketplace"],"rules":["deletion"],"bypass":[]}
+{"id":27788796,"name":"locked","enforcement":"active","include":["refs/heads/stable","refs/heads/pre-marketplace"],"rules":["update","non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+{"id":27788798,"name":"prerelease-ff","enforcement":"active","include":["refs/heads/prerelease"],"rules":["non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+{"id":27788799,"name":"main-pr","enforcement":"active","include":["refs/heads/main"],"rules":["pull_request","deletion","non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+```
+
+RepositoryRole 5 is the admin role. main-pr stands in for the real repo's main protection, so a refused push to main can be shown.
+
+Under the rulesets, with `github.token` (each refusal is HTTP 422, and the ref read after it is the SHA read before):
+- Fast-forward prerelease, cfe2a200 to 16332d9b: allowed. https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44889809328
+- Force prerelease back to cfe2a200: refused, "Cannot force-push to this branch". https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890012798 (stays 16332d9b)
+- Update stable to 16332d9b: refused, "Cannot update this protected ref." https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890023805 (stays cfe2a200)
+- Update pre-marketplace to 16332d9b with force: refused, "Cannot update this protected ref." and "Cannot force-push to this branch". https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890036566 (stays ba2d21f2)
+- Fast-forward main to a child commit 042726e0: refused, "Changes must be made through a pull request." https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890045159 (stays 16332d9b)
+- Delete stable, prerelease and pre-marketplace: each refused, "Cannot delete this branch". https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890559397, https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890568489, https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44890580287
+
+As the lead (the admin role), through `gh api`:
+- Force-push prerelease back one commit, 16332d9b to c046ae95 (the rollback): allowed.
+- Delete stable, prerelease and pre-marketplace: each refused, 422 "Cannot delete this branch".
+
+After the tests: main 16332d9b, stable cfe2a200, prerelease c046ae95, pre-marketplace ba2d21f2.
