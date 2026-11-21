@@ -314,8 +314,9 @@ never `[[wikilinks]]`.
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+`go-checks` (`.github/workflows/go.yml`) is required on `main` too: it runs gofmt, go vet, go test and the Go layer checks.
 `macos-tests` (`.github/workflows/macos.yml`) runs `go test ./...` and a small subset of the bash tests on macOS arm64, under macOS's bash 3.2.
-It is not required on `main`, but `swarm.sh merge` waits for it green, as for every workflow a PR runs.
+It is required on `main` too.
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag and, for a numeric `x.y.z` tag, every one is a fix: a patch), the lead cuts a
