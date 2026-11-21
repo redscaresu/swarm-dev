@@ -165,11 +165,12 @@ bin/lib/*.sh          the commands by group (agents, board, build, lifecycle, me
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
-cmd/swarm/            the Go command, the wiring layer; no command is ported yet
+cmd/swarm/            the Go command, the wiring layer: the table of entries by name and the frame bash hands
+                      over (frame.go); no command is ported yet, and wrapper-fixture is for the wrapper's tests
 internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
-                      with no methods yet, and the store's types
+                      the store's two methods for the frame's files and the store's types
 internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
-                      and store/ (.swarm/ and the board's files)
+                      and store/ (.swarm/, the board's files and the frame's die and fields files)
 internal/clock/       the one package that may read the time
 internal/layers/      the Go checks that give each package its layer, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
