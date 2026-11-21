@@ -211,12 +211,17 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
                                             # if its swarm.sh reaches it; an unpinned swarm.sh call stops there
+                                            # before any file runs, it builds ./cmd/swarm once and hands it to every test in SWARMDEV_BIN
+                                            # it needs go on PATH: with no go, or a build that fails, it fails before any file runs
 claude plugin validate .
 ```
 
 Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
 14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
+`make test` needs Go wherever it runs, and so does `scripts/select-tests.sh --run`, which runs make test.
+Each run builds `./cmd/swarm` from the tree it runs in, once, before any test file starts.
+When a test starts a make test of the same tree while the run that built the binary is still going, that make test reuses the binary and builds nothing.
 
 The `speed` job (`.github/workflows/speed.yml`) runs on each PR that is not board-only.
 It installs strace, then runs `tests/speed_run.sh --require-count` with the PR's base as tree a and the PR's merge commit as tree b.
@@ -262,7 +267,10 @@ Development rules for anyone, agent or person, working in this repository:
   too. Use the copy before the PR opens too when you have more than two proofs, or one on a SLOW
   test file.
   In the copy, break the fix, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=`, keep the FAIL
-  lines and delete the copy. Say in the PR that you used the worktree copy. Push what is ready, and
+  lines and delete the copy.
+  make test in the copy builds the copy's own Go, so a fix in Go is tested there too.
+  If the copy's Go does not build, the run fails before any test file starts.
+  Say in the PR that you used the worktree copy. Push what is ready, and
   put further points in the PR body rather than in more pushes. Never use `git checkout` or
   `git restore` on uncommitted work.
 

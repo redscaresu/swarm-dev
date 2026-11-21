@@ -10,6 +10,9 @@ hooks:
 # files in SERIAL one at a time, each with a TMPDIR of its own. It prints a "run" line as a file starts,
 # ok or FAIL with its seconds as it ends, each failed file's output after its phase, and fails if any
 # file failed. swarm.sh's fixed sleeps run at a hundredth (SWARM_SLEEP_SCALE, unless set).
+# Before any file runs, it builds ./cmd/swarm once and hands it to every test in SWARMDEV_BIN, so it
+# needs go on PATH: with no go, or a build that fails, it fails before any file runs. A make test that
+# a test starts of the same tree, while the run that built the binary is going, builds nothing.
 # SERIAL: files whose timing does not hold up beside the others: wait_stall's millisecond slices are
 # timed against a poll that slows under load, review_agent's fast waits against a timeout, and
 # sleep_scale's own make test runs against a 5 s bound.
