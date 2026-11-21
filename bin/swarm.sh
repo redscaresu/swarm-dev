@@ -547,6 +547,8 @@ cut_names() {
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
+# shellcheck source=bin/lib/binary.sh
+source "${SWARM_HOME}/bin/lib/binary.sh"
 # shellcheck source=bin/lib/agents.sh
 source "${SWARM_HOME}/bin/lib/agents.sh"
 # shellcheck source=bin/lib/reports.sh
@@ -605,12 +607,16 @@ hold() {
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
-# dispatch <command> [args] — run one command.
+# dispatch <command> [args] — run one command. A ported command, one with a marker bin/ported/<name>
+# (is_ported), runs in the binary (binary_run), inside this frame: the project, the board and the
+# settings are resolved above, and SWARM_FORBID_PROJECT and the gh shim already apply. Every other
+# name goes to its arm below.
 dispatch() {
   cmd="${1:-}"; shift || true
   # The lead's first command labels its herdr workspace; the test hooks and lead-stop.sh's _step
   # (whose stderr the hook drops, which would hide a refusal) do not.
   [[ "${cmd}" == _* ]] || lead_rename
+  if is_ported "${cmd}"; then binary_run "${cmd}" "$@"; return; fi
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
     agent)  require_herdr; agent_cmd "$@" ;;
@@ -753,8 +759,10 @@ run_time_end() {
   { printf '%s\t%s\t%d.%03d\t%s\n' "${at}" "${cmd}" $((ms / 1000)) $((ms % 1000)) "${load}" >> "${RUN_TIMES_LOG}"; } 2>/dev/null || true
 }
 
-# is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
+# is_command <name> — true when <name> is a ported command (is_ported) or one of dispatch's arms, read
+# off its case statement.
 is_command() {
+  is_ported "$1" && return 0
   awk -v want="$1" '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit 1 }
     d && match($0, /^    [a-z_|-]+\)/) { n = split(substr($0, 5, RLENGTH - 5), a, "|"); for (i = 1; i <= n; i++) if (a[i] == want) exit 0 }' "$0"
 }

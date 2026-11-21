@@ -69,6 +69,23 @@ Every `SWARM_*` variable in a session's environment reaches an agent (`bin/lib/a
 So the set of names is open at runtime.
 swarm-names.tsv lists only the names the code mentions.
 
+## The markers
+
+A ported command has a marker: an empty file `bin/ported/<name>`, named for its dispatch name.
+Names that start with `_` get markers too.
+Each name has a file of its own, so two port PRs never edit the same line.
+`bin/swarm.sh`'s dispatch checks for a marker before its case statement, after the frame is set up.
+It sends a marked name to the binary through `binary_run` in `bin/lib/binary.sh`.
+Only a name that matches `^[a-z_][a-z0-9_-]*$` can reach a marker, so `/`, `..` and dotfiles never do.
+`binary_run` hands the binary the frame `cmd/swarm/frame.go` reads, in `SWARMDEV_` variables.
+It sets each of them on every run, empty ones included, so a `swarm.sh` the binary runs never inherits its parent's die file.
+`is_command` counts a marked name as a command, so `main` logs it as it logs a bash arm.
+A name with no marker runs its bash arm, and the check for its marker starts no process.
+tests/swarm_commands.sh reads each marker as a command name for doc_check, skill_test, port_names and events_test.
+`cmd/swarm`'s `TestTableMatchesMarkers` fails when the Go table and the markers name different commands.
+A fixture entry, such as `wrapper-fixture`, has no marker in the tree.
+tests/binary_dispatch_test.sh adds that marker in a copy of the tree to drive the wrapper.
+
 ## The closed plumbing list
 
 Five bash functions keep a bash copy beside their Go counterpart until their last bash caller goes.
