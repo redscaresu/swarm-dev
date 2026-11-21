@@ -20,7 +20,8 @@
 # two nested process groups is on calls:fg. Foreground calls through a wrapper that runs gh as a
 # waited background job (bin/gh-shim/gh's way), answered by a bash stub, stay on calls:fg in order,
 # and so do calls made after trap '' INT and the calls of subshells the command waits on at once, so
-# two such subshells swapped are red. On Linux, a subshell whose parent is blocked opening a FIFO is a
+# two such subshells swapped are red; so do command substitutions inside such a subshell, so two of
+# them swapped are red too. On Linux, a subshell whose parent is blocked opening a FIFO is a
 # step all the same. A step that ends before the command exits gives the same streams, ten runs in
 # ten, as one that ends after. A kept directory used again holds the new run's steps alone.
 # shellcheck disable=SC2016 # the copies' scripts and the harness's perl, expanded when a run runs them
@@ -62,6 +63,7 @@ fx_order_join() { FX_CMD=(bash "${TREE}/join.sh"); }
 # A waited subshell that only starts a worker and exits before the worker makes its first call.
 fx_order_launch() { FX_CMD=(bash "${TREE}/launch.sh"); }
 fx_order_steps() { FX_CMD=(bash "${TREE}/steps.sh"); }
+fx_order_subst() { FX_CMD=(bash "${TREE}/subst.sh"); }
 fx_order_setlate() { FX_CMD=(bash "${TREE}/setlate.sh"); }
 fx_order_nest() { FX_CMD=(bash "${TREE}/nest.sh"); }
 fx_order_gone() { FX_CMD=(bash "${TREE}/gone.sh"); }
@@ -304,6 +306,25 @@ start "${ROOT}/wrap-swap" "${A}/tests/diff_run.sh" "${A}" "${B}" order_wrap; fin
 if [[ "$(rc_of "${ROOT}/wrap-swap")" == 1 && "$(diffs "${ROOT}/wrap-swap")" == "order_wrap calls:fg;" ]]; then
   ok "two calls swapped through the waited wrapper are red on calls:fg"
 else bad "two calls swapped through the waited wrapper are red on calls:fg" "exit $(rc_of "${ROOT}/wrap-swap"): $(cat "${ROOT}/wrap-swap")"; fi
+
+# Two command substitutions inside a subshell the command waits on at once (bin/swarm.sh runs its
+# dispatch so, and bin/lib/merge.sh and reports.sh run `$(gh ... || true)` inside it): their calls
+# are on calls:fg in place, clean as they are and red on calls:fg once the two are swapped. Linux
+# shows the parent of each substitution reading a pipe, not in a wait.
+# subst <tree> <first> <second> — subst.sh, the two substitutions in the order given.
+subst() { printf '%s\n' '(' "  x=\$(gh api $2 2> /dev/null; :)" "  y=\$(gh api $3 2> /dev/null; :)" '  : "${x}${y}"' ') & wait $!' 'exit 0' > "$1/subst.sh"; }
+subst "${A}" one two; subst "${B}" one two
+start "${ROOT}/subst" "${A}/tests/diff_run.sh" --keep "${ROOT}/keep-subst" "${A}" "${B}" order_subst; finish
+if [[ "$(rc_of "${ROOT}/subst")" == 0 && "$(field "${ROOT}/keep-subst/order_subst/a/calls:fg")" == "gh api one;gh api two;" \
+  && ! -s "${ROOT}/keep-subst/order_subst/a/steps" ]]; then ok "command substitutions in a waited subshell are on calls:fg, in place"
+else bad "command substitutions in a waited subshell are on calls:fg, in place" \
+  "exit $(rc_of "${ROOT}/subst"): $(cat "${ROOT}/subst"); calls:fg: $(field "${ROOT}/keep-subst/order_subst/a/calls:fg")"; fi
+rm -rf "${ROOT}/keep-subst"
+subst "${B}" two one
+start "${ROOT}/subst-swap" "${A}/tests/diff_run.sh" "${A}" "${B}" order_subst; finish
+if [[ "$(rc_of "${ROOT}/subst-swap")" == 1 && "$(diffs "${ROOT}/subst-swap")" == "order_subst calls:fg;" ]]; then
+  ok "two command substitutions swapped in a waited subshell are red on calls:fg"
+else bad "two command substitutions swapped in a waited subshell are red on calls:fg" "exit $(rc_of "${ROOT}/subst-swap"): $(cat "${ROOT}/subst-swap")"; fi
 
 # A command that ignores SIGINT itself (trap '' INT, as bin/lib/ci_gate.py does in its cleanup) makes
 # foreground calls all the same: two swapped are red on calls:fg.
