@@ -79,6 +79,7 @@ It sends a marked name to the binary through `binary_run` in `bin/lib/binary.sh`
 Only a name that matches `^[a-z_][a-z0-9_-]*$` can reach a marker, so `/`, `..` and dotfiles never do.
 `binary_run` hands the binary the frame `cmd/swarm/frame.go` reads, in `SWARMDEV_` variables.
 It sets each of them on every run, empty ones included, so a `swarm.sh` the binary runs never inherits its parent's die file.
+With no binary to run, the command stops with the line `binary_find` gives.
 `is_command` counts a marked name as a command, so `main` logs it as it logs a bash arm.
 A name with no marker runs its bash arm, and the check for its marker starts no process.
 tests/swarm_commands.sh reads each marker as a command name for doc_check, skill_test, port_names and events_test.

@@ -11,7 +11,8 @@
 # leading ., and a name with no marker, never start the binary. A caller's SWARMDEV_DIE_FILE,
 # SWARMDEV_FIELDS_FILE and SWARMDEV_CFG_ names never reach it, a logged command's or a read-only one's
 # (a second copy whose READ_ONLY_COMMANDS names wrapper-fixture). SWARMDEV_BIN a bare name runs the file
-# of that name in the cwd, as binary_find checked it, not one found on PATH. Both stub logs stay empty.
+# of that name in the cwd, as binary_find checked it, not one found on PATH. With no binary to run, the
+# command dies with binary_find's line, which is its events.tsv outcome too. Both stub logs stay empty.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -139,6 +140,14 @@ check "SWARMDEV_BIN a bare name: exits 0" 0 "${rc}"
 check "SWARMDEV_BIN a bare name: the cwd's file ran, and the PATH one did not" "start|" \
   "$(cat "${LOGS}/local" 2>/dev/null || true)|$(cat "${LOGS}/decoy" 2>/dev/null || true)"
 rm -f "${P}/swarm" "${STUBS}/swarm"
+
+# No binary to run: the command dies with binary_find's line, on stderr and as its events.tsv outcome.
+n="$(events)"
+sw "${T}" "SWARMDEV_BIN=${ROOT}/none" -- wrapper-fixture t8
+check "no binary: fails" 1 "${rc}"
+check "no binary: says binary_find's line" "swarm: binary: SWARMDEV_BIN names '${ROOT}/none', which is not a file" "${err}"
+check "no binary: the line is the outcome" "$((n + 1))|t8|binary: SWARMDEV_BIN names '${ROOT}/none', which is not a file" \
+  "$(events)|$(last_event 3)|$(last_event out)"
 
 # A caller's SWARMDEV_ names: its die file and fields file stay as they were, and its settings never
 # reach the binary, whether main logs the command or not.
