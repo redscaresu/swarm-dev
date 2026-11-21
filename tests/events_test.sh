@@ -5,6 +5,8 @@
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
+# shellcheck source=tests/swarm_commands.sh
+source "$(dirname "${BASH_SOURCE[0]}")/swarm_commands.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 LIB="${SWARM%/swarm.sh}/lib"
@@ -181,19 +183,21 @@ ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
 
-# Every dispatch arm, read off the case statement, is read-only (logs nothing) or logged (one line),
-# so a new command can never slip past the log. reconcile and unblock log per item (above); init
+# Every command (tests/swarm_commands.sh: dispatch's arms and the ported commands' markers) is read-only
+# (logs nothing) or logged (one line), so a new command can never slip past the log. version and update
+# exit before logging starts, so the loop leaves them out. reconcile and unblock log per item (above); init
 # refuses outside a git root before logging, so a refusal writes nothing (init_test.sh checks both).
 # A bare project, no herdr: every arm stops at once.
 Q="${ROOT}/bare"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/docs/epics" "${Q}/docs/hld"; : > "${Q}/.claude/swarm/config"
 ro=" ${RO_EXPECTED} "
-arms="$(awk '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit } d && match($0, /^    [a-z_|-]+\)/) { a = substr($0, 5, RLENGTH - 5); gsub(/\|/, " ", a); print a }' "${SWARM}" | tr ' ' '\n')"
-check "the case statement's arms were read" test "$(wc -l <<< "${arms}")" -gt 20
+arms="$(swarm_commands "${SWARM%/bin/swarm.sh}")" || exit 1
+check "the commands were read" test "$(wc -l <<< "${arms}")" -gt 20
 for arm in ${RO_EXPECTED}; do
   check "read-only ${arm} is a command" grep -qx -- "${arm}" <<< "${arms}"
 done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
+  [[ "${arm}" == version || "${arm}" == update ]] && continue   # they exit before logging starts
   args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand other x)
   # hold logs only for a ready story on the board.
   [[ "${arm}" == hold ]] && { printf -- '---\nstatus: ready\n---\n' > "${Q}/docs/stories/h.md"; args=(h x); }

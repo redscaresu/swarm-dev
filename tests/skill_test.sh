@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # skill_test.sh — skills/swarm-dev/SKILL.md names only real commands: every `swarm.sh <sub>` is one of
-# dispatch's arms (or version/update, which main handles first), and every backticked `/<name>` is a
+# swarm.sh's commands (tests/swarm_commands.sh: dispatch's arms, version and update, which main handles
+# first, and the ported commands' markers under bin/ported/), and every backticked `/<name>` is a
 # plugin command or a Claude Code built-in. Its description carries the trigger phrases; its body is
 # short, names no board path, and copies no line from README.md, docs/method.md or docs/reference*.md.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
+# shellcheck source=tests/swarm_commands.sh
+source "$(dirname "${BASH_SOURCE[0]}")/swarm_commands.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT
 export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SWARM="${REPO}/bin/swarm.sh"
 SKILL="${REPO}/skills/swarm-dev/SKILL.md"
 BUILTINS="login clear"   # Claude Code's own slash commands the skill may name
 fails=0
@@ -21,9 +23,9 @@ check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
 
-# is_command <sub> — swarm.sh's own is_command, run with $0 set to swarm.sh so it reads dispatch there.
-IS_COMMAND="$(sed -n '/^is_command() {/,/^}/p' "${SWARM}")"
-is_command() { [[ "$1" == version || "$1" == update ]] || bash -c "${IS_COMMAND}"'; is_command "$1"' "${SWARM}" "$1"; }
+COMMANDS="$(swarm_commands "${REPO}")" || exit 1
+# is_command <sub> — true when <sub> is one of swarm.sh's commands.
+is_command() { grep -qxF -- "$1" <<< "${COMMANDS}"; }
 
 # --- Every `swarm.sh <sub>` is a real subcommand; the whole word after it is checked, so a placeholder
 # or a capital is named, and a missing one shows as (none).
@@ -32,7 +34,7 @@ bad=""
 while IFS= read -r sub; do
   [[ -n "${sub}" ]] && is_command "${sub}" || bad="${bad} ${sub:-(none)}"
 done < <(grep -o 'swarm\.sh [^ `]*' "${SKILL}" | cut -d' ' -f2 | sort -u)
-check "every swarm.sh subcommand is a dispatch arm" "" "${bad# }"
+check "every swarm.sh subcommand is a swarm.sh command" "" "${bad# }"
 
 # --- Every backticked `/<name>` (no further /) is a plugin command or a built-in.
 bad=""
