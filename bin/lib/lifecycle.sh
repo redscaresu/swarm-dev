@@ -1077,8 +1077,10 @@ step_up_note() {
 # resume_file wrote for that Claude session (RESUME_DIR/<session>.argv) names a session that took a
 # prompt (restart_session, restart_took), it reopens that session (restart_resume); else it starts a
 # fresh builder in that role on that model, the one builder_model reads, with handover_brief
-# (restart_fresh). It holds the story's step-up lock (step_lock) throughout, so no second restart and
-# no step-up starts a builder beside it. Refused, with nothing started, for a story that is not ready,
+# (restart_fresh). A builder wait --lead last saw in manual mode, in the session agents.tsv records
+# (manual_marked), starts fresh too, with a note that says why: a resumed session comes back in manual
+# mode. Either way the restart drops its manual mark. It holds the story's step-up lock (step_lock)
+# throughout, so no second restart and no step-up starts a builder beside it. Refused, with nothing started, for a story that is not ready,
 # not of a kind an agent builds (kind: lead, as every escalated story is), held (held_for:, or held_by:
 # until its parents merge), or has a .step-up marker (step-up --resume starts that rung); with no
 # worktree, one holding a git step left unfinished, one not on story/<slug>, or no builder in
@@ -1087,7 +1089,7 @@ step_up_note() {
 # fails or takes over SWARM_RESTART_READ_WAIT seconds (default HERDR_LIST_WAIT). It logs its own `restart <slug> ok
 # (<how>)` line (main logs only a failure), which build_started and review_round never read.
 restart_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src wt gd p name listed role kind model session resume names tab url prs
+  local slug="$1" f="${BOARD}/stories/$1.md" src wt gd p name listed role kind model session resume names tab url prs manual=""
   local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" wait="${SWARM_RESTART_READ_WAIT:-${HERDR_LIST_WAIT}}"
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "restart: no story ${f} (swarm.sh restart <slug>)"
   step_lock "${lock}" || die "restart: a step-up, restart or top-rung hold of ${slug} is running (it holds ${lock}); nothing was started"
@@ -1132,7 +1134,8 @@ restart_build() {
   names="$(story_env "${f}")" || die "${names}"
   tab="$(fm "${f}" epic)"; tab="${tab:-${slug}}"   # as build_story: the epic's tab, or a one-off's own
   resume=""
-  if [[ "${kind}" == claude && "${session}" != - && -f "${RESUME_DIR}/${session}.argv" ]]; then
+  ! manual_marked "${name}" "${session}" || manual=manual
+  if [[ -z "${manual}" && "${kind}" == claude && "${session}" != - && -f "${RESUME_DIR}/${session}.argv" ]]; then
     resume="$(restart_session "${session}")" \
       || die "restart: ${RESUME_DIR}/${session}.argv is not a resume command swarm.sh wrote (python3 -I <wrapper> claude --resume <session> ...); nothing was started"
     # A builder whose brief never landed has nothing to resume: it starts fresh, with the brief.
@@ -1143,8 +1146,9 @@ restart_build() {
     record_event restart "${slug}" "ok (resumed session ${resume})"
     echo "restarted: ${slug}, its session ${resume} reopened in ${wt}"
   else
-    restart_fresh "${slug}" "${tab}" "${src}" "${role} ${model}" "${names}"
+    restart_fresh "${slug}" "${tab}" "${src}" "${role} ${model} ${manual}" "${names}"
   fi
+  rm -f "${LEAD_MANUAL}/${name}"
 }
 
 # restart_session <session> — the session <session>'s resume command (resume_file's .argv) resumes: its
@@ -1261,19 +1265,21 @@ restart_settle() {
   die "restart: $1's builder runs in its pane, but herdr does not show that it took up its prompt$([[ ${late} -ne 2 ]] || echo " (herdr could not say)"); $3"
 }
 
-# restart_fresh <slug> <tab> <src> "<role> <model>" <names> — start a fresh builder for <slug> in <role> on
-# <model> in its worktree, in <tab>, with handover_brief (trigger restart, from and to both <model>), as
-# start_rung starts a rung, then log the restart line and send the /goal goal_preflight made.
+# restart_fresh <slug> <tab> <src> "<role> <model> [manual]" <names> — start a fresh builder for <slug> in
+# <role> on <model> in its worktree, in <tab>, with handover_brief (trigger restart, or restart-manual
+# with manual, from and to both <model>), as start_rung starts a rung, then log the restart line and
+# send the /goal goal_preflight made.
 restart_fresh() {
-  local slug="$1" role model wt base prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" since goal rc=0
-  read -r role model <<< "$4"
+  local slug="$1" role model manual wt base prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" since goal rc=0 how="no session to resume"
+  read -r role model manual <<< "$4"
+  [[ -z "${manual}" ]] || how="out of manual mode"
   (policy "${role}") >/dev/null 2>&1 \
     || die "restart: ${slug}'s last build ran as ${role}, a role nothing starts now; nothing was started"
   wt="$(worktree_for "$3" "${slug}")"
   goal_preflight "${slug}" "$3"; goal="${PREFLIGHT_GOAL}"
   base="$(base_for "$3")" || die "restart: origin's default branch could not be read (see above); nothing was started"
   mkdir -p "${prompt%/*}"
-  handover_brief "${slug}" "$3" "${base}" restart "${model}" "${model}" > "${prompt}"
+  handover_brief "${slug}" "$3" "${base}" "restart${manual:+-manual}" "${model}" "${model}" > "${prompt}"
   since="$(date +%s)"   # before the brief, for send_goal
   # start_agent said why it failed. Once it has recorded the builder, its pane is kept: it may lack its
   # brief. restart_run keeps its errexit (start_rung's form) and its stderr for restart_settle.
@@ -1282,8 +1288,8 @@ restart_fresh() {
     || die "restart: ${slug}'s fresh builder did not start cleanly (see above); if herdr lists it, read it (herdr agent read $(agent_name "${slug}")) and, with no brief taken up, send ${prompt} (swarm.sh tell ${slug} nudge ${prompt})"
   restart_settle "${slug}" "${model}" \
     "read it (herdr agent read $(agent_name "${slug}")) and, if it sits idle with no brief, send it (swarm.sh tell ${slug} nudge ${prompt})"
-  record_event restart "${slug}" "ok (fresh on ${model}: no session to resume)"
-  echo "restarted: ${slug}, a fresh ${role} builder on ${model} in ${wt}"
+  record_event restart "${slug}" "ok (fresh on ${model}: ${how})"
+  echo "restarted: ${slug}, a fresh ${role} builder on ${model} in ${wt}${manual:+, out of manual mode}"
   [[ -n "${goal}" ]] || return 0
   printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   set +e
@@ -1371,8 +1377,10 @@ stepped_up_since() {
 }
 
 # handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief, or with
-# trigger restart a fresh builder's on the same model (restart_fresh): the builder's
-# brief (story_brief), then why the build was handed on, the PR body's Models: line, for a story
+# trigger restart a fresh builder's on the same model (restart_fresh), and with restart-manual one's
+# whose last session dropped to manual mode: the builder's
+# brief (story_brief), then why the build was handed on (for restart-manual, a note naming the open PR
+# or none and the branch head), the PR body's Models: line, for a story
 # stacked on parents with open PRs build_story's Merge after note, the story as the board holds it
 # (the last builder may have deleted it from the worktree already), the diff from handover_from
 # (committed, uncommitted and untracked; its first HANDOVER_DIFF_LINES lines, in a fence longer than
@@ -1380,7 +1388,7 @@ stepped_up_since() {
 # stop: its findings to fix go to the builder by tell, in a .round.md file), [findings], the file of
 # the tell the step-up took the place of, and the story PR's failing checks.
 handover_brief() {
-  local wt models from parents open="" merged="" p prs="" stack="" tree="" out rc diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found
+  local wt models from parents open="" merged="" p prs="" stack="" tree="" out rc diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found why note=""
   wt="$(worktree_for "$2" "$1")"
   parents="$(stacked_parents "$1")"
   for p in ${parents//,/ }; do
@@ -1435,15 +1443,22 @@ handover_brief() {
       esac
     fi
   fi
+  case "$4" in
+    restart) why="started again on $6 by swarm.sh restart because its pane was gone and it left no session to resume" ;;
+    restart-manual)
+      why="started again on $6 by swarm.sh restart in a fresh session, out of manual mode"
+      note=$'\n\n'"### Why a fresh session"$'\n\n'"That builder's Claude session dropped from auto mode to manual mode, where each command with a pipe, a subshell or a \`cd\` stops on a permission prompt. A resumed session comes back in manual mode, so swarm.sh restart started this new one, which has none of that session's context but this brief. $(if [[ -n "${pr}" ]]; then echo "Its PR is ${pr}: carry on with it, and open no second one."; else echo "No PR is open on story/$1 yet."; fi) The branch story/$1 is at ${head}." ;;
+    *) why="stepped up to you on $6 because $(step_trigger "$4")" ;;
+  esac
   story_brief "$1" "$2" "$3"
   cat <<EOF
 
 ## Handover
 
-You take this story over from a builder on $5, $(if [[ "$4" == restart ]]; then echo "started again on $6 by swarm.sh restart because its pane was gone and it left no session to resume"; else echo "stepped up to you on $6 because $(step_trigger "$4")"; fi).
+You take this story over from a builder on $5, ${why}.
 This worktree and its branch story/$1 are as that builder left them: carry on from them, and never
 start again from origin/$3. The PR body lists every model that worked on this story on one line, the
-models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).${stack}
+models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).${stack}${note}
 
 ### The story, as the board holds it
 
@@ -3964,8 +3979,9 @@ sign_seen() {
 # resend_pass sent Enter to this poll (<pane>.sent in LEAD_READS) is not classified: its read is gone. The exit: for a prompt, the user answers it in
 # its pane; for login, the user runs /login, then a resume tell; for api-error, read the pane and tell
 # the user; for manual, a ready story's builder has its pane closed and then no_agent_exit's restart
-# (restart refuses a builder herdr still lists; cut_record finds its story), and any other agent has
-# the user turn manual mode off in its pane.
+# (restart refuses a builder herdr still lists; cut_record finds its story), which starts a fresh
+# session for a builder its manual line marked (manual_mark), and any other agent has the user turn
+# manual mode off in its pane.
 # STUCK_RECHECK: seconds after which a pane last found clear is read again with nothing changed: manual
 # mode turned on, or a dialog opened at an idle box, needs no turn and no status change.
 STUCK_RECHECK=300
@@ -3997,11 +4013,33 @@ manual_slug() {
   [[ -f "${BOARD}/stories/${slug}.md" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]] && echo "${slug}"
   return 0
 }
+# LEAD_MANUAL: one file per ready story's builder whose pane wait --lead last read in manual mode, named
+# for the agent and holding the session agents.tsv's newest line for it records. .swarm/lead/stuck
+# cannot carry it: each poll rebuilds that from the agents herdr lists, so it loses the builder once
+# its pane is closed, before the restart its manual exit names. prompt_lines writes it with the manual
+# line (manual_mark) and drops it once a read finds the agent's pane out of manual mode; restart_build
+# starts a marked builder in a fresh session (manual_marked), since a resumed one comes back in manual
+# mode, and drops the mark.
+LEAD_MANUAL="${LEAD_DIR}/manual"
+# manual_mark <agent> — mark <agent> in manual mode, in its agents.tsv session (- when none is recorded).
+manual_mark() {
+  local s
+  s="$(awk -F'\t' -v n="$1" '$3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null)" || s=""
+  mkdir -p "${LEAD_MANUAL}" 2>/dev/null && printf '%s\n' "${s:--}" > "${LEAD_MANUAL}/$1" 2>/dev/null || true
+}
+# manual_marked <agent> <session> — succeed when <agent>'s manual mark names <session>: a mark of an
+# earlier session (a step-up or restart since started another) is no longer its state.
+manual_marked() {
+  local s
+  [[ -f "${LEAD_MANUAL}/$1" ]] || return 1
+  s="$(cat "${LEAD_MANUAL}/$1" 2>/dev/null)" || return 1
+  [[ -n "${s}" && "${s}" == "$2" ]]
+}
 # prompt_seen — the prompt: lines in LEAD_SEEN: what prompt_lines prints when it cannot check, so a
 # stop already seen stays seen.
 prompt_seen() { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; }
 prompt_lines() {
-  local rows name pane key last lkey lkind lat at kind out slug footer hid dir n=0 tried=0 text state="" files=() kinds=() i backlog now
+  local rows name pane key last lkey lkind lat at kind out slug footer hid mfoot readk dir n=0 tried=0 text state="" files=() kinds=() i backlog now
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || { prompt_seen; return 0; }
   if [[ -f "${UPGRADE_PID}" ]] && [[ -n "$(upgrade_holder)" ]]; then prompt_seen; return 0; fi
@@ -4080,7 +4118,9 @@ for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     state+="${name}"$'\t'"${pane}"$'\t'"${key}"$'\t'"${kind}"$'\t'"${at}"$'\t'"${lkey:--}"$'\t'"${lkind:--}"$'\n'
   done <<< "${rows}"
   # One python classifies every pane read: its stuck_kind, manual for a prompt over the manual-mode
-  # footer (a builder in manual mode is nearly always on a permission prompt), - for none.
+  # footer (a builder in manual mode is nearly always on a permission prompt), - for none; with :m
+  # after it when the manual-mode footer shows below the last reply, whatever the kind (a command
+  # running, a login or an API error stop come first), so a manual mark goes only once it is gone.
   if [[ ${n} -gt 0 ]]; then
     while IFS= read -r i; do kinds+=("${i}"); done < <(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, re, sys
@@ -4093,18 +4133,27 @@ for f in sys.argv[1:]:
         reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
         if any(MANUAL_MODE.match(l) for l in lines[reply + 1:]):
             k = "manual-prompt"
-    print(k)' "${files[@]}" 2>/dev/null)
+    lines = t.splitlines()
+    reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
+    print(k + (":m" if any(MANUAL_MODE.match(l) for l in lines[reply + 1:]) else ""))' "${files[@]}" 2>/dev/null)
   fi
   # The new record: what each read found and when; an agent left unread keeps its last kind and key, so
   # its next poll reads it again, with its read time moved on only when a read was tried.
   : > "${LEAD_STUCK}.tmp" 2>/dev/null || true
   while IFS=$'\t' read -r name pane key kind at lkey lkind; do
     [[ -n "${name}" ]] || continue
-    if [[ "${kind}" == @* ]]; then kind="${kinds[$((${kind#@} - 1))]:-unread}"; fi
+    mfoot=""; readk=""
+    if [[ "${kind}" == @* ]]; then kind="${kinds[$((${kind#@} - 1))]:-unread}"; readk=1; fi
+    if [[ "${kind}" == *:m ]]; then kind="${kind%:m}"; mfoot=1; fi
     # A prompt over the manual-mode footer: manual for a ready story's builder, whose restart clears both;
     # for any other agent a prompt the user answers, turning manual mode off too, so each new one reminds.
     slug=""; footer=""; [[ "${kind}" != manual* ]] || slug="$(manual_slug "${name}")"
     if [[ "${kind}" == manual-prompt ]]; then if [[ -n "${slug}" ]]; then kind=manual; else kind=prompt; footer=1; fi; fi
+    # A ready story's builder in manual mode is marked for a fresh restart; only a read this poll whose
+    # pane shows no manual-mode footer drops an agent's mark. One not read (at work, skipped, taken as
+    # last found clear, its read failed) keeps it.
+    if [[ "${kind}" == manual && -n "${slug}" ]]; then manual_mark "${name}"
+    elif [[ -n "${readk}" && -z "${mfoot}" && "${kind}" != unread && -e "${LEAD_MANUAL}/${name}" ]]; then rm -f "${LEAD_MANUAL}/${name}"; fi
     # An api-error a running wait naming the agent hides: that wait is still resuming it. Its record keeps
     # the old key, so the stop it hides is judged against the one before the wait once the wait ends.
     hid=""; if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then hid=1; fi

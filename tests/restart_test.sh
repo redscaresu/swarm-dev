@@ -7,6 +7,8 @@
 # lead, once its PR merged, off its branch, and when herdr refuses its resume command. Its restart line moves neither build_started nor review_round, and the lead's next poll after
 # it is silent. review_round also keeps its count across a build started after a kept close. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH: herdr logs each call,
 # lists the agents in ${ROOT}/agents ("<name> <pane>" lines, all idle) and adds one on agent start.
+# A builder wait --lead marked in manual mode (.swarm/lead/manual/<agent>, naming its session) starts
+# fresh, with a note in its brief, though its session could be reopened; a mark of another session resumes.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -63,7 +65,8 @@ touch "${ROOT}/agents"
 # A project whose board is in its repo: e1 in epic ep and the one-off o1 started, each with a commit in
 # its worktree; c1 whose builder ran /clear, w1 whose brief never landed, y1 whose first start herdr fails,
 # pf (fresh) and pr (resumed) whose prompt herdr sends but never shows taken up; and k1, u1, l1, m1, b1, r1, g1,
-# h1, k3 and m3 started for the refusals, n1 never built.
+# h1, k3 and m3 started for the refusals, n1 never built; mm1 marked in manual mode in its session, ms1
+# marked in an earlier one.
 P="${ROOT}/proj"
 "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
 "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
@@ -72,14 +75,15 @@ story() { printf '%s\n' --- "status: ready" "$2" "${3:-}" --- "" "# $1" "" "**Do
 story e1 "kind: code" "epic: ep"; story o1 "kind: code"; story k1 "kind: code"; story n1 "kind: code"
 story u1 "kind: code"; story l1 "kind: lead"; story m1 "kind: code"; story b1 "kind: code"; story r1 "kind: code"
 story c1 "kind: code" "epic: ep"; story w1 "kind: code"; story y1 "kind: code"; story k3 "kind: code"; story m3 "kind: code"; story pf "kind: code"; story pr "kind: code"; story g1 "kind: code"; story h1 "kind: code"
+story mm1 "kind: code"; story ms1 "kind: code"
 : > "${P}/.claude/swarm/config"
 "${GIT[@]}" -C "${P}" add -A && "${GIT[@]}" -C "${P}" commit -qm init && "${GIT[@]}" -C "${P}" push -q origin main
-for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3 pf pr; do
+for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3 pf pr mm1 ms1; do
   "${GIT[@]}" -C "${P}" worktree add -q -b "story/${s}" "${ROOT}/proj-wt/${s}" origin/main
   echo "${s}-WORK" > "${ROOT}/proj-wt/${s}/work.txt"
   "${GIT[@]}" -C "${ROOT}/proj-wt/${s}" add work.txt && "${GIT[@]}" -C "${ROOT}/proj-wt/${s}" commit -qm work
 done
-for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3 pf pr; do printf '2026-10-01\tcode\t%s\tclaude\t%s\thigh\tsess-%s\n' "${s}" "$([[ ${s} == o1 ]] && echo opus || echo sonnet)" "${s}"; done > "${P}/.swarm/agents.tsv"
+for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3 pf pr mm1 ms1; do printf '2026-10-01\tcode\t%s\tclaude\t%s\thigh\tsess-%s\n' "${s}" "$([[ ${s} == o1 ]] && echo opus || echo sonnet)" "${s}"; done > "${P}/.swarm/agents.tsv"
 # e1's build: started, a findings round sent, its review agent closed, its builder's pane gone.
 printf '%s\n' $'2026-10-01T09:00:00Z\tstory\te1\tw:1\tok' $'2026-10-01T09:30:00Z\ttell:findings\te1\tw:1\tok' \
   $'2026-10-01T09:40:00Z\tclose\te1\tw:1\tok' $'2026-10-01T09:00:00Z\tstory\to1\tw:1\tok' > "${P}/.swarm/events.tsv"
@@ -87,11 +91,11 @@ printf '%s\n' $'2026-10-01T09:00:00Z\tstory\te1\tw:1\tok' $'2026-10-01T09:30:00Z
 R="${CLAUDE_CONFIG_DIR}/swarm-dev/resume"; mkdir -p "${R}"
 # c1's builder ran /clear: hooks/agent-state.sh moved its command's --resume to the new session sess-c1b.
 # w1's session never took its brief: its command is on file, its log holds no prompt.
-for s in e1 r1 c1 w1 y1 pr; do printf '%s\n' python3 -I "${R}/sess-${s}.py" claude --resume "sess-${s}" --model sonnet --effort high --permission-mode auto > "${R}/sess-${s}.argv"; done
+for s in e1 r1 c1 w1 y1 pr mm1 ms1; do printf '%s\n' python3 -I "${R}/sess-${s}.py" claude --resume "sess-${s}" --model sonnet --effort high --permission-mode auto > "${R}/sess-${s}.argv"; done
 sed -i.bak 's/^sess-c1$/sess-c1b/' "${R}/sess-c1.argv" && rm "${R}/sess-c1.argv.bak"
 # The Claude session logs: a user prompt in each session that took its brief.
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"
-for s in e1 r1 c1b y1 pr; do echo '{"type":"user","message":{"role":"user","content":"Implement the story."}}' > "${CLAUDE_PROJECTS_DIR}/p/sess-${s}.jsonl"; done
+for s in e1 r1 c1b y1 pr mm1 ms1; do echo '{"type":"user","message":{"role":"user","content":"Implement the story."}}' > "${CLAUDE_PROJECTS_DIR}/p/sess-${s}.jsonl"; done
 echo '{"type":"summary","summary":"none"}' > "${CLAUDE_PROJECTS_DIR}/p/sess-w1.jsonl"
 
 run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:lead PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1); }
@@ -121,7 +125,7 @@ check "reopening its recorded session with its flags" "agent start e1 --kind cla
 check "and reports the recorded resume command to herdr" "yes" "$(has "--agent-session-id sess-e1 -- python3 -I ${R}/sess-e1.py claude --resume sess-e1" "$(cat "${ROOT}/herdr.log")")"
 check "and tells it, in its new pane, to carry on" "yes" "$(has "agent prompt w:11 swarm.sh restart reopened this session" "$(cat "${ROOT}/herdr.log")")"
 check "its worktree is still on story/e1" "story/e1" "$(git -C "${ROOT}/proj-wt/e1" rev-parse --abbrev-ref HEAD)"
-check "a resumed session adds no agents.tsv line" "17" "$(wc -l < "${P}/.swarm/agents.tsv" | tr -d ' ')"
+check "a resumed session adds no agents.tsv line" "19" "$(wc -l < "${P}/.swarm/agents.tsv" | tr -d ' ')"
 check "it logs one restart line, naming the session" "restart e1 ok (resumed session sess-e1)|1" "$(last_event)|$(restarts e1)"
 check "build_started and review_round read the same after the restart line" "${before}" "$(lifecycle e1)"
 check "and they read e1's build and its second round" "2026-10-01T09:00:00Z 2" "${before}"
@@ -159,6 +163,29 @@ out="$(run restart w1)" && rc=0 || rc=$?
 start="$(grep '^agent start w1' "${ROOT}/herdr.log")"
 check "restart w1 starts a fresh builder, not its empty session" "0|yes|no|restart w1 ok (fresh on sonnet: no session to resume)" \
   "${rc}|$(has "--session-id" "${start}" | cut -c1-3)|$(grep -q -- '--resume' <<< "${start}" && echo yes || echo no)|$(last_event)"
+
+# --- a builder wait --lead marked in manual mode, in the session agents.tsv records: a fresh session,
+# though that session took its brief and could be reopened, with a note naming its PR and branch head.
+mkdir -p "${P}/.swarm/lead/manual"; echo sess-mm1 > "${P}/.swarm/lead/manual/mm1"
+: > "${ROOT}/herdr.log"
+out="$(run restart mm1)" && rc=0 || rc=$?
+start="$(grep '^agent start mm1' "${ROOT}/herdr.log")"
+check "restart mm1, marked in manual mode, starts a fresh session, not --resume" "0|yes|no" \
+  "${rc}|$(has "--session-id" "${start}" | cut -c1-3)|$(grep -q -- '--resume' <<< "${start}" && echo yes || echo no)"
+brief="$(cat "${P}/.swarm/briefs/mm1.md" 2>/dev/null || true)"
+check "its brief says it was restarted out of manual mode" "yes|yes" \
+  "$(has "started again on sonnet by swarm.sh restart in a fresh session, out of manual mode" "${brief}" | cut -c1-3)|$(has "### Why a fresh session" "${brief}" | cut -c1-3)"
+check "and names its open PR and its branch head" "yes" \
+  "$(has "Its PR is https://github.com/o/proj/pull/7: carry on with it, and open no second one. The branch story/mm1 is at $(git -C "${ROOT}/proj-wt/mm1" rev-parse HEAD)." "${brief}")"
+check "it logs a restart line saying why, and drops the mark" "restart mm1 ok (fresh on sonnet: out of manual mode)|no" \
+  "$(last_event)|$(test -e "${P}/.swarm/lead/manual/mm1" && echo yes || echo no)"
+# A mark of an earlier session (a step-up or restart has started another since) is not its state now.
+echo sess-old > "${P}/.swarm/lead/manual/ms1"
+: > "${ROOT}/herdr.log"
+out="$(run restart ms1)" && rc=0 || rc=$?
+check "restart ms1, marked in an earlier session, reopens its session with --resume, and drops the mark" \
+  "0|yes|restart ms1 ok (resumed session sess-ms1)|no" \
+  "${rc}|$(has "--resume sess-ms1 --model sonnet" "$(grep '^agent start ms1' "${ROOT}/herdr.log")" | cut -c1-3)|$(last_event)|$(test -e "${P}/.swarm/lead/manual/ms1" && echo yes || echo no)"
 
 # --- herdr failing the first start of a resumed session: one retry, as start_agent makes.
 : > "${ROOT}/herdr.log"; touch "${ROOT}/startonce"
