@@ -95,3 +95,20 @@ As the lead (the admin role), through `gh api`:
 - Delete stable, prerelease and pre-marketplace: each refused, 422 "Cannot delete this branch".
 
 After the tests: main 16332d9b, stable cfe2a200, prerelease c046ae95, pre-marketplace ba2d21f2.
+
+## release-refs results (2026-11-21)
+
+The user created the branches and rulesets on redscaresu/swarm-dev from the lead's commands. The lead read them back the same day:
+- stable: 06b35a67 (v0.31.3)
+- prerelease: 06b35a67 (v0.31.3)
+- pre-marketplace: 653d9366, one signed orphan commit (GitHub: verified). Its `.claude-plugin/marketplace.json` is named `swarm-dev-pre`, with one plugin whose source is `{source: url, url: https://github.com/redscaresu/swarm-dev.git, ref: prerelease}`. It passed the pinned validator (`@anthropic-ai/claude-code@2.1.284 plugin validate`) before the push.
+
+The rulesets, as GitHub read them back:
+
+```json
+{"id":27812527,"name":"no-delete","enforcement":"active","include":["refs/heads/stable","refs/heads/prerelease","refs/heads/pre-marketplace"],"rules":["deletion"],"bypass":[]}
+{"id":27812633,"name":"locked","enforcement":"active","include":["refs/heads/stable","refs/heads/pre-marketplace"],"rules":["update","non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+{"id":27812756,"name":"prerelease-ff","enforcement":"active","include":["refs/heads/prerelease"],"rules":["non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+```
+
+They match the spike's rulesets above. Main's ruleset 24181590 is unchanged.
