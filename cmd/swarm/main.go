@@ -1,6 +1,7 @@
 // Command swarm is the Go port of bin/swarm.sh. It runs one entry of its table by dispatch name,
-// inside the frame bin/swarm.sh hands it (frame.go). No command is ported yet: the table holds only
-// wrapper-fixture, for the wrapper's tests.
+// inside the frame bin/swarm.sh hands it (frame.go), and hands a form still in bash back to swarm.sh
+// (bridge.go). No command is ported yet: the table holds only wrapper-fixture and _wrapper-fixture, for
+// the wrapper's tests.
 package main
 
 import (

@@ -45,7 +45,7 @@ SWARM_GH_FRESH	handoff	bin/lib/board.sh bin/lib/gh_cache.py bin/lib/merge.sh bin
 SWARM_GH_LOG	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/swarm.sh
 SWARM_GH_LOG_KEEP	seam	bin/gh-shim/gh
 SWARM_GH_TRIM_EVERY	seam	bin/gh-shim/gh
-SWARM_GH_VIA	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/swarm.sh
+SWARM_GH_VIA	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/swarm.sh cmd/swarm/bridge.go
 SWARM_HEAD	handoff	bin/lib/lifecycle.sh
 SWARM_HOME	handoff	bin/lib/agents.sh bin/lib/binary.sh bin/lib/board.sh bin/lib/build.sh bin/lib/handover.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh
 SWARM_LABEL	handoff	bin/swarm.sh
@@ -83,7 +83,7 @@ SWARM_POLL_CACHE	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.
 SWARM_POLL_CACHE_AGE	handoff	bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_POLL_CACHE_SECONDS	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_PR	setting	bin/lib/build.sh bin/swarm.sh
-SWARM_PROJECT	setting	bin/lib/agents.sh bin/lib/build.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh hooks/lead-session.sh hooks/lead-stop.sh
+SWARM_PROJECT	setting	bin/lib/agents.sh bin/lib/build.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh cmd/swarm/bridge.go hooks/lead-session.sh hooks/lead-stop.sh
 SWARM_PROMPT_TIMEOUT_MS	setting	bin/lib/agents.sh bin/lib/lifecycle.sh
 SWARM_PRS	handoff	bin/lib/dataset.py bin/lib/reports.sh
 SWARM_QUEUE_MINUTES	handoff	bin/lib/board.sh bin/lib/touches_rows.py
