@@ -29,7 +29,7 @@ files = sorted(os.path.relpath(os.path.join(d, f), root)
                for top in ("bin", "hooks") for d, sub, names in os.walk(os.path.join(root, top))
                if "__pycache__" not in d.split(os.sep) for f in names if not f.endswith((".py", ".pyc")))
 LIST = "docs/port/sites.tsv"
-EPICS = ("helpers-shared", "helpers-panes", "helpers-dash")
+EPICS = ("helpers-shared", "helpers-panes")
 modules = {f[:-3] for f in os.listdir(os.path.join(root, "bin/lib")) if f.endswith(".py")}
 
 # A python3 word that is a command, then its flags, then -c and a quoted body or - and a heredoc.
@@ -174,7 +174,7 @@ export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, as every
 mkdir -p "${dir}/bin/lib" "${dir}/hooks" "${dir}/docs/port"
 touch "${dir}/bin/lib/report.py" "${dir}/bin/lib/gh_cache.py" "${dir}/bin/lib/panes.py"   # its own helpers: a port deletes the real ones
 # A row whose module a port has deleted, and whose sites are gone with it, still reads.
-printf '# file\tfunction\timports\tn\tepic\nbin/lib/dash.sh\tdash_legend\tdash_legend\t1\thelpers-dash\n' > "${dir}/docs/port/sites.tsv"
+printf '# file\tfunction\timports\tn\tepic\nbin/lib/gone.sh\tgone_site\tgone_helper\t1\thelpers-panes\n' > "${dir}/docs/port/sites.tsv"
 # shellcheck disable=SC2016 # the fixture is bash source text, written as it is
 printf '%s\n' \
   'one() {' \

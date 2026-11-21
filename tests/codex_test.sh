@@ -92,8 +92,6 @@ left() {
   pkill -KILL -f "${BIN}/" 2>/dev/null || true
   [[ -z "${2:-}" ]] || check "$1 ends with its orphan KILLed" "yes" "$(gone)"
 }
-# markers — codex-review's markers left in the project's state dir, one per line.
-markers() { compgen -G "${P}/.swarm/state/codex-review.*" || true; }
 # reaps [fields] — the reap lines in the project's events.tsv, "target|outcome" (events_outcome's,
 # without the tail), one per line, or with fields, each one's fields() as sorted k=v words; nothing
 # before any.
@@ -123,7 +121,6 @@ check "a codex past the limit fails within 10 s, saying it was skipped" "fails|y
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le 10 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
 check "a codex past the limit writes exactly one reap line, naming codex-<base> and the timeout" "codex-main|timed out after 10 min" "$(reaps)"
 check "neither the stub nor its child sleep is left" "yes" "$(gone)"
-check "a timed-out codex-review leaves no marker" "" "$(markers)"
 left "the timeout case"
 
 # --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since:
@@ -189,9 +186,7 @@ stub "trap 'echo TERM ignored' TERM; touch \"\${d}/ready\"; while :; do \"\${d}/
 rm -f "${BIN}/ready"
 (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS=60 bash "${SWARM}" codex-review main < /dev/null > "${ROOT}/out" 2>&1) &
 spid=$!; up="$(started)"
-check "while codex runs, its marker holds the base and cwd" "main	${P}" "$(cut -f2- "${P}/.swarm/state/codex-review.${spid}" 2>&1)"
 sleep 1; kill -TERM "${spid}"; finish "${spid}"
-check "an interrupted codex-review leaves no marker" "" "$(markers)"
 check "codex-review sent TERM exits with neither a TERM-trapping stub nor its child left" "yes|yes" "${up}|$(gone 1)"
 check "events.tsv's codex-review line says it was interrupted" "main|interrupted" "$(last_event)"
 left "the interrupt case"
@@ -231,16 +226,9 @@ check "a limit or grace of 2.5 is ignored, and codex still runs" "exit 0|P2: sti
   "$([[ ${rc} -eq 0 ]] && echo "exit 0" || echo "exit ${rc}")|${out}"
 left "the bad override case"
 
-# --- A codex that finishes: its findings and exit come through, run with exactly these args. A
-# marker left by a run that was KILLed (its pid dead) goes at the start.
+# --- A codex that finishes: its findings and exit come through, run with exactly these args.
 stub 'echo "P1: x.sh:3 drops the error"; exit 0'
-sh -c 'exit 0' & dead=$!; wait "${dead}" || true
-printf '1\tmain\t/x\n' > "${P}/.swarm/state/codex-review.${dead}"
-# A half-rewritten marker (retire writes every state file through <file>.tmp) is no pid's: kept.
-printf '1\tmain\t/x\n' > "${P}/.swarm/state/codex-review.123.tmp"
 review
-check "a run removes a dead pid's marker, leaves none of its own and keeps a .tmp" "${P}/.swarm/state/codex-review.123.tmp" "$(markers)"
-rm "${P}/.swarm/state/codex-review.123.tmp"
 check "a codex that finishes passes its exit and findings through" "0|yes" "${rc}|$(has "P1: x.sh:3 drops the error" "${out}")"
 check "a codex that finishes: its codex-review line says codex=reviewed" "main|ok|codex=reviewed" "$(last_event)|$(ended)"
 check "codex runs as exec review --base origin/main, with no prompt" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
@@ -348,7 +336,6 @@ stub 'echo "You have hit your usage limit."; exit 1'
 review
 check "a usage limit exits as codex did, and the log says failed, not skipped" "1|yes|main|failed (exit 1)" \
   "${rc}|$(has "usage limit" "${out}")|$(last_event)"
-check "a codex that fails leaves no marker" "" "$(markers)"
 check "a usage limit with no fallback: codex=skipped" "codex=skipped" "$(ended)"
 left "the usage limit case"
 
@@ -393,13 +380,13 @@ check "codex's log and fifo are in a private directory (drwx------), removed whe
   "$(has "drwx------" "${out}")|$(has "fifo log" "${out}")|$(compgen -G "${ROOT}/tmp/swarm-codex.*" || true)"
 left "the private directory case"
 
-# --- A run that fails before codex starts (here mktemp, with no TMPDIR to write in) leaves no marker.
+# --- A run that fails before codex starts (here mktemp, with no TMPDIR to write in) fails.
 stub 'exit 0'
 (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY TMPDIR="${ROOT}/no-such-dir" bash "${SWARM}" codex-review main \
   < /dev/null > "${ROOT}/out" 2>&1) &
 spid=$!; finish "${spid}"
-check "a codex-review whose temp file cannot be made fails and leaves no marker" "fails|" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(markers)"
+check "a codex-review whose temp file cannot be made fails" "fails" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")"
 left "a failed mktemp case"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi

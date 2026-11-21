@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # conduct_backlog_test.sh — two projects under one herdr each run `conduct --backlog`. herdr names span
 # projects, so each backlog conductor is named for its project's dir and a hash of its path; next, wait,
-# close, status and dash in each project find its own and not the other's, even for two dirs of one name,
+# close and status in each project find its own and not the other's, even for two dirs of one name,
 # and a name held by another project's agent is refused naming where it runs, before the report goes. herdr, gh and claude are stubs on PATH; herdr's state is shared by both projects.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -70,7 +70,7 @@ for p in "${A_DIR}" "${B_DIR}"; do
   mkdir -p "${ROOT}/${p}/.claude/swarm"; : > "${ROOT}/${p}/.claude/swarm/config"
   git -C "${ROOT}/${p}" init -q
   item "${ROOT}/${p}/docs" "stories/${p%%/*}1.md" "status: ready" "kind: code"
-  : > "${ROOT}/${p}/docs/stories/README.md"   # dash's mark of a board
+  : > "${ROOT}/${p}/docs/stories/README.md"   # init's mark of a board
 done
 run() { local p="$1"; shift; (cd "${ROOT}/${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 # started <n> — the name of the <n>th backlog conductor herdr started.
@@ -102,12 +102,6 @@ check "A's report is A's alone: A collects, B still waits" "collect ${A}|wait ${
 
 rm "${brief_a}"
 check "with its brief gone, A's reported conductor is still collected" "collect ${A}" "$(run "${A_DIR}" next | head -1)"
-
-# dash: A's conductor, its session idle, has reported (its report is found by its name).
-sess="$(grep -F "${A}" "${ROOT}/${A_DIR}/.swarm/agents.tsv" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)"
-echo "[{\"sessionId\":\"${sess}\",\"status\":\"idle\"}]" > "${ROOT}/claude.json"
-check "dash in A shows its backlog conductor as reported" "yes" \
-  "$(has "reported" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" run "${A_DIR}" dash | grep -F "${A}" || true)")"
 
 # wait: A's conductor has reported, so the wait returns; the other project's name is never waited on.
 w_a="$(run "${A_DIR}" wait "${A}" 2000 || echo "exit $?")"

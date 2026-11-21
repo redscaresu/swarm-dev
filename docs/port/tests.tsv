@@ -33,13 +33,9 @@ tests/concurrency_check_test.sh	py	rewrite-from-outside		helpers-shared
 tests/conductor_close_test.sh	lib	rewrite-from-outside		port-close
 tests/config_test.sh	text	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms	binary-wrapper
 tests/cost_test.sh	py	rewrite-from-outside		helpers-flow-reviews
-tests/dash_check_test.sh	py	rewrite-from-outside		helpers-flow-queues
-tests/dash_finished_test.sh	py	rewrite-from-outside		helpers-dash
-tests/dash_reexec_test.sh	text	rewrite-from-outside	the newer fixture install marks its dash output through its version, not a line planted in bin/lib/dash.sh, so the re-exec onto it still shows	port-dash
-tests/dash_stalls_test.sh	py	rewrite-from-outside		helpers-dash
-tests/dash_time_limit_test.sh	py,python3-stub	rewrite-from-outside		helpers-dash
-tests/dash_watch_test.sh	py,python3-stub	rewrite-from-outside		helpers-dash
 tests/dataset_test.sh	py,python3-stub	rewrite-from-outside		helpers-reports
+tests/diff_allow_test.sh	text	rewrite-from-outside	retired-with: port-next	port-next
+tests/diff_run_test.sh	lib	rewrite-from-outside		helpers-shared
 tests/doc_check_test.sh	text	rewrite-from-outside	doc_check reads the command and setting names from the Go dispatch table and settings list as well as the bash, and fails when it finds none	binary-wrapper
 tests/dropped_lines_test.sh	py	rewrite-from-outside		helpers-dropped-lines
 tests/env_allowlist_test.sh	lib	rewrite-from-outside		port-status
@@ -49,20 +45,21 @@ tests/epic_goal_test.sh	text	rewrite-from-outside	a Go test reads the /goal leng
 tests/epic_layout_test.sh	lib	rewrite-from-outside		port-status
 tests/epic_reconcile_test.sh	lib	rewrite-from-outside		port-board-writers
 tests/epic_wait_session_test.sh	python3-stub	rewrite-from-outside		port-reports
-tests/escalate_ladder_test.sh	lib	rewrite-from-outside		port-dash
+tests/escalate_ladder_test.sh	lib	rewrite-from-outside		port-step-up
 tests/escalate_triggers_test.sh	py	rewrite-from-outside		helpers-shared
 tests/escalated_block_test.sh	lib	rewrite-from-outside		port-next
 tests/events_fixture_test.sh	text	rewrite-from-outside	redact.py also takes its words from the Go source under cmd/ and internal/, so a word only Go code uses stays allowed in the fixture	board-store
 tests/events_tail_agents_test.sh	lib,py,text	becomes-a-Go-test	retired-with: port-frame	port-frame
-tests/events_tail_dash_test.sh	py	rewrite-from-outside		helpers-panes
 tests/events_tail_flow_test.sh	py	rewrite-from-outside		helpers-shared
 tests/events_tail_lead_test.sh	lib	rewrite-from-outside		port-reports
 tests/events_tail_merge_test.sh	lib	rewrite-from-outside		port-board-writers
+tests/events_tail_stall_test.sh	py	rewrite-from-outside		helpers-panes
 tests/events_tail_test.sh	text	rewrite-from-outside	retired-with: port-frame	port-frame
 tests/events_test.sh	lib,py,text	rewrite-from-outside	a Go test reads the read-only command set from the Go dispatch table and fails a name that is not a command	binary-wrapper
 tests/fail_lines_test.sh	text	rewrite-from-outside	a Go test reads the mutation rule from the Go brief and fails when it stops telling builders to paste each FAIL line	port-story
 tests/fallback_reviewer_test.sh	py	rewrite-from-outside		helpers-shared
 tests/features_test.sh	py	rewrite-from-outside		helpers-flow-reviews
+tests/finished_test.sh	py	rewrite-from-outside		helpers-panes
 tests/flow_review_loops_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/flow_run_times_test.sh	python3-stub	rewrite-from-outside		port-reports
 tests/flow_sections_test.sh	text	rewrite-from-outside	a Go test shows a section dropped in with no .py file runs under its heading, in name order, in place of diffing a copy of bin/	helpers-shared
@@ -75,10 +72,10 @@ tests/herdr_events_test.sh	py,python3-stub	rewrite-from-outside		helpers-panes
 tests/idle_queue_test.sh	py,python3-stub	rewrite-from-outside		helpers-shared
 tests/idle_ready_test.sh	py	rewrite-from-outside		helpers-shared
 tests/incidents_test.sh	lib,py	rewrite-from-outside		helpers-shared
-tests/intervene_test.sh	py,text	rewrite-from-outside	a Go test reads intervene's kinds and causes from the Go command, so flow and dash still count what intervene accepts	port-board-writers
+tests/intervene_test.sh	py,text	rewrite-from-outside	a Go test reads intervene's kinds and causes from the Go command, so flow still counts what intervene accepts	port-board-writers
 tests/lead_queue_wait_test.sh	lib	rewrite-from-outside		port-reports
 tests/lead_stop_test.sh	py,text	rewrite-from-outside	a Go test of the stop hook's name function, case for case, in place of the one the test pulls out of hooks/lead-stop.sh	port-hooks
-tests/lib_path_test.sh	py,text	rewrite-from-outside	retired-with: helpers-dash	helpers-dash
+tests/lib_path_test.sh	py,text	rewrite-from-outside	retired-with: helpers-panes	helpers-panes
 tests/lint_test.sh	py,text	rewrite-from-outside	go-layers' CI check fails any package but the clock reading the time, as scripts/lint's python-clock rule does for bin/lib/*.py	go-layers
 tests/log_finding_test.sh	lib,py	rewrite-from-outside		helpers-shared
 tests/loose_match_test.sh	text	rewrite-from-outside	a Go check fails a regexp built from a variable that is not passed through regexp.QuoteMeta	first-port
@@ -104,7 +101,7 @@ tests/pane_prompt_test.sh	py	becomes-a-Go-test		helpers-panes
 tests/port_fields_test.sh	text	rewrite-from-outside	the same test finds the story and epic fields the Go code reads	port-inventory
 tests/port_locks_test.sh	text	rewrite-from-outside	the same test finds a lock the Go code takes	port-inventory
 tests/port_names_test.sh	text	rewrite-from-outside	the test reads command names from the ported commands' markers and the Go dispatch table as well as the bash arms	binary-wrapper
-tests/port_sites_test.sh	text	rewrite-from-outside	retired-with: helpers-dash	helpers-dash
+tests/port_sites_test.sh	text	rewrite-from-outside	retired-with: helpers-panes	helpers-panes
 tests/port_swarm_names_test.sh	text	rewrite-from-outside	the same test finds a SWARM_ name the Go code reads	port-inventory
 tests/port_tests_list_test.sh	text	rewrite-from-outside	retired-with: bash-retired	bash-retired
 tests/pr_contents_test.sh	lib	rewrite-from-outside		port-board-readers
@@ -137,7 +134,7 @@ tests/tell_blocked_test.sh	py,text	rewrite-from-outside	a Go test of tell's even
 tests/tell_queue_test.sh	lib	rewrite-from-outside		port-next
 tests/test_file_timeout_test.sh	lib,py	rewrite-from-outside		helpers-shared
 tests/test_refusal_test.sh	lib	rewrite-from-outside		port-agent-starts
-tests/test_runner_test.sh	py	rewrite-from-outside		helpers-dash
+tests/test_runner_test.sh	py	rewrite-from-outside		delete-dash
 tests/time_in_state_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/timeouts_test.sh	lib,text	rewrite-from-outside	a Go check fails a gh, herdr or curl call that runs with no deadline	first-port
 tests/unsent_brief_test.sh	py,python3-stub	rewrite-from-outside		helpers-panes
