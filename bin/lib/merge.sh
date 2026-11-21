@@ -2,6 +2,7 @@
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit, and on a head it merged the base into (SWARM_MERGE_CI_SECONDS, for tests)
 MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL; else scaled)
+MERGE_POLL_MAX=120      # the most seconds between ci_gate main's reads, which double from MERGE_POLL while nothing changes (SWARM_MERGE_POLL_MAX; else scaled)
 MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear; how long such a head may have none (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
@@ -12,8 +13,9 @@ WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for t
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
 WATCH_POLL=60           # seconds between watch's polls, scaled (nap); its poll-cache max age is one under it
-MAIN_CI_OK=0            # ci_gate main's exit codes, as ci_gate.py names them (CI_OK, CI_RED)
+MAIN_CI_OK=0            # ci_gate main's exit codes, as ci_gate.py names them (CI_OK, CI_RED, CI_COVERED)
 MAIN_CI_RED=1
+MAIN_CI_COVERED=4
 FIX_MAIN_LINES=20       # FAIL lines fix-main prints and puts in its story
 FIX_MAIN_LINE_CHARS=300 # the most of each of those lines, and of its red checks, that it keeps (ci_data)
 # What GitHub concludes a check run, commit status or workflow run with: what follows a check's name
@@ -77,8 +79,9 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # line, none when it requires none (main_red_run). An error (3) when any part cannot be read.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
-# ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
-# <poll> seconds, until the merge commit <sha> is green as above (with no check run needed of its own,
+# ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> [<poll cap> [<waits dir>]] — wait,
+# reading every <poll> seconds at first, twice as long after each read that finds no run started or
+# ended, up to <poll cap> (<poll> when empty), until the merge commit <sha> is green as above (with no check run needed of its own,
 # though with no workflow expected not before <grace> seconds),
 # every workflow whose `on: push` covers <base> and the files PR <pr> changes (read from
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
@@ -94,7 +97,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # "flaky <run id> <attempt that failed> <its checks>" line for each run whose rerun went green;
 # red <checks> (MAIN_CI_RED), with a second line "note: <why>" when a rerun failed too, was refused
 # or is under way; timeout (<what it waited on>) (2) or error <why> (3); YAML it does not read is an
-# error, never a skipped workflow.
+# error, never a skipped workflow. With <waits dir>, the wait keeps a record there, with the workflows
+# it expects, while it runs; and once another live wait's record there, on the same repo and base,
+# names a commit that holds <sha> (a compare read once per commit) and expects every workflow this
+# one does, it ends: covered <that sha> <its PR> (MAIN_CI_COVERED), as that wait covers this one.
 # ci_gate admin <owner/repo> <base> <sha> <method> — for merge_admin, since --admin skips every rule on
 # <base>, not just the approving review: succeed when <sha> has every status check <base>'s rulesets
 # and branch protection require, is up to date with <base> when they say strict, and <base> has no
@@ -1220,10 +1226,12 @@ short_shas() {
 # head; with --board, on a green main with an
 # upstream, ready_tell reconciles and notes conductors of the stories the PR made ready. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
-# merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
-# then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
+# merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error|covered by <sha> (PR #<n>) (a red one
+# then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own.
+# A story's merge leaves its wait for CI on the base to a newer story merge's that covers it (covered by:
+# ci_gate main's <waits dir>). Fails on anything but a green main or one left to that newer merge.
 merge_pr() {
-  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" branch="" from="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" branch="" from="" rwhy="" caveat="" flist="" lock="" before="" waits=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -1430,17 +1438,28 @@ merge_pr() {
   # Either way, CI on the merge commit on the base: the push-only workflows (a release, a deploy) run
   # there and nowhere else. A merge at another head (QUEUE_BAD) is not waited on: it fails below.
   if [[ -n "${oid}" ]]; then
+    # A story's merge leaves its wait to a newer story merge's that covers it (ci_gate main's <waits dir>),
+    # so several merges at once read CI on the base once, at its newest merge. A --board or --release
+    # merge waits itself: what it does next needs its own commit green.
+    waits=""; [[ -n "${only}" ]] || waits="${PROJECT_DIR}/.swarm/main-waits"
     if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
-        "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
+        "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" \
+        "${SWARM_MERGE_POLL_MAX:-$(scaled "${MERGE_POLL_MAX}")}" "${waits}")"; then
       main_notes "${repo}" "${why}"; why=ok
     else
       rc=$?; why="${why:-error (exit ${rc})}"
+    fi
+    if [[ ${rc} -eq ${MAIN_CI_COVERED} && "${why}" =~ ^covered\ ([0-9a-f]{40})\ ([0-9]+)$ ]]; then
+      why="covered by ${BASH_REMATCH[1]:0:7} (PR #${BASH_REMATCH[2]})"
+    elif [[ ${rc} -eq ${MAIN_CI_COVERED} ]]; then
+      rc=3; why="error ci_gate main said ${why//$'\n'/; }"
     fi
     # A red's second line is a note on its rerun, for fix_main.
     [[ "${why}" != *$'\n'"note: "* ]] || { note="${why#*$'\n'note: }"; why="${why%%$'\n'*}"; }
     record_event main-ci "${MERGE_TARGET}" "${why}"
     # why names checks the code under test may name: shown through ci_data, as the story shows them.
     echo "main-ci: $(ci_data <<< "${why}")"
+    [[ ${rc} -ne ${MAIN_CI_COVERED} ]] || echo "CI on ${base} at ${oid:0:7} is left to the merge of ${why#covered by }, whose commit holds it: that merge prints its result, and its fix-main: line if it goes red"
     # A green main clears a red one of this repo and base only, and only when it ran the checks that
     # went red (clear_red_main). Each runs in a subshell, its every gh call bounded, so neither a failed
     # step nor a die in it (a state lock that times out) can stop merge before reconcile below. The
@@ -1492,18 +1511,22 @@ merge_pr() {
     # holds inside it; it never fails the merge.
     if [[ -n "${grp}" ]]; then
       [[ -z "${QUEUE_BAD}" ]] || caveat="the merge queue merged a head nobody checked (${QUEUE_BAD}), so start none of the stories waiting on it until what merged is reviewed"
-      [[ ${rc} -eq ${MAIN_CI_OK} || -z "${oid}" ]] || caveat+="${caveat:+, and }CI on ${base} at ${oid:0:7} is not green (${why%% *}), so start none of the stories waiting on it until it is"
+      # A wait left to a newer merge's (covered) notes as a green one: a hold here would have no later
+      # note to lift it, since the newer merge notes only its own conductor. That merge prints fix-main:
+      # if CI on the base goes red.
+      [[ ${rc} -eq ${MAIN_CI_OK} || ${rc} -eq ${MAIN_CI_COVERED} || -z "${oid}" ]] \
+        || caveat+="${caveat:+, and }CI on ${base} at ${oid:0:7} is not green (${why%% *}), so start none of the stories waiting on it until it is"
       [[ -z "${rwhy}" ]] || caveat+="${caveat:+, and }reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
       # After either of the first two, reconcile has still finished the story, so unblock readies its
       # dependents, and the startable pass the note's wake prompt asks for would start them.
-      [[ ${rc} -eq ${MAIN_CI_OK} && -z "${QUEUE_BAD}" ]] \
+      [[ ( ${rc} -eq ${MAIN_CI_OK} || ${rc} -eq ${MAIN_CI_COVERED} ) && -z "${QUEUE_BAD}" ]] \
         || caveat+=". This overrides the startable pass after this note: do not start any story whose depends_on names ${MERGE_TARGET}"
       ( set -e; story_note "${url}" "${MERGE_TARGET}" "${grp}" "${caveat}" ) &
       wait $! || echo "warning: telling the conductor of ${MERGE_TARGET} that ${url} merged failed (exit $?)"
     fi
     [[ -z "${rwhy}" ]] || die "merge: reconcile failed after the merge; run swarm.sh reconcile"
   fi
-  [[ ${rc} -eq ${MAIN_CI_OK} ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: $(ci_data <<< "${why}")"
+  [[ ${rc} -eq ${MAIN_CI_OK} || ${rc} -eq ${MAIN_CI_COVERED} ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: $(ci_data <<< "${why}")"
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
 }
 

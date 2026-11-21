@@ -664,7 +664,25 @@ prints `flaky: <jobs> (<the FAIL lines of the attempt that failed>), green on re
 job writes the story at once, and so does a rerun GitHub refuses. A `note:` line first among the
 story's CI output, and among merge's, says that the rerun failed too, or why GitHub refused it, and
 names any rerun still under way. `swarm.sh reconcile` clears a red main by the same rule: once each required check
-has a run, only those must pass. Without
+has a run, only those must pass.
+
+How the wait for CI on the merge commit polls:
+
+- It reads CI there every 20 seconds (`MERGE_POLL`) at first.
+- After each read that finds no run started or ended since the read before, it waits twice as long before the next, up to 120 seconds (`MERGE_POLL_MAX`, or `SWARM_MERGE_POLL_MAX` in seconds).
+- A run that starts or ends brings it back to 20 seconds.
+- While a story's merge waits, it keeps a record of the wait in `.swarm/main-waits/`.
+- A newer story merge into the same repo and base may wait on a commit that holds the older merge's commit and expects every workflow the older one expects.
+- The older merge then leaves the wait to the newer one.
+- It reads the compare of the two commits once to tell whether the newer commit holds its own.
+- The older merge prints `main-ci: covered by <sha> (PR #<n>)`, naming the newer merge's commit and PR.
+- It goes on as after a green main, except that it clears no red main.
+- Its note to the story's conductor reads as after a green main too, with the stories it made ready, since no later note would lift a hold.
+- Only the base's newest merge reads CI there.
+- When CI on its commit goes red, that merge alone prints `fix-main:` and writes the story.
+- A `--board` or `--release` merge always waits on its own commit, since what it does next needs that commit green.
+
+Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
 For a story's PR it then sends the story's running conductor (the backlog conductor, for a story with
 no epic) one note: the PR merged, and these stories of its epic are ready now. They are the blocked
