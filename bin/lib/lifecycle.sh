@@ -2642,7 +2642,7 @@ lead_caller() { declare -F lead_project > /dev/null && lead_project "${PWD}" > /
 # `swarm-lead · <project_label>` (lead_label) and adds the workspace to LEAD_WORKSPACE, so a later
 # command from any workspace there sends herdr nothing. It sends nothing outside herdr, without
 # herdr's socket (HERDR_SOCKET_PATH, which the tests drop), from a swarm.sh another one runs
-# (NESTED_CALL: upgrade names other projects), with stderr going to /dev/null (the
+# (NESTED_CALL: a release's merge runs upgrade for each project with agents), with stderr going to /dev/null (the
 # Stop hook's calls, through within: a refusal said there is lost), or from anyone but the lead: one
 # lead_project walk from the cwd finds the project whose folder it is, which must be this one; a
 # folder in no project (a board kept outside the repo) is the lead's of SWARM_PROJECT's (lead_caller).

@@ -195,7 +195,7 @@ does: a session with no agent's environment (no `SWARM_AGENT` or `SWARM_GH_CALLE
 project, from a folder that is not a worktree. A lead whose folder is in no project, such as a board
 kept outside the repo, belongs to the project `SWARM_PROJECT` names. Nothing is renamed from an
 agent's pane, outside herdr, without herdr's socket (`HERDR_SOCKET_PATH`), by a `swarm.sh` another
-one runs (`upgrade` runs one for each project it names), by a command run from one project's
+one runs (a release's `swarm.sh merge --release` runs `swarm.sh upgrade` for each project with agents), by a command run from one project's
 folder for another (`SWARM_PROJECT`), by a test hook (a command starting `_`), or by a command whose
 stderr goes to `/dev/null`, as the Stop hook's do, since a refusal said there would be lost.
 
@@ -1189,9 +1189,7 @@ over them says each reason is the builder's claim, not a fact, and that codex ig
 With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
 unchanged. When codex hits a usage or rate limit, cannot reach its provider, or times out, the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
-codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
-`.swarm/state/codex-review.<pid>` (start time, base, worktree); nothing reads it since the
-dashboard was deleted. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
+codex-review stops codex the same way and exits only once it is gone. codex stays in the caller's
 process group, so a harness that kills that group kills codex too. On macOS a KILL to the group can
 miss a child that codex forks while the KILL is sent, so a harness that must leave nothing STOPs the
 group first. Every brief says to run it in the

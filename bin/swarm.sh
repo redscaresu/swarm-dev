@@ -526,8 +526,8 @@ cut_record() {
 # (.swarm/briefs/<name>.md; <name>.held-findings.md and the like are a build's other files) and the
 # board's stories'. Of .swarm/state it reads the tab records alone, whose names are labels with no
 # dot: a file whose name has one is skipped, since codex's brief copies there (brief-<name>.md) hold
-# prose that can be shaped like a tab record's line, and codex-review.<pid> markers, .tmp files and
-# watch-seen's temporary files are no pane's. An epic named brief-<x> keeps its record brief-<x>,
+# prose that can be shaped like a tab record's line, and .tmp files and watch-seen's temporary
+# files are no pane's. An epic named brief-<x> keeps its record brief-<x>,
 # with no dot, so only the dot tells them apart. Like own_panes, it reads only lines shaped like a
 # tab record, and always succeeds.
 cut_names() {
@@ -876,7 +876,7 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # reviews after the reap line with a whole codex_minutes of its own, since codex used all of the first.
 # codex-review's own events.tsv line carries slug=, role= and codex=<how the run ended> (codex_end).
 codex_review() {
-  local pid tpid left budget deadline step rc m i args story prompt="" dir log files fields=() kv=() f try=1 stuck
+  local pid tpid left budget deadline step rc i args story prompt="" dir log files fields=() kv=() f try=1 stuck
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   [[ -z "${SWARM_PR:-}" || "${SWARM_PR}" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+$ ]] \
@@ -896,25 +896,11 @@ codex_review() {
   left=$((CFG_codex_minutes * 60))
   [[ ! "${SWARM_CODEX_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || left="${SWARM_CODEX_SECONDS}"
   budget="${left}"
-  # The run's marker: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
-  # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
-  # Only the deleted dash read it; nothing reads it now.
-  mkdir -p "${STATE_DIR}"
-  for m in "${STATE_DIR}"/codex-review.*; do
-    # Only a pid suffix: retire rewrites every state file through <file>.tmp.
-    [[ -f "${m}" && "${m##*.}" =~ ^[0-9]+$ ]] || continue
-    kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
-  done
-  m="${STATE_DIR}/codex-review.$$"
-  # Each trap is this run's files and tee, fixed when set: the marker's before it is written.
-  files="$(printf %q "${m}")"
-  # shellcheck disable=SC2064
-  trap "codex_cleanup - ${files}" EXIT
-  printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
   # Each run's log and fifo in a directory of this run's own (mktemp -d: mode 700), so no other user
   # can make or read them first.
   dir="$(mktemp -d "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"
-  files+=" $(printf %q "${dir}")"
+  # Each trap is this run's files and tee, fixed when set.
+  files="$(printf %q "${dir}")"
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
   # Every way out below goes through the EXIT trap; the timeout bounds both runs together.

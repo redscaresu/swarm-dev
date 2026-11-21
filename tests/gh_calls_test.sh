@@ -193,7 +193,7 @@ before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"
 (cd "${P}" && PATH="${dir}/stub:${REPO}/bin/gh-shim:${PATH}" env -u HERDR_ENV -u SWARM_GH_VIA -u SWARM_PROJECT SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-01 > /dev/null)
 check "swarm.sh puts the shim first when it is on PATH behind another gh" "$(( $(wc -l < "${P}/.swarm/gh-calls.tsv") > before ))" 1
 
-# A command run for another project (as upgrade runs swarm.sh for each) logs in that project's log.
+# A command run for another project (as a release runs swarm.sh upgrade for each) logs in that project's log.
 Q="${dir}/other"; mkdir -p "${Q}/.swarm" "${Q}/.claude/swarm"; : > "${Q}/.claude/swarm/config"; git -C "${Q}" init -q
 cp "${P}/.swarm/agents.tsv" "${Q}/.swarm/"   # so its flow runs gh (outcomes)
 before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"

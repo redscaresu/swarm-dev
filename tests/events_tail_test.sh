@@ -97,6 +97,5 @@ check "lead_queue untailed: no-review: for zzlqa, whose review start failed" \
   grep -qxF 'no-review: zzlqa https://github.com/o/r/pull/40, exit: swarm.sh review-agent zzlqa https://github.com/o/r/pull/40, or the fallback reviewer' <<< "${out}"
 check "lead_queue untailed: none for zzlqb, a findings tell after its failed start" lacks zzlqb "${out}"
 
-
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
