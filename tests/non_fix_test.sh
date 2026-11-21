@@ -253,7 +253,7 @@ check "a board outside the repo exits 1, with no gh call" "1||non_fix_change: th
 # above, was cached).
 board_dir docs
 rm -r "${P}/.swarm/gh-cache"
-# A gh that hangs is cut: at the report's deadline under a report (REPORT_END, as next and dash run it),
+# A gh that hangs is cut: at the report's deadline under a report (REPORT_END, as next and status run it),
 # else after the function's own bound (60 s; SWARM_NON_FIX_WAIT here). The stub sleeps 20 s.
 echo 20 > "${ROOT}/gh.sleep"
 t0="$(date +%s)"

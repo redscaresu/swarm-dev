@@ -61,7 +61,7 @@ worktree of `../<name>`, and the lead deletes the story file once that PR merges
 A `lead` story with an `after:` line naming its own epic (`epic: x`, `after: x`) waits until that
 epic is built, such as a check on real cloud once the code is in. It does not count in its epic, so
 an epic with only `after:` stories is still planned by `/plan-epic`. Once code stories were planned
-for an active epic and none is open, it counts as done in `next`, `status` and `dash` while its
+for an active epic and none is open, it counts as done in `next` and `status` while its
 `after:` stories wait, so what depends on it goes ahead. On a board in the story's repo, the epic's
 last code story's PR deletes the epic file without waiting for them. A list counts when it names
 the story's own epic (`after: [x, y]`), and so do `after: [x]` and `after: x  # note`. An `after:`

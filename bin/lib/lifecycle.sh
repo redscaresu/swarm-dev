@@ -2657,7 +2657,7 @@ lead_caller() { declare -F lead_project > /dev/null && lead_project "${PWD}" > /
 # `swarm-lead · <project_label>` (lead_label) and adds the workspace to LEAD_WORKSPACE, so a later
 # command from any workspace there sends herdr nothing. It sends nothing outside herdr, without
 # herdr's socket (HERDR_SOCKET_PATH, which the tests drop), from a swarm.sh another one runs
-# (NESTED_CALL: dash --project and upgrade name other projects), with stderr going to /dev/null (the
+# (NESTED_CALL: a release's merge runs upgrade for each project with agents), with stderr going to /dev/null (the
 # Stop hook's calls, through within: a refusal said there is lost), or from anyone but the lead: one
 # lead_project walk from the cwd finds the project whose folder it is, which must be this one; a
 # folder in no project (a board kept outside the repo) is the lead's of SWARM_PROJECT's (lead_caller).
@@ -4423,7 +4423,7 @@ review_restart() {
 # first, as no_agent_exit's does. A start cut short (review_restart_try) takes its PR from its brief
 # when that names one, over prs: and the rest: its command wrote that brief. With record (wait --lead's poll), one with
 # tries left and a PR is started again at its next try (review_restart), and the line says
-# ` (started <N> of STARTS_PER_REVIEW)` after the PR; next, status and dash only read. A try cut off
+# ` (started <N> of STARTS_PER_REVIEW)` after the PR; next and status only read. A try cut off
 # mid-start is never started again: its line says so and names the lead's check.
 no_review_line() {
   local slug="$1" ok url under wrote prs repo rname f="${PROJECT_DIR}/.swarm/reviews/$1.md" head origin what n brief note="" check=""
@@ -4607,10 +4607,10 @@ no_agent_granted() {
 # (no_review_events) for the stories with a build record, and once more for each that reaches its
 # no-review: line (review_restart_try); per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
-# known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
+# known), then herdr's JSON and one ps once a started story or a marker is left. No gh. A caller that holds herdr's list (no_agent_from) hands it in
 # instead, in LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr
 # pane too. Prints nothing and returns 2 when it could not check: no herdr list (outside a pane,
-# unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
+# unless a caller handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
   local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" revonly="" handed=""
@@ -4699,7 +4699,7 @@ no_agent_lines() {
 }
 
 # no_agent_from <herdr agent list JSON> — no_agent_lines read from a list the caller already holds
-# (status, dash), so herdr is not asked again, with its exit (2: could not check). Read-only (no
+# (status), so herdr is not asked again, with its exit (2: could not check). Read-only (no
 # record). The list is local to the call, so it never reaches a later lead_agents.
 no_agent_from() {
   # shellcheck disable=SC2034 # no_agent_lines reads them

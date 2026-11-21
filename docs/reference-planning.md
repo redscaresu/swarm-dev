@@ -49,8 +49,8 @@ In swarm-dev's own repo, `internal/guard/`, `internal/merge/`, `internal/release
 the epic guard refuses an epic that goes active without an `agreed:` date, a `parent:`, or an `hld:`
 whose HLD grants `epics` (§ The lead, § Merging). A draft epic that one of these lets go active
 without your agreement (a `parent:` naming an epic that is active or split, an `hld:` naming an agreed
-HLD that grants `epics`, or any draft with `lead_epics = on`) is the lead's: the gate, `status` and
-`dash` list it as `draft epic: <slug>, the lead sets it active (<why>)`, not `run /epic <slug>`. A
+HLD that grants `epics`, or any draft with `lead_epics = on`) is the lead's: the gate and `status`
+list it as `draft epic: <slug>, the lead sets it active (<why>)`, not `run /epic <slug>`. A
 draft with `stage:` is never the lead's this way, whatever its tickets: a stage `next` can open gives it
 the staged path, and one it cannot open goes through `/epic` (**Staged epics**, § Writing an epic).
 
@@ -149,7 +149,7 @@ HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`
 tag at or above the previous minor, `v<x.(y-1).0>`. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
 draft with no `hld:`, or under an HLD without the `epics` grant, or on a board outside the project's
 repo, still goes through `/epic`. Until
-then, the gate, `status` and `dash` list it as `staged epic: <slug>, stage v<x.y.0>, after
+then, the gate and `status` list it as `staged epic: <slug>, stage v<x.y.0>, after
 v<x.(y-1).0>`, which needs nothing from you. See [Releases](reference-merging.md#releases) for the step that sets it
 active and for when a stage's release is cut.
 

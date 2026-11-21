@@ -227,7 +227,7 @@ mkdir -p "${tmp}/fixture/docs" "${tmp}/fixture/templates"
 # A line ending in swarm.sh does not make the next line's first word a command.
 printf 'note: swarm.sh\nreads this\n' > "${tmp}/fixture/templates/Board.base"
 cat > "${tmp}/fixture/README.md" <<'EOF'
-Run `swarm.sh nosuch`, `swarm.sh dash2`, `swarm.sh config merge2` or `swarm.sh dash`, then `swarm.sh cost` (removed, prints a pointer).
+Run `swarm.sh nosuch`, `swarm.sh status2`, `swarm.sh config merge2` or `swarm.sh status`, then `swarm.sh cost` (removed, prints a pointer).
 See [the method](docs/method.md) and [gone](docs/nosuch.md), `bin/lib/nosuch.sh`, `./bin/gone.sh` and `./bin/swarm.sh`.
 `docs/epics/<slug>.md` lives on the board, as does `docs/stories/`; `docs/nosuch/<slug>.md` does not.
 See [building](docs/anchors.md#buildin), [the second](docs/anchors.md#building-1) and [a base](templates/Board.base#L1).
@@ -264,7 +264,7 @@ cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 
 | Command | What it does |
 |---|---|
-| `dash` | another table after a blank line: not config keys |
+| `status` | another table after a blank line: not config keys |
 EOF
 # A span wrapped over two lines is still code, and prose between two wrapped spans is not; a path
 # ending in swarm.sh is not followed by a command.
@@ -276,7 +276,7 @@ nosuch <slug>` or `swarm.sh drop
 ```bash
 shellcheck bin/swarm.sh bin/lib/*.sh
 bin/swarm.sh nosuch1
-"${SWARM_HOME}/bin/swarm.sh" dash
+"${SWARM_HOME}/bin/swarm.sh" status
 ```
 EOF
 # The Go tree: a missing cmd/ or internal/ path, or a go.mod anywhere but the root (under a glob, or
@@ -290,7 +290,7 @@ Real: `cmd/swarm/main.go`, `go.mod`, `go.sum`, `internal/guard/` and `internal/`
 # Edit nope/go.mod. Then read go.mod, and other/go.mod.bak or other/go.modx is another name.
 ```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/go.md\tpath cmd/nope/main.go\ndocs/go.md\tpath internal/nope/x.go\ndocs/go.md\tpath internal/gaurd/\ndocs/go.md\tpath internal/guard/nope.go\ndocs/go.md\tpath tools/go.mod\ndocs/go.md\tpath tools/*/go.mod\ndocs/go.md\tpath nope/go.mod\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh status2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/go.md\tpath cmd/nope/main.go\ndocs/go.md\tpath internal/nope/x.go\ndocs/go.md\tpath internal/gaurd/\ndocs/go.md\tpath internal/guard/nope.go\ndocs/go.md\tpath tools/go.mod\ndocs/go.md\tpath tools/*/go.mod\ndocs/go.md\tpath nope/go.mod\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
@@ -307,7 +307,7 @@ fi
 printf 'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh stale\ndocs/method.md\tconfig key nosuch_key\n' > "${tmp}/fixture.known"
 new="$(unknown "${tmp}/fixture.found" "${tmp}/fixture.known")"
 if [[ "${new}" != *$'README.md\tswarm.sh nosuch'* && "${new}" != *$'docs/method.md\tconfig key nosuch_key'* \
-      && "${new}" == *$'README.md\tswarm.sh dash2'* ]]; then
+      && "${new}" == *$'README.md\tswarm.sh status2'* ]]; then
   echo "ok   fixture known list: its entries are allowed and a finding not in it still fails"
 else
   echo "FAIL fixture known list: allowed wrongly, the findings left were:"; echo "${new}"; fails=$((fails + 1))

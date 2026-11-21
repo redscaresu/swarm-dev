@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# dash_wait_test.sh — wait and wait --stall on P's builders: slices, stalls, tells and a codex
-# agent herdr answers for.
-# `swarm.sh dash` against a throwaway board, a fake agents.tsv, findings.tsv and events.tsv, a stub
-# herdr on PATH printing a fixed agent list, and a stub gh. stty and tput are stubbed to fail, so the
-# width comes from COLUMNS (or the default 100), except in the pty tests.
+# wait_stall_test.sh — wait and wait --stall on P's builders: slices, stalls, tells and a codex
+# agent herdr answers for. A throwaway board, a fake agents.tsv, findings.tsv and events.tsv, a stub
+# herdr on PATH printing a fixed agent list, and a stub gh; stty and tput are stubbed to fail.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -24,7 +22,6 @@ check() { # <name> <test...>
   local name="$1"; shift
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
-lacks() { ! grep -qF -- "$1" <<< "$2"; }
 
 item() { # <path under docs> <front-matter line>...
   local path="${P}/docs/$1" title; shift
@@ -40,8 +37,6 @@ printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/tput"
 chmod +x "${ROOT}/size/stty" "${ROOT}/size/tput"
 export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 mkdir -p "${TMPDIR}"
-# fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
-fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 git -C "${P}" init -q
 item hld/2026-01-01-x.md 'status: agreed'
 item epics/e1.md 'status: active' 'hld: 2026-01-01-x'
@@ -54,7 +49,7 @@ sed -i.bak 's/^# ask$/# Create the read-only IAM user/' "${P}/docs/stories/ask.m
 # A finished story of e1, deleted from the board after it merged: e1's progress counts it from git.
 item stories/s-old.md 'status: review' 'epic: e1'
 # Two slugs whose agent names are the same 32 characters: the done one must never be the builder's.
-# Its PR is never asked about either: dash skips done items.
+# Its PR is never asked about either: done items are skipped.
 item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-1.md 'status: done' 'prs: https://github.com/o/r/pull/9'
 item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2.md 'status: ready' 'kind: code'
 printf 'w1:p1 conductor\nw1:p2 s-one\nw1:p3 s-gone\nw1:p4 old\nw1:p5 odd\nw1:p11 s-two\n' > "${P}/.swarm/state/e1"
@@ -82,7 +77,7 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 # A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
+# escalation block's fixed now (2026-10-10 noon).
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
@@ -97,7 +92,7 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '2026-09-%02dT10:00:00Z\ttell\tol
 printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"waiting","waitingFor":"input"},{"sessionId":"sess-today","status":"busy"}]' > "${ROOT}/claude.json"
 # herdr: this project's conductor (working) and builder (blocked), an empty pane (w1:p3), and
 # another project's agent (w9:p1), which must not be shown. s-three's herdr status is done while its
-# session is busy: the session's word is the one dash shows.
+# session is busy: the session's word is the one shown.
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
@@ -138,7 +133,7 @@ chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nob
 
 # The board is committed, with one merge on the base branch; then one board file is edited.
 G=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
-touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
+touch "${P}/docs/stories/README.md"   # init's marker of a board
 "${G[@]}" add docs && "${G[@]}" commit -qm board
 "${G[@]}" rm -q docs/stories/s-old.md && "${G[@]}" commit -qm "finish s-old"
 "${G[@]}" checkout -qb story/s-zero && "${G[@]}" commit -q --allow-empty -m work
@@ -225,16 +220,12 @@ check "a codex agent's step that fails for real ends the stepping, and the wait 
 if out="$(WAIT_MODE=timeout long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 3000)"; then rc=0; else rc=$?; fi
 check "a codex builder's wait --stall returns on a stall between steps" test "${rc}:$(grep -c '^stalled: working' <<< "${out}")" == "3:1"
 printf '%s\tcode\taaaaaaaaaa-bbbbbbbbbb-cccccccccc\tclaude\topus\thigh\tsess-cut\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
-fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "dash maps a cut agent name to the story not done" grep -qE 'look at aaaaaaaaaa-bbbbbbbbbb-cccccccccc: working 1(19|20|21) min' <<< "${out}"
 if out="$(long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 3000)"; then rc=0; else rc=$?; fi
 check "wait maps a cut agent name to the story not done" test "${rc}" -eq 3
-# A PR updated a minute ago is a sign of life: neither dash nor wait --stall calls it stalled.
+# A PR updated a minute ago is a sign of life: wait --stall does not call it stalled.
 ago 1 > "${ROOT}/pr8.updated"
-# Into the front matter: dash reads keys there only.
+# Into the front matter, where the stall rule reads its keys.
 awk 'NR > 1 && /^---$/ && !d { print "prs: https://github.com/o/r/pull/8"; d = 1 } { print }' "${P}/docs/stories/s-three.md" > "${ROOT}/s3" && mv "${ROOT}/s3" "${P}/docs/stories/s-three.md"
-fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a recent PR update is not a stall in dash" lacks "look at s-three" "${out}"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
 
