@@ -12,7 +12,10 @@
 # entry removed the run is red, naming that PR's change. A pull_request run names its own head branch,
 # and a group whose head is in no entry is an error. (4) In .github/workflows/diff-run.yml the gate
 # step runs the base's copy of scripts/board-only.sh, and every step after it runs only when the gate
-# says the PR is not board-only, so a board-only PR skips them.
+# says the PR is not board-only, so a board-only PR skips them. (5) A background step's calls are a
+# stream of their own under --base, as without it: a call changed within a step is red by the step's
+# label, passes once the head story's entry names that stream's lines, and a step only one tree has
+# is red. Under --times, a repeat that differs from its own tree's first run is red under --base too.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -171,6 +174,33 @@ if not rest or bad:
     sys.exit("FAIL diff-run.yml: a step after the gate runs on a board-only PR: %s" % (bad or "none after it"))
 PY
 then ok "diff-run.yml: every step after the gate skips a board-only PR"; else fails=$((fails + 1)); fi
+
+# (5) A background step, and a repeat. Each tree's probe.sh makes one foreground gh call and starts a
+# subshell that makes two more once the foreground's has started, so the subshell is a step.
+# step_probe <tree> <first> <second> — <tree>'s probe.sh, its step's two calls.
+step_probe() {
+  printf '%s\n' "( sleep 0.3; gh api $2; gh api $3 ) > /dev/null 2>&1 &" 'gh api fg-1 > /dev/null 2>&1' 'sleep 1' > "$1/probe.sh"
+}
+STEP='calls:[bash <tree>/probe.sh] gh api step-1'
+drop a; drop b
+step_probe "${BASE}" step-1 step-2; step_probe "${HEAD}" step-1 STEP-2
+expect "a call changed within a background step is red under --base, by the step's label" 1 "DIFF probe ${STEP}" --base --branch story/a
+mkdir -p "${HEAD}/scripts/allow/stage-1"
+printf -- '---\nstory: a\npr: 11\nkind: stage\n---\n\n# a\n\n## probe %s\n\n%s\n-gh api step-2\n+gh api STEP-2\n%s\n' \
+  "${STEP}" "${FENCE}diff" "${FENCE}" > "${HEAD}/scripts/allow/stage-1/a.md"
+expect "and passes once the head story's entry names that step's lines" 0 "same probe" --base --branch story/a
+drop a
+step_probe "${HEAD}" STEP-1 step-2
+expect "a step only the head has is red under --base, by its label" 1 "DIFF probe calls:[bash <tree>/probe.sh] gh api STEP-1" --base --branch story/a
+# Each tree's probe.sh prints its own run number, counted in a file beside it, so every repeat differs
+# from its tree's first run while the two trees' first runs are the same.
+for t in "${BASE}" "${HEAD}"; do
+  # shellcheck disable=SC2016 # probe.sh's own variables, expanded when a run runs it
+  printf '%s\n' 'f="$(dirname "$0")/runs"; n="$(cat "${f}" 2>/dev/null || echo 0)"; echo "$((n + 1))" > "${f}"; echo "run $((n + 1))"' > "${t}/probe.sh"
+done
+expect "a repeat that differs from its own tree's first run is red under --base" 1 "DIFF probe stdout (a run 2 against run 1)" --base --branch story/a --times 2
+rm -f "${BASE}/runs" "${HEAD}/runs"
+expect "and the same trees are clean under --base with one run" 0 "same probe" --base --branch story/a
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

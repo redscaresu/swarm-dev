@@ -54,6 +54,7 @@ The streams are:
 - `files`: the list of files the run wrote and deleted, one `written <path>` or `deleted <path>` line each.
 - `file:<path>`: one written file's content, with its path as `files` lists it.
 - `calls:<step>`: the gh and herdr calls of one step, such as `calls:fg` for the foreground.
+- A background step's `<step>` is its label, `[<argv>] <first call>`, as a `DIFF` line and `--draft` print it.
 
 Paths and other run-specific values appear after the run's replacements and masks.
 So a path reads `<root>/proj/...`, and a time stamp reads `<time>`.
@@ -101,6 +102,9 @@ The result is then compared with the new tree's output.
 - A hunk for a fixture outside the run is skipped.
 
 The run ends with one line per entry saying how many of its hunks applied.
+
+With `--times <n>`, the entries apply to the two trees' first runs.
+The run compares each repeat with its own tree's first run, with no entry applied, so a tree that differs from itself is always red.
 
 The `files` list decides which files exist, as each hunk applies.
 A `files` hunk that adds a `written <path>` line makes that file, empty until a `file:<path>` hunk gives it lines.
