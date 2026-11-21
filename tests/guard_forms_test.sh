@@ -43,7 +43,7 @@ lib() {
     CFG_merge=agent; CFG_goal=off
     agent_name() { printf "%s" "$1"; }
     story_items() { sed -n "/^\*\*$2:\*\*/,/^\$/p" "$1"; }
-    for f in agents reports build board merge lifecycle dash; do . "${SWARM_HOME}/bin/lib/${f}.sh"; done
+    for f in agents reports build board merge lifecycle; do . "${SWARM_HOME}/bin/lib/${f}.sh"; done
     eval "$1"' _ "$1" 2>&1
 }
 # rule_of <brief> — guard_rule as the brief holds it, whitespace flattened; empty when it is not there.

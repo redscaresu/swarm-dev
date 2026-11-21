@@ -18,5 +18,4 @@ First steps: install the plugin (`claude plugin marketplace add redscaresu/swarm
 - [docs/reference-merging.md](docs/reference-merging.md): merging and releases
 - [rules.md](rules.md): swarm-dev's rules, which every builder follows and every reviewer holds a PR to
 - [docs/port/README.md](docs/port/README.md): the lists the Go port is checked against, what each holds and what a PR does to it
-- [docs/dash.md](docs/dash.md): the read-only dashboard
 - [commands/](commands/): the slash commands the plugin loads (`/swarm-dev:epic`, `/swarm-dev:plan-epic`, `/swarm-dev:swarm`)

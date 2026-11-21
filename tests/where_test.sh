@@ -5,7 +5,7 @@
 # a's s1 b's labels. An agent herdr lists only in the other project's panes, or not at all, exits 1,
 # having read no list but the agent list. A workspace label herdr gives none of, or a workspace list it
 # cannot give, prints -; a tab with no label, or no tab list, prints the name swarm-dev gave the tab (its
-# record's) with the tab's id, `t1 (w1:t2)`, as status and dash do, so it never reads as herdr's label;
+# record's) with the tab's id, `t1 (w1:t2)`, as status does, so it never reads as herdr's label;
 # with no tab id from herdr, the record's name alone; all still with the pane.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh

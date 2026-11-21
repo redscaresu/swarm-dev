@@ -2,7 +2,7 @@
 # PRs of the outcomes rows dated in the window (with --epic, that epic's; without --since, the 30
 # days up to --until or today, as each PR costs 3 or more gh calls). gh's REST API (not GraphQL, whose
 # hourly limit a swarm spends first) gives each PR's branch and commits and its branch's workflow
-# runs; a run counts when its head is one of the PR's commits. Then per repo, the CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
+# runs; a run counts when its head is one of the PR's commits. Then per repo, the CI time of these PRs and of the window's length before it (ci_time).
 # Last, the test files that failed on a head before it went green (flaky_tests).
 import datetime, functools, os, re, statistics, subprocess, urllib.parse
 import clock
@@ -403,18 +403,15 @@ if __name__ == "__main__":
         since = (end - datetime.timedelta(days=30)).isoformat()
         print(f"PRs from the last 30 days, {since} on; --since sets the start")
     now = windowed(since, end.isoformat())   # to today, so a day SWARM_DASH_NOW pins counts no later build
-    # SWARM_CI_TIME_ONLY (dash's ci line, which reads the ci time table alone) skips this row and its
-    # per-attempt calls.
-    if not os.environ.get("SWARM_CI_TIME_ONLY"):
-        got, unread = health(now)
-        print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
-        print("\t".join(got))
-        if unread:
-            print(f"ci health: gh could not read {len(unread)} of {len(now)} PRs, left out")
-            print("\n".join(f"ci health: left out {url}: {WHY[url]}" for url in unread))
+    got, unread = health(now)
+    print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
+    print("\t".join(got))
+    if unread:
+        print(f"ci health: gh could not read {len(unread)} of {len(now)} PRs, left out")
+        print("\n".join(f"ci health: left out {url}: {WHY[url]}" for url in unread))
     # The window before: as many days, up to the day before since; a PR built in both windows counts
     # in this one alone, by its latest build. A PR gh cannot read is left out here, so the PRs that
-    # answered still count (dash's ci line reads this table).
+    # answered still count.
     start, day = datetime.date.fromisoformat(since), datetime.timedelta(days=1)
     keys = {pr_key(u) for u in now}
     before = [u for u in windowed((start - (end - start) - day).isoformat(), (start - day).isoformat()) if pr_key(u) not in keys]
@@ -427,8 +424,7 @@ if __name__ == "__main__":
         print(f"ci time: gh could not read {len(unread[0]) + len(unread[1])} of {len(now) + len(before)} PRs ({len(unread[0])} of {len(now)} in this window), left out")
         print("\n".join(f"ci time: left out {url}: {WHY[url]}" for url in unread[0] + unread[1]))
     # The flaky tests last, so their reads (which can spend gh's hourly limit) never starve the ci
-    # time table dash's ci line reads. GitHub's created filter reads the window's dates as UTC days.
-    if not os.environ.get("SWARM_CI_TIME_ONLY"):
-        tests, lines = flaky_tests(now, f">={since}" if until == "9999-12-30" else f"{since}..{until}")
-        print()
-        print("\n".join((["test_file\tflaky_runs\tlast_seen\texample_run"] + ["\t".join(t) for t in tests] if tests else []) + lines))
+    # time table. GitHub's created filter reads the window's dates as UTC days.
+    tests, lines = flaky_tests(now, f">={since}" if until == "9999-12-30" else f"{since}..{until}")
+    print()
+    print("\n".join((["test_file\tflaky_runs\tlast_seen\texample_run"] + ["\t".join(t) for t in tests] if tests else []) + lines))

@@ -27,7 +27,7 @@ doc's text a test checks for) says so in a comment on its line (or the heredoc's
 "# grep-q-pipe: ok, a brief's text".
 
 python-clock: bin/lib's Python reads now and today only through bin/lib/clock.py, which SWARM_DASH_NOW
-fixes, so a test can pin the day (#854, #586: dash_slow.py's own date.today() moved dash's CI week
+fixes, so a test can pin the day (#854, #586: a helper's own date.today() moved a CI week
 when a run crossed midnight). A date.today(), datetime.today(), datetime.now() or datetime.utcnow()
 anywhere else is a finding, called or not, under any name an import gives datetime, date or the
 datetime class. time.time() is not one: deadlines and ages run on the real clock."""

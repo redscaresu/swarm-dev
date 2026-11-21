@@ -7,9 +7,10 @@
 #
 # The kinds, and what the test checks for each:
 #   command: still an arm of bin/swarm.sh's dispatch, or of the early case that runs before it, read
-#     as tests/doc_check_test.sh reads them. 68 rows: 66 dispatch arms, 18 of them internal `_` arms,
+#     as tests/doc_check_test.sh reads them. 67 rows: 65 dispatch arms, 18 of them internal `_` arms,
 #     plus version and update. When binary-wrapper moves a ported command's arm out of dispatch, the
-#     test must read that command's marker file too.
+#     test must read that command's marker file too. v0.31.3's dash row was dropped on 2026-11-20: the
+#     user chose to delete the terminal dashboard in stage 1 rather than port it (story delete-dash).
 #   setting: a key of CONFIG_KEYS. 25 rows. `swarm.sh config` in a stand-in project prints a
 #     `<key> = ` line for it.
 #   removed-setting: a key a config may still set. 5 rows. A config that sets it still loads. When the
@@ -35,7 +36,6 @@ command	restart	dispatch, bin/swarm.sh:648
 command	unblock	dispatch, bin/swarm.sh:649
 command	next	dispatch, bin/swarm.sh:653
 command	status	dispatch, bin/swarm.sh:654
-command	dash	dispatch, bin/swarm.sh:655
 command	tidy	dispatch, bin/swarm.sh:656
 command	upgrade	dispatch, bin/swarm.sh:657
 command	cost	dispatch, bin/swarm.sh:658
