@@ -82,11 +82,12 @@
 # How some shapes are placed (bin/ and hooks/ have the first three, and none of the last three):
 #   - A subshell waited on at once (`( ... ) & wait $!`, as bin/swarm.sh runs dispatch and
 #     bin/lib/merge.sh runs reconcile and story_note) is on the foreground path, its calls on calls:fg
-#     in place. Where /proc names what its parent sleeps in (Linux), only a wait counts, and the
-#     parent's own list of children is read. A parent that has not yet reached its wait by the
-#     subshell's first call (the subshell has forked and started a gh by that time) would leave it a
-#     step of its own, and on macOS a parent blocked in a read with that subshell its youngest child
-#     would make it look waited on. A job the parent joins later is a step: one whose parent made a
+#     in place, and so is a command substitution (`x="$(gh ... | jq ...)"`), whose parent reads its
+#     output from a pipe until it ends. Where /proc names what the parent sleeps in (Linux), a wait or
+#     a pipe read counts and a FIFO open does not, and the parent's own list of children is read. A
+#     parent that has not yet reached its wait by the subshell's first call (the subshell has forked
+#     and started a gh by that time) would leave it a step of its own, and a parent blocked reading a
+#     pipe while an `&` job is its youngest child would make that job look waited on. A job the parent joins later is a step: one whose parent made a
 #     call through a newer child before its last call (`( ... ) & gh ...; wait`) was not waited on at
 #     once. One joined with no such call in between (`( ... ) & sleep 1; wait`) is placed by when its
 #     first call comes.
@@ -607,12 +608,13 @@ PROBE
 # waited_lib <meta> — write <meta>/waited.pl, which the shim and the start probe both load:
 # dr_waited <parent> <child> <snapshot> is 1 when <parent> sleeps in a wait with <child> as its
 # youngest child (the newest pid, in circular order, as pids wrap). Bash forks a foreground command
-# and then waits, so its newest child is the one it waits on, and an `&` job it forked earlier is older; `( ... ) & wait $!` leaves
-# its subshell so too. Where /proc names what <parent> sleeps in (Linux), <parent> itself is read, not
-# ps: ps reads /proc one process at a time, so a child forked meanwhile can be missing. <parent> must
-# be in a wait before and between two reads of its own list of children (which holds a child not yet
-# reaped too), and <child> must be the youngest in both; one blocked in a read or a FIFO open is not
-# waiting. Where /proc names nothing (macOS, whose ps reads the whole table at once, or a kernel that
+# and then waits, so its newest child is the one it waits on, and an `&` job it forked earlier is
+# older; `( ... ) & wait $!` leaves its subshell so too, and a command substitution leaves its parent
+# reading the child's output from a pipe. Where /proc names what <parent> sleeps in (Linux),
+# <parent> itself is read, not ps: ps reads /proc one process at a time, so a child forked meanwhile
+# can be missing. <parent> must be in a wait or a pipe read before and between two reads of its own
+# list of children (which holds a child not yet reaped too), and <child> must be the youngest in
+# both; one blocked opening a FIFO is not waiting. Where /proc names nothing (macOS, whose ps reads the whole table at once, or a kernel that
 # hides it), <snapshot> (a sub that returns ps -A's stat and children by pid) is read the same way, a
 # sleeping parent taken as waiting.
 waited_lib() {
@@ -635,11 +637,11 @@ sub dr_waited {
   return 0 unless length $u;
   my $w1 = dr_slurp("/proc/$u/wchan");
   if ($w1 =~ /[a-z]/) {
-    return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4)/;
+    return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4|pipe_read|anon_pipe_read|pipe_wait)/;
     my $cf = "/proc/$u/task/$u/children";
     if (-e $cf) {
       my $one = sub { dr_youngest(split " ", dr_slurp($cf)) eq $child };
-      return $one->() && dr_slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4)/ && $one->() ? 1 : 0;
+      return $one->() && dr_slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4|pipe_read|anon_pipe_read|pipe_wait)/ && $one->() ? 1 : 0;
     }
   }
   my ($stat, $kids) = $snap->();
