@@ -60,7 +60,8 @@
 # a background call whether its step ends before the command exits or after. A call with either as
 # it was is a foreground call, so `trap '' INT` alone moves none. The shim also logs the call's chain
 # of ancestor pids, up to the command's own (or to the top of the run's processes, once that has
-# exited), and marks each process its parent was waiting on: one whose parent sleeps in a wait with
+# exited), and marks each process its parent in the run was waiting on (an orphan's new parent, pid 1
+# or a reaper outside the run, waits on nothing of the run's): one whose parent sleeps in a wait with
 # it as its youngest child (bash forks a foreground command, then waits, so its newest child is the
 # one it waits on and an `&` job it forked earlier is older). No other process's signals can be read
 # on macOS, so the run learns them two ways: BASH_ENV runs a probe as each bash starts (a script,
@@ -377,7 +378,15 @@ place="$("${PERL}" -e '
   # A process its parent waits on is marked "<pid>=w" (meta/waited.pl, which the start probe uses too).
   require $wl;
   my $snap = sub { (\%stat, \%kids) };
-  print "$flag\t", join(" ", (map { dr_waited($up{$_} // "", $_, $snap) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" "${WAITED}" 2>/dev/null)" || place=""
+  # Only a parent in the run can wait on it: the next process up the chain, or the command itself. An
+  # orphan gets a new parent (pid 1, or a reaper outside the run) that often sleeps in a wait with it
+  # newest.
+  my @marks;
+  for my $i (0 .. $#chain) {
+    my $in = $i < $#chain || $end eq "top";
+    push @marks, $in && dr_waited($up{$chain[$i]} // "", $chain[$i], $snap) ? "$chain[$i]=w" : $chain[$i];
+  }
+  print "$flag\t", join(" ", @marks, $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" "${WAITED}" 2>/dev/null)" || place=""
 [[ "${place}" == [bf]g$'\t'* ]] || place=$'?\t?'
 # A call from inside a stub, or from this shim through anything on PATH, is refused: a loop back
 # through the shim would fork without end.
@@ -572,7 +581,14 @@ if [ -n "${DIFF_RUN_STARTS-}" ]; then
     my $u = "";
     if (open(my $l, "-|", $ps, "-ww", "-o", "ppid=,args=", "-p", $pp)) { $u = join("", <$l>); chomp $u; print "$pp\tup\t$u\n" if length $u }
     my ($gp) = $u =~ /^\s*(\d+)/;
-    exit 0 unless $gp && require $wl;
+    exit 0 unless $gp && $gp > 1 && require $wl;
+    # Only a parent in the run, one that holds its marker, can wait on it (Linux reads that from /proc).
+    if (-d "/proc/self") {
+      my $m = "DIFF_RUN_MARK=" . ($ENV{DIFF_RUN_MARK} // "");
+      open(my $e, "<", "/proc/$gp/environ") or exit 0;
+      local $/ = "\0"; my $in = 0; while (<$e>) { chomp; $in = 1 if $_ eq $m } close $e;
+      exit 0 unless $in;
+    }
     my $snap = sub {
       my (%stat, %kids);
       if (open(my $a, "-|", $ps, "-A", "-o", "pid=,ppid=,stat=")) { while (<$a>) { s/^\s+//; my ($p, $q, $st) = split; $stat{$p} = $st; push @{$kids{$q}}, $p } }
