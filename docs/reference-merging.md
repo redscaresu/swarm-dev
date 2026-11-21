@@ -17,8 +17,8 @@ too, with every PR still waiting. A `kind: lead` story whose `after:` names its 
 (alone or in a list; an `after:` that does not name its own epic is ignored), so an epic with only
 such stories is still planned.
 An active epic that had code stories planned (on the board, in its git history, or a board not in
-git, which has none to read), none of them open, counts as done in `next`,
-`status` and `dash` while its `after:` stories wait, so an epic or story that `depends_on` it goes
+git, which has none to read), none of them open, counts as done in `next` and
+`status` while its `after:` stories wait, so an epic or story that `depends_on` it goes
 ahead. On a board in the story's repo, its last code story's PR deletes the epic file without them.
 The `after:` story stays on the board and is listed with the lead's stories. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
@@ -1101,7 +1101,7 @@ is left on the board, a stage's release is a minor, so it waits on a done `retro
 base. Until then the step is `retro v<S>`. After that it is `release v<S>`, and its why names the
 stage and its retro file. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
-only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
+only` after its step's lines, and `status` shows the same line. A patch can still go out
 while S is held. It needs three things. No story of a staged epic has merged since the tag. The next
 patch of the tag's line is below S. Every change since the tag came from a `fix: true` story or a
 fix-main build (the test a bare `release` uses).
@@ -1128,7 +1128,7 @@ board PR named `stage-v<T>` with the dots as dashes, which sets those epics `act
 nothing else. It lands it with `swarm.sh merge --board` when `merge = agent` or the HLD grants
 `merge`. Otherwise you merge it: the `epics` grant covers setting the epics active, not the merge.
 While that PR's worktree (`<repo>-wt/_board-stage-v<x-y-z>`) exists, `next` goes on to the steps
-after `stage`, and the gate, `status` and `dash` list `stage PR awaiting merge: v<T>`, whether its
+after `stage`, and the gate and `status` list `stage PR awaiting merge: v<T>`, whether its
 epics are still drafts or the merge has made them active. The lead removes the worktree with
 `swarm.sh board-pr done stage-v<x-y-z>` once the PR has merged or closed. Under `merge = agent` or a
 `merge` grant, the lead waits for an open stage PR's checks from that row and lands it once they are
@@ -1174,6 +1174,17 @@ upgrades nothing. An upgrade that fails, takes too long to start, or finds anoth
 running in its project and starts nothing gets the same kind of warning, and merge moves on to the
 next project. The release still counts as done, and neither these warnings nor the refusal above
 changes merge's exit code.
+
+### The build check
+
+In swarm-dev's own repo, the `build-check` job (`.github/workflows/build-check.yml`) runs on every pull request and merge group.
+On a PR that changes `.claude-plugin/plugin.json`, as a release PR does, it runs `scripts/build.sh` to build the four binaries `scripts/build.sh --list` names.
+It then checks that `dist/` holds exactly those files and `SHA256SUMS`, and that `sha256sum -c SHA256SUMS` passes.
+A platform that fails to build turns it red, and its error names that platform.
+On any other PR or merge group it skips its build steps and still reports green, with the log line `build check: skipped: the PR does not change .claude-plugin/plugin.json`.
+It builds when it cannot tell: when the event has no base SHA, or the diff against the base fails or names no file.
+It does not run on a push to `main`, where `go.yml`'s build-contract step already builds the four and checks their sums.
+Its only permission is `contents: read`.
 
 ### The retro gate
 

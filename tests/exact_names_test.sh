@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# exact_names_test.sh — dash and flow's idle_slots read an agent by its exact name, never by herdr's
-# cut of it (agent_name: 32 characters). 1. dash: a conductor whose conduct-<epic> runs past 32
-# characters is listed by herdr under the cut; once its epic file has left the board, its epic comes
-# from its own record (an ok conduct event or its brief), so its report shows it as reported. With no
-# record, or two conductors under the cut (two epics' records, or one and an epic on the board whose
-# conductor name is the cut itself), it is not reported, even when the cut without conduct- names a
-# third epic with a report: the cut is no epic. 2. flow: two stories whose slugs share their
-# first 32 characters, each readied and built at its own time, give idle_slots minutes to each one's
-# epic, not to one merged key. agents.tsv's name for a build with no session log maps to a story only
-# through a record: a slug starting with a digit (agent_name adds an s) is its story's, a merged
-# 32-character slug is not a longer slug's, and a name two stories share clashes with what either
-# touches. Both parts fail with the old guesses (the cut without conduct-, and idle_slots'
-# agent_name keys).
+# exact_names_test.sh — flow's idle_slots reads an agent by its exact name, never by herdr's cut of it
+# (agent_name: 32 characters). Two stories whose slugs share their first 32 characters, each readied
+# and built at its own time, give idle_slots minutes to each one's epic, not to one merged key.
+# agents.tsv's name for a build with no session log maps to a story only through a record: a slug
+# starting with a digit (agent_name adds an s) is its story's, a merged 32-character slug is not a
+# longer slug's, and a name two stories share clashes with what either touches. It fails with the old
+# guess (idle_slots' agent_name keys).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -28,57 +22,14 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 
-# 1. dash, on the fixture's bravo project. The conductor's epic has no file on the board; herdr lists
-# its agent idle under the cut, in pane w2:p9 of a tab recorded for it.
-# shellcheck source=fixtures/dash/two_projects.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
-source "${HERE}/fixtures/dash/two_projects.sh" "${ROOT}"
-B="${FIXTURE_B}"
-epic="an-epic-whose-conductor-name-runs-past-the-cut"; cut="conduct-${epic}"; cut="${cut:0:32}"
-other="${epic}-too"   # a second long epic whose conductor shares the cut
-printf 'w2:p9 conductor\n' > "${B}/.swarm/state/${epic}"
-: > "${B}/.swarm/conduct-${epic}.report.md"
-mkdir -p "${ROOT}/bin2"
-cat > "${ROOT}/bin2/herdr" <<STUB
-#!/bin/sh
-case "\$1 \$2" in
-  "agent list") "${ROOT}/bin/herdr" "\$@" | sed 's/"agents":\[/"agents":[{"name":"${cut}","agent_status":"idle","pane_id":"w2:p9"},/' ;;
-  "pane list") "${ROOT}/bin/herdr" "\$@" | sed 's/"panes":\[/"panes":[{"pane_id":"w2:p9"},/' ;;
-  *) exec "${ROOT}/bin/herdr" "\$@" ;;
-esac
-STUB
-chmod +x "${ROOT}/bin2/herdr"
-events="$(cat "${B}/.swarm/events.tsv")"
-# conductor_row: "shown" when bravo's frame names the conductor (dash cuts the name to its column, so
-# by its first 29 characters), then " reported" when a row of it says so.
-conductor_row() {
-  local frame
-  rm -rf "${TMPDIR}"/swarm-dash-*
-  frame="$(cd "${B}" && PATH="${ROOT}/bin2:${PATH}" DASH_W=160 "${FIXTURE_SWARM}" dash | grep -F "${cut:0:29}")" || true
-  [[ -z "${frame}" ]] || printf shown
-  ! grep -q ' reported ' <<< "${frame}" || printf ' reported'
-}
-conducted() { # <epic>... — bravo's events.tsv, with an ok conduct line for each
-  { echo "${events}"; for e in "$@"; do printf '%s\tconduct\t%s\tw2:p0\tok\n' "$(at 60)" "${e}"; done; } > "${B}/.swarm/events.tsv"
-}
-conducted "${epic}"
-check "a cut conductor whose epic file is gone takes its epic from its conduct event: reported" "$(conductor_row)" "shown reported"
-conducted
-mkdir -p "${B}/.swarm/briefs"; : > "${B}/.swarm/briefs/conduct-${epic}.md"
-check "a cut conductor whose epic file is gone takes its epic from its brief: reported" "$(conductor_row)" "shown reported"
-rm "${B}/.swarm/briefs/conduct-${epic}.md"
-# The cut without conduct- is a third epic's name, and that epic wrote a report.
-: > "${B}/.swarm/conduct-${cut#conduct-}.report.md"
-check "a cut conductor with no record of its epic is not reported, though the cut names an epic with a report" "$(conductor_row)" shown
-conducted "${epic}" "${other}"
-check "a cut two epics' conduct events share gives no epic: not reported" "$(conductor_row)" shown
-# The third epic is on the board, so its conductor's name is the cut too: two conductors under it.
-conducted "${epic}"; item "${B}" "epics/${cut#conduct-}.md" "Third" "status: active"
-check "a cut a board epic's conductor shares with the recorded one gives no epic: not reported" "$(conductor_row)" shown
+# No global or system git config (hooksPath, templateDir, commit.gpgsign): the same git here and in CI.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 TZ=UTC LC_COLLATE=C
 
-# 2. flow's idle_slots. ea's story waits 09:00-10:00, eb's 11:00-13:00; neither epic's conductor
+# flow's idle_slots. ea's story waits 09:00-10:00, eb's 11:00-13:00; neither epic's conductor
 # runs. agents.tsv keeps the cut for both; their session logs name each full slug.
 I="${ROOT}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories" "${I}/docs/epics" "${ROOT}/flow-bin" "${ROOT}/flow-projects/p"; git -C "${I}" init -q
 printf '#!/bin/sh\nexit 0\n' > "${ROOT}/flow-bin/gh"; chmod +x "${ROOT}/flow-bin/gh"
+cp "${HERE}/claude_stub.sh" "${ROOT}/flow-bin/claude"   # so no run here reaches the real claude
 shared="two-stories-whose-slugs-share-th"   # 32 characters
 one="${shared}e-first-32-characters"; two="${shared}is-start-but-not-the-rest"
 for x in "ea:${one}:10:00" "eb:${two}:13:00"; do
@@ -96,7 +47,7 @@ check "idle_slots: two slugs that share their first 32 characters give each its 
 ist() { printf -- '---\nkind: code\nstatus: %s\nepic: %s\ntouches: [%s]\n---\n' "$3" "$2" "$4" > "${I}/docs/stories/$1.md"; }   # <slug> <epic> <status> <touches>
 ag() { printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' "$1" >> "${I}/.swarm/agents.tsv"; }   # a build with no session log, under agents.tsv's <name>
 ev() { printf '2026-10-01T%s:00Z\t%s\t%s\tw:1\tok\n' "$1" "$2" "$3" >> "${I}/.swarm/events.tsv"; }   # <HH:MM> <command> <target>
-commit() { git -C "${I}" -c user.name=t -c user.email=t@t commit -qm "$1"; }   # unsigned: the fixture's GIT_CONFIG_GLOBAL is /dev/null
+commit() { git -C "${I}" -c user.name=t -c user.email=t@t commit -qm "$1"; }   # unsigned: GIT_CONFIG_GLOBAL is /dev/null
 for e in ef el es ep ew; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
 # A slug starting with a digit: agents.tsv names its build s2fa-login. Unblocked at 10:00 and built
 # with no session log, it is built, not waiting.

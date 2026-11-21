@@ -173,7 +173,7 @@
 2026-10-27T00:55:25Z	story	zzcu	wo:pad	zzcu: zzcv (epic zzci) is open and touches bin/lib/merge.sh:wait_pr; start zzcu after it merges
 2026-10-27T00:55:59Z	story	zzcw	wo:pad	zzcw: zzch (epic zzci) is open and touches bin/lib/merge.sh:merge_pr caller line, docs/reference.md:Merging who may merge; start zzcw after it merges
 2026-10-27T01:03:17Z	story	zzcx	wp:pae	zzcx: zzcy (epic zzcz) is open and touches commands/hld.md:step 5, commands/epic.md:step 5; start zzcx after it merges
-2026-10-27T01:03:30Z	story	zzda	wp:pae	zzda: zzdb (epic zzdc) is open and touches bin/lib/dash.sh:dash_render; start zzda after it merges
+2026-10-27T01:03:30Z	story	zzda	wp:pae	zzda: zzdb (epic zzdc) is open and touches bin/lib/board.sh:next_step; start zzda after it merges
 2026-10-27T01:04:21Z	incident	zzcl	wn:paa	wait-timeout: busy
 2026-10-27T01:13:35Z	story	zzdd	wp:pae	zzdd: zzcl (epic zzde) is open and touches bin/lib/lifecycle.sh:init_project, docs/reference.md:init Claude Code checks; start zzdd after it merges
 2026-10-27T01:13:50Z	story	zzdf	wp:pae	zzdf: zzcy (epic zzcz) is open and touches bin/lib/lifecycle.sh:board_pr; start zzdf after it merges
@@ -277,7 +277,7 @@
 2026-10-27T12:14:00Z	log-finding:declined	zzew https://github.com/o/r/pull/21	wp:pae	ok
 2026-10-27T12:14:12Z	review	zzep	wp:pae	ok (https://github.com/o/r/pull/21)
 2026-10-27T12:14:42Z	close	zzep	wp:pae	ok
-2026-10-27T12:17:27Z	incident	-	wa:pa	user-caught: zzex item (user, 2026-10-27): how much a reviewer zzey on rounds 2+ (local tests and mutation checks vs read the diff and zzez on CI) should be a config setting, not a lead message; e.g. zzfa = full | ci on later rounds, default full, this board ci
+2026-10-27T12:17:27Z	incident	-	wa:pa	user-caught: zzex item (user, 2026-10-27): how much a reviewer zzey on rounds 2+ (local tests and mutation checks zzvs read the diff and zzez on CI) should be a config setting, not a lead message; e.g. zzfa = full | ci on later rounds, default full, this board ci
 2026-10-27T12:21:12Z	lead-woken	zzep	wa:pa	ok (no-agent)
 2026-10-27T12:42:57Z	merge	https://github.com/o/r/pull/21	wa:pa	held: https://github.com/o/r/pull/21 (a story on the board cannot be read, so whether it costs money is unknown); the user merges it
 2026-10-27T12:47:44Z	merge	zzep	wa:pa	ok

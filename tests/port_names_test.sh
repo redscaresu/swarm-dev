@@ -15,8 +15,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAMES="docs/port/names.tsv"
-# The rows names.tsv has for each kind at v0.31.3, so a row deleted to quiet a failure fails here.
-WANT_ROWS="command=68 setting=25 removed-setting=5 hook=11"
+# The rows names.tsv has for each kind at v0.31.3, so a row deleted to quiet a failure fails here. The
+# command count is one less: dash's row went on 2026-11-20, when the user chose to delete it (delete-dash).
+WANT_ROWS="command=67 setting=25 removed-setting=5 hook=11"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT

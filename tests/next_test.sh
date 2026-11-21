@@ -1001,7 +1001,7 @@ release_repo "echo x > bin/x" "${FIX}"
 err="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" next 2>&1 > /dev/null)"; rm -rf "${rdir}"
 if [[ -z "${err}" ]]; then echo "ok   the first next with a release due, no origin-repo cache yet, writes nothing on stderr"
 else echo "FAIL the first next with a release due wrote on stderr: ${err}"; fails=$((fails + 1)); fi
-# swarm.sh _step (the Stop hook's and dash --check's read) runs no report, so origin_nwo's gh repo view
+# swarm.sh _step (the Stop hook's read) runs no report, so origin_nwo's gh repo view
 # has a wait of its own: a gh that hangs is cut after SWARM_NON_FIX_WAIT seconds, and the release is a minor.
 REL_HANG="${STUB_BIN}/rel-hang"; mkdir -p "${REL_HANG}"
 printf '#!/bin/sh
@@ -1246,7 +1246,7 @@ expect_release "a deleted epic's malformed stage is ignored: its merged story is
   "${STAGE}" "${REVIEW}" "item epics/d1.md 'status: active' 'stage: 1.3'" "item stories/s0.md 'status: ready' 'kind: code' 'epic: d1'" "${COMMIT}" \
   "git rm -q docs/stories/s0.md docs/epics/d1.md" "echo x > bin/x" "${FIX}"
 has_line "a deleted malformed stage is not named in the release-held: line" "${HELD}"
-# The stages cost a git log, read only once release_due is due: dash runs next_step every frame.
+# The stages cost a git log, read only once release_due is due: status runs next_step on every call.
 # GIT_LOG's git notes each call, then runs the real one.
 GIT_LOG="${STUB_BIN}/git-log"; GIT_CALLS="${STUB_BIN}/git-calls"; mkdir -p "${GIT_LOG}"
 printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "${GIT_CALLS}" "$(command -v git)" > "${GIT_LOG}/git"; chmod +x "${GIT_LOG}/git"
@@ -1262,12 +1262,10 @@ else echo "FAIL next_step makes ${n} git log call(s) when release_due is not due
 n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}")"
 if [[ "${n}" == 1 ]]; then echo "ok   next_step reads the stages with one git log call once a release is due"
 else echo "FAIL next_step makes ${n} git log call(s) once a release is due, not 1"; fails=$((fails + 1)); fi
-# status and dash show the release-held: line next prints. gh is the stub that lists the fix.
+# status shows the release-held: line next prints. gh is the stub that lists the fix.
 release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${FIX}"
 out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${REL_GH}:${PATH}" bash "${SWARM}" status 2> /dev/null)"
 has_line "status prints the release-held: line under Next" "  ${HELD}"
-out="$(cd "${rdir}" && env -u HERDR_ENV COLUMNS=120 PATH="${REL_GH}:${PATH}" bash "${SWARM}" dash 2> /dev/null)"
-has_line "dash prints the release-held: line" "${HELD}"
 rm -rf "${rdir}"
 
 # Staged drafts: a draft epic with stage: v<T> and an hld: naming an agreed HLD that grants epics
@@ -2008,7 +2006,7 @@ na_project() {
   [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
   (
     cd "${dir}" && git init -q && mkdir -p docs/stories docs/epics bin .swarm/state "${dir}-wt/nxna-a"
-    echo "# Stories" > docs/stories/README.md   # dash reads a board only with it
+    echo "# Stories" > docs/stories/README.md   # init's mark of a board
     item epics/e1.md 'status: active'
     item stories/nxna-a.md 'status: ready' 'kind: code' 'epic: e1'
     printf 'w:7 conduct-e1\nw:8 nxna-a\n' > .swarm/state/tab
@@ -2044,7 +2042,7 @@ na_check "a started story with no agent comes before a working conductor's wait,
 na_run next; record_step "${out}"
 na_check "next names a no-agent line once, then goes on to the conductor's wait" \
   "$(is "${out%%$'\n'*}|$(cat "${dir}/.swarm/lead/next-seen")" "wait conduct-e1|${NA_LINE}")"
-# next_step alone (_step), as dash and hooks/lead-stop.sh read it: next adds conductors_queued's gh
+# next_step alone (_step), as hooks/lead-stop.sh reads it: next adds conductors_queued's gh
 # calls for its lines past the why, whatever the step.
 rm -f "${dir}/gh.log" "${dir}/.swarm/lead/next-seen"; na_run _step
 na_check "next's no-agent arm makes no gh call" "$(is "${out%%$'\n'*}|$(cat "${dir}/gh.log" 2>/dev/null)" "no-agent nxna-a|")"
@@ -2097,13 +2095,6 @@ rm -f "${dir}/.swarm/lead/next-seen"; na_run next
 na_check "a no-agent step while a conductor works runs conduct_ready for other ready work" \
   "$(is "${out}" "no-agent nxna-a"$'\n'*"no conductor started: conduct-e2 is gone"*)"
 rm -f "${dir}/docs/epics/e2.md" "${dir}/docs/stories/nxna-b.md" "${dir}/.swarm/conduct-e2.report.md"
-# dash from a plain terminal reads herdr's list itself and hands it to next: its Next names the story,
-# and dash --check's next (_step --dash) agrees.
-rm -f "${dir}/.swarm/lead/next-seen"
-out="$(cd "${dir}" && env -u HERDR_ENV DASH_W=100 PATH="${dir}/bin:${PATH}" bash "${SWARM}" dash 2>/dev/null | sed -n 1p)" || true
-na_check "dash outside a herdr pane shows the no-agent step as its next" "$(is "${out}" "*  next no-agent nxna-a  *")"
-out="$(cd "${dir}" && env -u HERDR_ENV PATH="${dir}/bin:${PATH}" bash "${SWARM}" dash --check 2>&1)" || true
-na_check "dash --check outside a herdr pane finds dash's next is next's" "$(is "${out}" "*: every dash figure agrees with the command that owns it")"
 touch "${dir}/builder"; na_run next; record_step "${out}"
 na_check "with the builder listed, next waits on the conductor" "$(is "${out%%$'\n'*}" "wait conduct-e1")"
 na_run status

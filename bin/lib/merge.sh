@@ -29,7 +29,7 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
-# REPORT_SECONDS: how long a report (status, next, dash) may spend on reads that can block (report_read):
+# REPORT_SECONDS: how long a report (status, next) may spend on reads that can block (report_read):
 # SWARM_REPORT_SECONDS when it is a whole number above 0, else 30. A 0, a negative or a word would put
 # the deadline at the start, so every read would be skipped unrun.
 REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
@@ -2252,8 +2252,8 @@ green_mains() {
 # main_red — "<sha> <owner/repo> <base> <checks>" for the newest red main (red_mains) whose
 # fix-main story is on the board, buildable (buildable_story: ready, an agent's kind, so not one
 # escalated or held for the lead) with no build; nothing when no red main of any repo and base
-# has such a fix. It reads the board and events.tsv alone, never gh: next_step runs it every dash
-# frame, and reconcile's green_mains and wait --lead's heads pass (lead_bases) are what clear a base gone green.
+# has such a fix. It reads the board and events.tsv alone, never gh: next_step runs it on every status
+# and next, and reconcile's green_mains and wait --lead's heads pass (lead_bases) are what clear a base gone green.
 main_red() {
   local line pick="" sha f
   while read -r line; do
@@ -2356,7 +2356,7 @@ within() {
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
 }
 
-# report_start — a report (status, next, dash) starts: its reads have REPORT_SECONDS from now, and no
+# report_start — a report (status, next) starts: its reads have REPORT_SECONDS from now, and no
 # read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
@@ -2402,8 +2402,8 @@ report_due() {
   return 1
 }
 
-# report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads), next
-# (next_reads) and dash (dash_deadline) share, so every report names a cut read the same way. Each runs
+# report_wrappers — define herdr, gh and claude as functions, one set that status (status_reads) and next
+# (next_reads) share, so every report names a cut read the same way. Each runs
 # its program through report_read with stdin from /dev/null, since within runs it in a process group of
 # its own, where a read of the terminal would stop it until the deadline (and a read inside a while-read
 # loop must not eat the loop's input). A read is named for the program and its first two words
@@ -2411,7 +2411,7 @@ report_due() {
 # alone: its path differs per call, and each would be named. Safe under set -u with fewer words. A caller
 # adds its own on top: status's git, next's answer to herdr agent list, whose other reads go on to
 # report_herdr. unset -f herdr gh claude removes them.
-# shellcheck disable=SC2329 # the readers status, next and dash run call these functions by name
+# shellcheck disable=SC2329 # the readers status and next run call these functions by name
 report_wrappers() {
   herdr() { report_herdr "$@"; }
   claude() { report_read "claude ${1:-}" claude "$@" </dev/null; }
@@ -2439,8 +2439,8 @@ report_skipped() {
 }
 
 # report_cleanup — a report's exit: remove its skip file and the snapshot mark (REPORT_SKIP_FILE and
-# BOARD_SNAP_MARK), so a report killed (TERM, HUP, INT) or stopped mid-frame leaves no swarm-report.*
-# file in TMPDIR. status, next and dash set it as their EXIT trap; bash runs that trap on those signals.
+# BOARD_SNAP_MARK), so a report killed (TERM, HUP, INT) or stopped midway leaves no swarm-report.*
+# file in TMPDIR. status and next set it as their EXIT trap; bash runs that trap on those signals.
 report_cleanup() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   [[ -z "${BOARD_SNAP_MARK:-}" ]] || rm -f "${BOARD_SNAP_MARK}"
@@ -3722,7 +3722,7 @@ status_report() {
   report_start || die "status: cannot start the report deadline"
   trap report_cleanup EXIT
   status_reads
-  # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
+  # No agent needs only herdr's agent list, so a failed pane list still shows it.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
   elif agents=$(herdr agent list 2>/dev/null); then

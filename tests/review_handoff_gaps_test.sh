@@ -64,7 +64,7 @@ lib() {
     agent_name() { printf "%s" "$1"; }
     pane_name_of() { :; }   # bin/swarm.sh'"'"'s too: no other agent holds a name here (name_clash)
     story_items() { sed -n "/^\*\*$2:\*\*/,/^\$/p" "$1"; }
-    for f in agents reports build board merge lifecycle dash; do . "${SWARM_HOME}/bin/lib/${f}.sh"; done
+    for f in agents reports build board merge lifecycle; do . "${SWARM_HOME}/bin/lib/${f}.sh"; done
     gh() { echo "${HB}"; }
     repo_dir() { echo "${SRC}"; }
     worktree_for() { echo "${WT}"; }

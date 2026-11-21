@@ -27,11 +27,8 @@
 # 10 (a job whose name carries a bell and a line break; its PR's URL spells the repo O/r, still o/r;
 # its older head g0's 20 min run was created after g1's, and still is not its newest head's). Over the last 7 days (--since 6 days ago)
 # that is e and f, 11.5 min and test 9.0, against g's 13.0 and 10.0 the week before (f, built in
-# both weeks, counts in its latest alone): -1.5. dash's ci line is that row, its change from the
-# minutes it shows: ci 12m (slowest: test 9m) ▼1m vs last week; past 6 hours old it says its age. A
-# dash whose refresh fails (gh cannot read one of this week's PRs, or flow prints no table) writes no
-# line, keeping the one there was, and tries again
-# after 10 minutes, not 6 hours. A gh answer of {} leaves that PR out, never the section.
+# both weeks, counts in its latest alone): -1.5. SWARM_DASH_NOW pins flow's today. A gh answer of {}
+# leaves that PR out, never the section.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -45,8 +42,8 @@ export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so paral
 P="${dir}/repo"; G="${dir}/gh"; U=https://github.com/o/r/pull
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${G}" "${dir}/bin" "${dir}/projects" "${dir}/tmp"
 git -C "${P}" init -q
-# Every day below is a local day, counted back from one instant (T0), as flow and dash's ci refresh
-# count theirs from their own local today. The PRs' and runs' times are fixed UTC instants, which no
+# Every day below is a local day, counted back from one instant (T0), as flow counts its own from its
+# local today. The PRs' and runs' times are fixed UTC instants, which no
 # window reads.
 T0="$(date +%s)"
 ago() { # <n> [<epoch>] — the local day n days before T0's, or before <epoch>'s
@@ -185,101 +182,16 @@ now="$(flow --since "${week}" | ci)"
 check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, against 13.0 and 10.0, so -1.5" \
   "${now}" "${H}"$'\n2\t3\t19.0\t0.00\t0\n'"${T}"$'\no/r\t2\t11.5\ttest\t9.0\t1\t13.0\ttest\t10.0\t-1.5'
 
-# dash's ci line is flow's row for the same week. A detached refresh runs flow and fills its cache,
-# then the next dash (past its one-minute cache) shows it. One that fails (flow prints no ci time
-# table, or gh reads none of the PRs) writes none and stamps <cache>.failed, and the next dash starts
-# another only once that is 10 minutes old. A refresh holds an flock on <cache>.run until it ends.
-# dash's refresh counts its 7 days from its own today, which may be a day after T0's. So f's build on
-# the first day of the last 7 moves a day in: on either day, this week holds e and f and the week
-# before g, as flow's figures above have them (a PR's minutes come from its runs, not its day).
-awk -F'\t' -v OFS='\t' -v w="${week}" -v d="$(ago 5)" '$3 == "f" && $1 == w { $1 = d } 1' "${P}/.swarm/agents.tsv" > "${dir}/agents.tsv"
-mv "${dir}/agents.tsv" "${P}/.swarm/agents.tsv"
-git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
-printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
-cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
-dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so the next dash reads the ci cache again.
-  # It may start a ci refresh (SWARM_NO_CI_REFRESH set empty, as make test sets it 1); NOREFRESH=1 dash never does.
-  local out
-  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_NO_CI_REFRESH="${NOREFRESH:-}" PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
-    COLUMNS=200 bash "${SWARM}" dash 2>&1)" || true
-  rm -f "${dir}"/tmp/swarm-dash-3-*
-  grep -oE "ci [0-9].*(vs last week|h old|\(slowest: [^)]*\))" <<< "${out}" || true
-}
-refreshed() { # waits up to 60 s for the refresh dash started to end, and so let go of its flock on <cache>.run
-  python3 -c '
-import fcntl, glob, sys, time
-for p in glob.glob(sys.argv[1]):
-    with open(p) as f:
-        for _ in range(300):
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                time.sleep(0.2)
-        else:
-            sys.exit(1)' "${dir}/tmp/swarm-dash-ci-*/*.run" && return
-  echo "FAIL the ci refresh ends and lets go of its <cache>.run"; fails=$((fails + 1))
-}
-stamped() { if compgen -G "${dir}/tmp/swarm-dash-ci-*/*.failed" > /dev/null; then echo failed; fi; }
-ci_cache() { compgen -G "${dir}/tmp/swarm-dash-ci-*/*" | grep -vE '\.(failed|run)$'; }
-aged() { python3 -c 'import os, sys, time; t = time.time() - float(sys.argv[1]); os.utime(sys.argv[2], (t, t))' "$1" "$(ci_cache)"; }
-BADPR=1 dash > /dev/null; refreshed
-check "a refresh where gh reads no PR (each answers {}) writes no ci line, and stamps .failed" "$(dash)|$(stamped)" "|failed"
-dash > /dev/null; refreshed
-check "and within 10 minutes of it, with gh fine again, dash starts no other" "$(dash)" ""
-touch -t 202001010000 "${dir}"/tmp/swarm-dash-ci-*/*.failed
-: > "${G}/gh.log"; dash > /dev/null; refreshed
-# f's zizmor run was rerun: ci health reads its first attempt, dash's refresh (ci time alone) never.
-check "dash's refresh skips ci health's per-attempt calls" "$(grep -c 'actions/runs/62/attempts/1$' "${G}/gh.log" || true)" 0
-want="$(awk -F'\t' '$1 == "o/r" { d = sprintf("%.0f", $3) - sprintf("%.0f", $7)
-  printf "ci %.0fm (slowest: %s %.0fm) %s%dm vs last week", $3, $4, $5, (d < 0 ? "▼" : (d > 0 ? "▲" : "±")), (d < 0 ? -d : d) }' <<< "${now}")"
-check "after 10 minutes another refresh runs, and dash's ci line agrees with flow's figures for the last 7 days" "$(dash)" "${want}"
-check "which are this fixture's, the change from the minutes shown: ci 12m (slowest: test 9m) ▼1m vs last week" "${want}" \
-  "ci 12m (slowest: test 9m) ▼1m vs last week"
-# A line 10 hours old, while its refresh keeps failing (a fresh .failed): dash says how old it is.
-touch "${dir}"/tmp/swarm-dash-ci-*/*.failed; aged 36000
-check "a line past 6 hours old says its age" "$(dash)" "${want} · 10h old"
-# A <cache>.run that no refresh holds a lock on, whatever it says, holds no refresh off.
-rm "${dir}"/tmp/swarm-dash-ci-*/*.failed; echo 1 > "$(ci_cache).run"
-dash > /dev/null; refreshed
-check "a <cache>.run no refresh holds does not hold a refresh off" "$(dash)" "${want}"
-# SWARM_DASH_NOW fixes the refresh's day too (bin/lib/clock.py), and flow's: at noon 3 days back, the
-# refresh's 7 days run from 6 days before that to that day, which holds f's two builds and g's but not
-# e's today, and the 7 days before hold no PR, so the line has no change. dash_slow.py's own date.today()
-# (#854) would start the window 3 days later, and flow_ci_health.py's window, with no end, would hold e.
+# SWARM_DASH_NOW fixes flow's day (bin/lib/clock.py): at noon 3 days back, the last 7 days run from 6
+# days before that to that day, which holds f's two builds and g's but not e's today, and the 7 days
+# before hold no PR, so the row has no change. flow_ci_health.py's window, with no end, would hold e.
 pinned="$(python3 -c 'import datetime as d, sys; print(int(d.datetime.combine(d.date.fromisoformat(sys.argv[1]), d.time(12)).timestamp()))' "$(ago 3)")"
-then="$(SWARM_DASH_NOW="${pinned}" flow --since "$(ago 6 "${pinned}")" | ci | awk -F'\t' '$1 == "o/r" && $7 == "" { printf "ci %.0fm (slowest: %s %.0fm)", $3, $4, $5 }')"
-aged 25200; SWARM_DASH_NOW="${pinned}" dash > /dev/null; refreshed
-check "with SWARM_DASH_NOW 3 days back, dash's refresh counts the 7 days to that day, as flow does: ci 16m (slowest: test 13m)" \
-  "$(SWARM_DASH_NOW="${pinned}" NOREFRESH=1 dash)|${then}" "ci 16m (slowest: test 13m)|ci 16m (slowest: test 13m)"
+check "with SWARM_DASH_NOW 3 days back, flow's 7 days to that day hold f and g alone: ci 16m (slowest: test 13m)" \
+  "$(SWARM_DASH_NOW="${pinned}" flow --since "$(ago 6 "${pinned}")" | ci | awk -F'\t' '$1 == "o/r" && $7 == "" { printf "ci %.0fm (slowest: %s %.0fm)", $3, $4, $5 }')" \
+  "ci 16m (slowest: test 13m)"
 # And flow's own start with no --since, 30 days before that day (flow_ci_health.py's date.today() had it).
 check "with SWARM_DASH_NOW 3 days back and no --since, flow's window starts 30 days before that day" \
   "$(SWARM_DASH_NOW="${pinned}" flow | ci | head -1)" "PRs from the last 30 days, $(ago 30 "${pinned}") on; --since sets the start"
-aged 25200; dash > /dev/null; refreshed   # the real day's line again, which the checks below read
-# A refresh where gh can read none of the PRs (FAIL=1: e's, f's and g's runs; offline, say) fails: the
-# line there was stays, its age said, and the next refresh comes 10 minutes later, not 6 hours.
-aged 25200
-FAIL=1 dash > /dev/null; refreshed
-check "a refresh where gh can read none of the PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
-# One where gh cannot read this week's PRs (FAILWEEK=1: e's and f's), though it reads last week's g,
-# fails too: no blank line for a quiet week, and another refresh in 10 minutes.
-rm "${dir}"/tmp/swarm-dash-ci-*/*.failed
-FAILWEEK=1 dash > /dev/null; refreshed
-check "a refresh where gh cannot read this week's PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
-# The ci cache's files have names anyone can guess under TMPDIR: a planted link is never followed.
-# A cached line is printed without its control characters.
-echo keep > "${dir}/victim"; touch -t 202001010000 "${dir}/victim"
-ln -sf "${dir}/victim" "$(ci_cache).failed"
-FAIL=1 dash > /dev/null; refreshed
-check "a refresh never writes through a link planted at <cache>.failed" "$(cat "${dir}/victim")" keep
-rm "$(ci_cache).failed"; printf 'ci 1m\033[2J (slowest: x\n1m) vs last week' > "$(ci_cache)"
-check "a cached line is printed without its control characters" "$(NOREFRESH=1 dash)" "ci 1m[2J (slowest: x1m) vs last week"
-# Its files live in a directory dash made 0700; one anyone else could write to (or a link, or not
-# this user's) is not trusted: no line from it.
-mode() { python3 -c 'import glob, os, sys; print(oct(os.lstat(glob.glob(sys.argv[1])[0]).st_mode & 0o777))' "${dir}/tmp/swarm-dash-ci-*"; }
-check "dash keeps the ci cache in a directory only this user can open" "$(mode)" 0o700
-chmod 777 "${dir}"/tmp/swarm-dash-ci-*
-check "a ci cache directory others can write to is not trusted" "$(NOREFRESH=1 dash)" ""
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
