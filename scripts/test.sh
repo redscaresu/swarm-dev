@@ -4,10 +4,12 @@
 # own. Each file has a TMPDIR of its own, stdin from /dev/null and its output in a log: a "run" line as
 # it starts, ok or FAIL with its seconds as it ends, and once a phase is over, the log of each file in
 # it that failed. A file passes only on its job's ok result. Under a cap in ~/.swarm/test-cap (below)
-# a run may first wait for a slot. Exits 1 when any file failed, or when xargs stopped before every
-# file had run, or before any file runs when the cap file holds no whole number or a slot cannot be
-# used; an interrupt (INT, HUP, TERM, PIPE) stops every job and its test at once, before the run exits,
-# as the cleanup below does: a TERM to the make that runs it (select-tests.sh --run execs make) is one.
+# a run may first wait for a slot. Before any file runs, it builds ./cmd/swarm once and hands it to
+# every test in SWARMDEV_BIN (The binary, below). Exits 1 when any file failed, or when xargs stopped
+# before every file had run, or before any file runs when the cap file holds no whole number, a slot
+# cannot be used, or the binary cannot be built (no go on PATH, or a failed build); an interrupt
+# (INT, HUP, TERM, PIPE) stops every job and its test at once, before the run exits, as the cleanup
+# below does: a TERM to the make that runs it (select-tests.sh --run execs make) is one.
 # Under codex it refuses before anything else.
 set -uo pipefail
 
@@ -206,14 +208,18 @@ ps_words() {
   echo "${w[*]+"${w[*]}"}"
 }
 started() { ps_words "$1" lstart=; }
+# going <run> — 0 when <run>, a run's PID and start time as TEST_SH_RUN holds them, names a run still
+# going: alive, no zombie, and started then, so neither a gone run nor its PID taken since counts.
+going() {
+  local now
+  [[ "$1" == [0-9]*" "* ]] || return 1
+  now="$(ps_words "${1%% *}" stat= lstart=)"
+  [[ -n "${now}" && "${now}" != Z* && "${now#* }" == "${1#* }" ]]
+}
 # A nested run, one a test started: TEST_SH_RUN, which each run exports for its jobs as its PID and
-# start time, names a run still going: alive, no zombie, and started then, so neither a gone run nor
-# its PID taken since makes a run nested.
-nested="" me="$(started $$)"
-if [[ "${TEST_SH_RUN:-}" == [0-9]*" "* ]]; then
-  outer="$(ps_words "${TEST_SH_RUN%% *}" stat= lstart=)"
-  [[ -n "${outer}" && "${outer}" != Z* && "${outer#* }" == "${TEST_SH_RUN#* }" ]] && nested=1
-fi
+# start time, names a run still going: outer_run, as this run found it.
+nested="" me="$(started $$)" outer_run="${TEST_SH_RUN:-}"
+! going "${outer_run}" || nested=1
 export TEST_SH_RUN="$$ ${me}"
 marks="$(dirname "${runs_log:-.}")/test-runs.d"
 if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
@@ -449,10 +455,10 @@ done
 # command's. A trapped TERM, INT or HUP ends the wait at once, where bash would hold the trap until a
 # foreground command ended, so the cleanup stops the run's jobs and tests then, not once the phase
 # ran to its end. Killing make (what select-tests.sh --run execs) TERMs this runner, so that stops
-# the whole run. The command is xargs or a job itself, never a pipeline: the bash a pipeline runs in
-# would print a "Terminated" notice when the cleanup TERMs it. A signal that comes between the
-# launch and phase=$! is held until phase names the group, then ends the run, so the cleanup
-# always sees the phase.
+# the whole run. The command is the build, xargs or a job itself, never a pipeline: the bash a
+# pipeline runs in would print a "Terminated" notice when the cleanup TERMs it. A signal that comes
+# between the launch and phase=$! is held until phase names the group, then ends the run, so the
+# cleanup always sees the phase.
 start_phase() {
   local rc=0 in="$1" held=""
   shift
@@ -467,6 +473,46 @@ start_phase() {
   phase=""
   return "${rc}"
 }
+
+# The binary. Before any test file starts, a run builds ./cmd/swarm once, from the tree this runner
+# belongs to (found from this script, not the cwd), into the run's own directory. It exports
+# SWARMDEV_BIN, naming the binary, to every test. The name has no SWARM_ prefix, so neither the unset
+# at the top nor tests/test_helpers.sh drops it, and an agent start does (AGENT_ENV in
+# bin/lib/agents.sh). Beside it, TEST_SH_BIN_TREE names the tree and TEST_SH_BIN_RUN the run that
+# built it (its PID and start time, as TEST_SH_RUN holds them).
+# A run of the same tree started while that run is still going reuses the binary and builds nothing.
+# That is every nested run, and the top-level ones a test starts with TEST_SH_RUN unset: many tests
+# start a make test of the real tree, some against a time bound. Any other run builds its own,
+# whatever SWARMDEV_BIN it inherited, so a run of a copy of the tree tests the copy's Go.
+# A tree with no go.mod builds nothing, says so in one line and unsets all three. A tree with go.mod
+# but no go on PATH, or a build that fails, ends the run before any test file starts: the tests never
+# run without the binary. The build is a phase, so an interrupt stops it at once. It stamps no VCS
+# details (-buildvcs=false): the tests need none, and that keeps git out of the build.
+bin_tree="${BASH_SOURCE[0]}"
+case "${bin_tree}" in */*) bin_tree="${bin_tree%/*}" ;; *) bin_tree=. ;; esac   # its directory, with no dirname to start
+bin_tree="$(cd "${bin_tree}/.." && pwd -P)" || exit 1
+# reusable — 0 when the SWARMDEV_BIN this run inherited is this tree's and the run that built it is
+# going: the run this one is nested in, which the nested check above found going, or one going finds.
+reusable() {
+  [[ "${TEST_SH_BIN_TREE:-}" == "${bin_tree}" && -x "${SWARMDEV_BIN:-}" ]] || return 1
+  [[ -n "${nested}" && "${TEST_SH_BIN_RUN:-}" == "${outer_run}" ]] || going "${TEST_SH_BIN_RUN:-}"
+}
+if [[ ! -f "${bin_tree}/go.mod" ]]; then
+  unset SWARMDEV_BIN TEST_SH_BIN_TREE TEST_SH_BIN_RUN
+  echo "build: ${bin_tree} has no go.mod, so this run builds no binary and unsets SWARMDEV_BIN"
+elif ! reusable; then
+  if ! command -v go > /dev/null; then
+    echo "test.sh: ${bin_tree} has go.mod, so make test builds ./cmd/swarm, and go is not on PATH: install Go (go.mod names the version) or put it on PATH; no test file runs without the binary" >&2
+    exit 1
+  fi
+  SWARMDEV_BIN="${run}/bin/swarm"
+  echo "build: go build -o ${SWARMDEV_BIN} ./cmd/swarm, in ${bin_tree}"
+  start_phase /dev/null go -C "${bin_tree}" build -buildvcs=false -o "${SWARMDEV_BIN}" ./cmd/swarm || {
+    echo "test.sh: the build of ./cmd/swarm in ${bin_tree} failed (go build exit $?), so no test file runs" >&2
+    exit 1
+  }
+  export SWARMDEV_BIN TEST_SH_BIN_TREE="${bin_tree}" TEST_SH_BIN_RUN="${TEST_SH_RUN}"
+fi
 if [[ ${#par[@]} -gt 0 ]]; then
   printf '%s\0' "${par[@]}" > "${run}/files"
   start_phase "${run}/files" xargs -0 -P "${JOBS:-4}" -n 1 bash "$0" --one "${run}"
