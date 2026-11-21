@@ -1,0 +1,17 @@
+---
+kind: code
+status: blocked
+epic: go-layers
+depends_on: [go-interfaces]
+needs: go-interfaces (classify and packages in internal/layers/classes_test.go; the internal/iface and internal/adapter/ packages the real-tree run classifies)
+touches: [internal/layers/walk_test.go, internal/layers/imports_test.go, internal/layers/testdata/imports/]
+estimate_lines: 220
+---
+
+# Fail a Go package outside the four adapters that imports a standard package off an allowed list, or an adapter
+
+Uses classify and packages from go-interfaces (internal/layers/classes_test.go), and the internal/iface and internal/adapter/ packages its real-tree run classifies. Adds the walk in a Go test, standard library only (go/parser, go/ast). From a root and a module path (go.mod's module line on the real tree; given for a fixture, which has no go.mod), it parses every non-test .go file of every package, ignoring build tags. Its records are fixed here, and the later checks read them without editing walk_test.go: per file, its package path, class and path; every import with its path, local name, kind (plain, dot or blank) and line; every selector on an imported name, called or only passed, with the import path, the name and the line. A local name that shadows an import counts as the import, which fails closed. The rule, for rules, interfaces, clock and wiring packages: a standard import must be on an allowed list, so anything not named fails, such as os/exec, net, net/*, syscall, go/*, text/template, html/template, log, mime, archive/*, debug/*, runtime/pprof, plugin, unsafe and import "C". The list: bufio, bytes, cmp, context, crypto/sha256, encoding/base64, encoding/csv, encoding/hex, encoding/json, errors, fmt, hash, io, io/fs, iter, maps, math, math/bits, os, path, path/filepath, regexp, slices, sort, strconv, strings, sync, sync/atomic, text/tabwriter, time, unicode, unicode/utf8. os, path/filepath and fmt pass here and have their names checked by go-layer-names; time's names are go-time-check's. A dot import fails. An import of internal/adapter/... fails except in wiring, and a path neither standard nor in the module fails. _test.go files are exempt, as scripts/lint's python-clock rule leaves tests alone. The test logs the allowed list. Fixtures under internal/layers/testdata/imports/ stay gofmt-clean, and name no SWARM_ variable and no lock primitive (os.Mkdir, os.Link, O_EXCL, flock(, lockf(): tests/port_swarm_names_test.sh and tests/port_locks_test.sh scan testdata/ too. go-layer-names, go-time-check and go-protected-imports follow the same limits. Break: put os/exec on the allowed list; the fixture test must go red.
+
+**Done when:**
+- For fixture trees under internal/layers/testdata/imports/ the test asserts the exact findings (file:line, package and import): one each for os/exec, net, net/http, syscall, go/parser, text/template, log, unsafe and import "C", a dot import of strings, and an adapter import from a rules package. An adapter import from wiring and a clean rules package pass. A record test asserts the walk's records for one fixture file field by field. On the real tree it passes. A throwaway tmp/ branch PR whose rules package imports os/exec, net and internal/adapter/gh turns go-checks red with all three findings in its log, and is closed unmerged. The story PR links that run and quotes the go test -v output. tests/port_swarm_names_test.sh and tests/port_locks_test.sh pass.
+- scripts/select-tests.sh --run passes
