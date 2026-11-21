@@ -855,8 +855,10 @@ def main_wait(repo, sha, base, n, changed, secs, poll, grace, cap, shared):
         try:
             if want is None:
                 want = expected(repo, sha, base, n, changed)
-                if shared and shared[2]:
+                if shared:
+                    # covering reads it, record or not: a wait with no record of its own still waits alone.
                     shared[1]["want"] = want
+                if shared and shared[2]:
                     try:
                         wait_record(shared[0], shared[1])
                     except OSError:

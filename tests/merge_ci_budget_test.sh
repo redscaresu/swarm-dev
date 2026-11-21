@@ -123,4 +123,17 @@ check "a live wait on an older commit: the merge reads the compare with it" grep
 check "a live wait on an older commit: the merge keeps its wait and prints its own fix-main:" said "fix-main: e2e (failure) on ${M:0:7}"
 check "a live wait on an older commit: the merge is not covered" bash -c "! grep -qF 'covered by' '${ROOT}/out'"
 
+# --- A records folder this wait cannot write to, holding another wait's record: the wait goes on with
+# no record of its own, says so, still reads the other record, and prints its own fix-main:.
+fresh
+checks "${FX}/${M}.checks.1" "$(run test in_progress)"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"
+echo '{"status":"behind","ahead_by":0,"behind_by":1}' > "${FX}/compare.${M}...${OLD}"
+mkdir -p "${P}/.swarm/main-waits"
+printf '{"repo":"o/r","base":"main","sha":"%s","pr":"9","pid":%s,"want":[".github/workflows/ci.yml"]}\n' "${OLD}" "$$" \
+  > "${P}/.swarm/main-waits/${OLD}-$$.json"
+chmod a-w "${P}/.swarm/main-waits"; merge "${URL}"; chmod u+w "${P}/.swarm/main-waits"
+rm -f "${P}/.swarm/main-waits/${OLD}-$$.json"
+check "an unwritable records folder: the merge says it cannot record its wait" said "warning: cannot record this wait in ${P}/.swarm/main-waits"
+check "an unwritable records folder: the wait goes on alone and prints its own fix-main:" said "fix-main: e2e (failure) on ${M:0:7}"
+
 finish "merge CI budget"
