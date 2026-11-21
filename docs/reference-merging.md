@@ -1174,6 +1174,17 @@ running in its project and starts nothing gets the same kind of warning, and mer
 next project. The release still counts as done, and neither these warnings nor the refusal above
 changes merge's exit code.
 
+### The build check
+
+In swarm-dev's own repo, the `build-check` job (`.github/workflows/build-check.yml`) runs on every pull request and merge group.
+On a PR that changes `.claude-plugin/plugin.json`, as a release PR does, it runs `scripts/build.sh` to build the four binaries `scripts/build.sh --list` names.
+It then checks that `dist/` holds exactly those files and `SHA256SUMS`, and that `sha256sum -c SHA256SUMS` passes.
+A platform that fails to build turns it red, and its error names that platform.
+On any other PR or merge group it skips its build steps and still reports green, with the log line `build check: skipped: the PR does not change .claude-plugin/plugin.json`.
+It builds when it cannot tell: when the event has no base SHA, or the diff against the base fails or names no file.
+It does not run on a push to `main`, where `go.yml`'s build-contract step already builds the four and checks their sums.
+Its only permission is `contents: read`.
+
 ### The retro gate
 
 `merge --release` checks the bump against the same retro rule as `next`, under `merge = agent` and `merge = human` alike.

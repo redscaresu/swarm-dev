@@ -1,0 +1,81 @@
+name: Build check
+
+# Builds the four release binaries on a PR that changes .claude-plugin/plugin.json, which is how a
+# release PR looks, so a bump that cannot build is red before it merges. It is a file of its own:
+# release.yml is the attestation signer (scripts/build.sh --list), and a pull_request run never
+# shares it. No push trigger: go.yml's build-contract step builds the four and checks their sums on
+# every push to main.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # A merge queue tests each PR on top of main and the PRs queued ahead of it (swarm.sh merge).
+  merge_group:
+
+# Least-privilege default: the job only reads the repo.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, where GitHub's default bash has no pipefail
+
+# The gate skips the steps, never the job: a PR that does not change plugin.json still reports
+# build-check green, as a required check that never reports blocks its PR.
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base
+          persist-credentials: false
+      # Not board-only.sh's verdict: that is true on a version-only bump, the one PR this must build.
+      # It fails closed: no base, a diff that fails or an empty diff builds.
+      - name: Gate on a change to .claude-plugin/plugin.json
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PLUGIN: .claude-plugin/plugin.json
+        run: |
+          build() {
+            echo "build=true" >> "${GITHUB_OUTPUT}"
+            echo "build check: builds: $1"
+            exit 0
+          }
+          [ -n "${BASE_SHA}" ] || build "the event names no base SHA"
+          paths="$(git diff --name-only --no-renames "${BASE_SHA}...HEAD")" || build "git diff against ${BASE_SHA} failed"
+          [ -n "${paths}" ] || build "the diff against ${BASE_SHA} names no file"
+          if grep -qxF "${PLUGIN}" <<< "${paths}"; then build "the PR changes ${PLUGIN}"; fi
+          echo "build=false" >> "${GITHUB_OUTPUT}"
+          echo "build check: skipped: the PR does not change ${PLUGIN}"
+      - name: Set up Go from go.mod
+        if: steps.gate.outputs.build == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # build.sh stops at the first platform that fails and names it; the error repeats that line.
+      - name: Build the four binaries (scripts/build.sh)
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          log="${RUNNER_TEMP}/build.log"
+          if ! scripts/build.sh 2>&1 | tee "${log}"; then
+            echo "::error::scripts/build.sh failed: $(grep -m 1 '^build: .* failed' "${log}" || echo 'see the log above')"
+            exit 1
+          fi
+      # dist/ holds each asset --list names and its checksums file, nothing else, and the sums hold.
+      - name: dist/ holds what scripts/build.sh --list names and the sums pass
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          want="$(scripts/build.sh --list | awk -F '\t' '$1 == "asset" { print $3 } $1 == "checksums" { print $2 }' | sort)"
+          got="$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)"
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::dist/ does not hold exactly what scripts/build.sh --list names"
+            diff <(echo "${want}") <(echo "${got}") || true
+            exit 1
+          fi
+          checksums="$(scripts/build.sh --list | awk -F '\t' '$1 == "checksums" { print $2 }')"
+          (cd dist || exit 1; sha256sum -c "${checksums}")
