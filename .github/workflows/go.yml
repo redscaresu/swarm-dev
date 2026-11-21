@@ -103,6 +103,23 @@ jobs:
       - name: go test
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: go test ./...
+      # go test without -v hides a passing test's log, so this prints what each layer check covers.
+      # No covers line fails it, so a renamed test cannot print nothing and pass.
+      - name: What the Go layer checks cover
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          out="${RUNNER_TEMP}/layers.txt"
+          status=0
+          go test -count=1 -v ./internal/layers/ > "${out}" 2>&1 || status=$?
+          cat "${out}"
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::go test -v ./internal/layers/ failed (exit ${status})"
+            exit 1
+          fi
+          if ! grep -Eq 'covers [^ ]+ as [^ ]+' "${out}"; then
+            echo "::error::go test -v ./internal/layers/ logged no 'covers <pkg> as <class>' line"
+            exit 1
+          fi
       - name: The build contract (scripts/build.sh and its --list)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         # dist/ holds each asset --list names and its checksums file, nothing else, and the sums hold.
