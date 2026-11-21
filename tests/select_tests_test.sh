@@ -235,9 +235,9 @@ check "a differential-run fixture file selects diff_run_test.sh, which loads eve
   "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
 check "an allow list entry selects diff_allow_test.sh, which parses every entry on disk" \
   "$(sel "mkdir -p scripts/allow/stage-1 && echo x > scripts/allow/stage-1/a.md; ${commit}")" tests/diff_allow_test.sh
-check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, and the port tests that scan Go, and no other" \
+check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, and command_names_test.sh, which greps it for a bare /swarm, and no other" \
   "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
-  "$(lines tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
+  "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
 check "a board story selects nothing" "$(sel "echo 1 >> board/stories/a.md; ${commit}")" ""
 check "a board README selects the test that checks it against its template" "$(sel "echo 1 >> board/stories/README.md; ${commit}")" \
   tests/board_readme_test.sh
