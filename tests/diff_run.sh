@@ -3,6 +3,7 @@
 # <tree-b>, and compare what the two runs did.
 #
 #   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [those options] [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
 #                      its group (default 10); one still alive then is red, by its argv, and is killed
@@ -10,6 +11,11 @@
 #   --max-procs <n>    how many processes its group may hold at once (default 200); past it, the group
 #                      is killed, and red, so a command that forks without end never fills the machine
 #   --keep <dir>       also write each run's streams, as compared, to <dir>/<fixture>/<a|b>/<stream>
+#   --stage <n>        apply the allow lists scripts/allow/stage-1/ through stage-<n>/ to a's streams
+#                      first, so only a difference no entry's hunk covers is red
+#   --only <slug>      apply that one story's entry alone (from any stage, or up to --stage's), to
+#                      check it against the story's own merge commit
+#   --draft            print each difference as the hunks that would cover it, to edit into an entry
 #
 # A fixture is a function fx_<name> in a tests/diff_fixtures_<area>.sh file. Every such file in this
 # script's own checkout is sourced, so an older tree runs the same fixtures as this one. With no
@@ -61,6 +67,14 @@
 # In a calls stream, a herdr call's value after --seq of 19 digits (agent-state.sh's time.time_ns())
 # becomes <seq>, and a value of another shape there is left as it is too.
 #
+# With --stage, --only or --draft, tests/diff_allow.py compares the streams once every fixture has
+# run. The entries apply to a's streams in the order their PRs merged (tests/diff_allow.py's
+# merge_order: by the first-parent commit that added each, then by stage and PR number); a
+# hunk for a fixture outside the run is skipped, and one that does not apply on a fixture the run
+# ran is red (ALLOW-FAIL <fixture> <stream> ...). There the files stream is split in two: files is its
+# list of written and deleted paths, and file:<path> one written file's content. scripts/allow/README.md
+# gives the entry format; a malformed entry stops the run before any fixture, with exit 2.
+#
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
 # diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
 # (RUNAWAY <fixture> ...) or --timeout (TIMEOUT <fixture> ...), and 2 on a bad argument or a
@@ -72,11 +86,12 @@ BOUND=10
 TIMEOUT=300
 MAX_PROCS=200
 KEEP=""
+STAGE="" ONLY="" DRAFT=""
 STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '5,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '5,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
@@ -85,6 +100,9 @@ while [[ $# -gt 0 ]]; do
     --timeout) [[ "${2-}" =~ ^[1-9][0-9]*$ ]] || bad "--timeout takes a whole number of seconds above 0, not '${2-}'"; TIMEOUT="$2"; shift 2 ;;
     --max-procs) [[ "${2-}" =~ ^[1-9][0-9]*$ ]] || bad "--max-procs takes a whole number above 0, not '${2-}'"; MAX_PROCS="$2"; shift 2 ;;
     --keep) [[ -n "${2-}" ]] || bad "--keep takes a directory"; KEEP="$2"; shift 2 ;;
+    --stage) [[ "${2-}" =~ ^[1-9][0-9]*$ ]] || bad "--stage takes a stage number above 0, not '${2-}'"; STAGE="$2"; shift 2 ;;
+    --only) [[ "${2-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || bad "--only takes a story slug, not '${2-}'"; ONLY="$2"; shift 2 ;;
+    --draft) DRAFT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     -*) bad "unknown option $1" ;;
@@ -108,6 +126,15 @@ if [[ ${#names[@]} -eq 0 ]]; then
 fi
 [[ ${#names[@]} -gt 0 ]] || bad "no fixture: no fx_<name> in ${HERE}/diff_fixtures_*.sh"
 for n in "${names[@]}"; do declare -F "fx_${n}" > /dev/null || bad "no fixture fx_${n} in ${HERE}/diff_fixtures_*.sh"; done
+
+# The allow lists are this checkout's, as the fixtures are. A malformed entry stops the run here,
+# before any fixture runs.
+ALLOW_DIR="$(cd "${HERE}/.." && pwd -P)/scripts/allow"
+allow=()
+[[ -z "${STAGE}" ]] || allow+=(--stage "${STAGE}")
+[[ -z "${ONLY}" ]] || allow+=(--only "${ONLY}")
+[[ ${#allow[@]} -eq 0 ]] || python3 "${HERE}/diff_allow.py" check "${ALLOW_DIR}" "${allow[@]}" > /dev/null || exit 2
+[[ -z "${DRAFT}" ]] || allow+=(--draft)
 
 WORK="$(mktemp -d)"; WORK="$(cd "${WORK}" && pwd -P)"
 # Each side's worker (run_one) has its pid in ${WORK}/<fixture>.<side>.pid, and its build its pid in
@@ -347,6 +374,7 @@ run_one() {
 echo "a: ${TREE_A}"
 echo "b: ${TREE_B}"
 status=0
+ran=() reds=()
 for fx in "${names[@]}"; do
   red="" broken=""
   # The two runs go side by side, each with its own root; their lines come out a's first.
@@ -358,6 +386,11 @@ for fx in "${names[@]}"; do
     case "${rc}" in 0) ;; 2) broken=1 ;; *) red=1 ;; esac
   done
   if [[ -n "${broken}" ]]; then status=2; continue; fi
+  if [[ ${#allow[@]} -gt 0 ]]; then
+    ran+=("${fx}")
+    [[ -z "${red}" ]] || { reds+=(--red "${fx}"); [[ ${status} -eq 2 ]] || status=1; }
+    continue
+  fi
   for s in ${STREAMS}; do
     a="${WORK}/${fx}.a/out/${s}" b="${WORK}/${fx}.b/out/${s}"
     cmp -s "${a}" "${b}" && continue
@@ -366,4 +399,9 @@ for fx in "${names[@]}"; do
   done
   if [[ -n "${red}" ]]; then [[ ${status} -eq 2 ]] || status=1; else echo "same ${fx}"; fi
 done
+if [[ ${#ran[@]} -gt 0 ]]; then
+  rc=0
+  python3 "${HERE}/diff_allow.py" compare "${ALLOW_DIR}" "${WORK}" "${allow[@]}" ${reds[@]+"${reds[@]}"} -- "${ran[@]}" || rc=$?
+  case "${rc}" in 0) ;; 1) [[ ${status} -eq 2 ]] || status=1 ;; *) status=2 ;; esac
+fi
 exit "${status}"
