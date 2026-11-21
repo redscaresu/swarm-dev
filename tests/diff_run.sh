@@ -91,7 +91,7 @@ STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '5,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '5,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
