@@ -1,0 +1,94 @@
+name: speed
+
+# The speed run (tests/speed_run.sh) on each PR: every command in tests/speed_list.txt, timed on the
+# PR's base and on the checkout, with its process starts counted. On a PR the checkout is GitHub's merge
+# commit, the head merged into the base, so only the PR's own change is measured, as ci.yml tests it.
+# A command the checkout runs slower than the base by the margin fails the job. No push or
+# merge_group trigger, so it is no part of main's CI.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # A run by hand against another base, such as a tag: the checkout is the ref it runs on.
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "The ref to time the dispatched ref against (a branch, tag or commit)"
+        required: true
+        default: main
+
+# Least-privilege default: the job only reads the repo.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  speed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      checks: read     # the gate reads main's check runs for a release PR
+      statuses: read   # and its commit statuses
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base, and the run checks the base out
+          persist-credentials: false
+      - name: Gate a board-only or version-only PR
+        id: gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        # The base's copy when it has one: a PR is never judged by a gate it changed.
+        run: |
+          git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
+          bash "${RUNNER_TEMP}/board-only.sh"
+      - name: Install strace, the process counter speed_run.sh uses
+        if: steps.gate.outputs.board_only != 'true'
+        # The runner image does not promise strace, and --require-count fails the run without it.
+        run: |
+          command -v strace > /dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends strace; }
+          strace -V
+      - name: Check the base out beside the checkout
+        if: steps.gate.outputs.board_only != 'true'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          INPUT_BASE: ${{ inputs.base }}
+        # A PR's base is its base commit; a run by hand names a ref, found as given or on origin.
+        run: |
+          base="${PR_BASE}"
+          if [[ -z "${base}" ]]; then
+            [[ "${INPUT_BASE}" =~ ^[A-Za-z0-9._/-]+$ && "${INPUT_BASE}" != -* ]] || { echo "speed: '${INPUT_BASE}' is not a ref name"; exit 1; }
+            base="$(git rev-parse --verify --quiet "${INPUT_BASE}^{commit}" || git rev-parse --verify --quiet "origin/${INPUT_BASE}^{commit}")" \
+              || { echo "speed: no commit for '${INPUT_BASE}'"; exit 1; }
+          fi
+          git worktree add --detach "${RUNNER_TEMP}/base" "${base}"
+          echo "base: $(git -C "${RUNNER_TEMP}/base" log -1 --format='%h %s')"
+          echo "checkout: $(git log -1 --format='%h %s')"
+      - name: Time each listed command on the base and the checkout
+        if: steps.gate.outputs.board_only != 'true'
+        run: bash tests/speed_run.sh --require-count "${RUNNER_TEMP}/base" "${GITHUB_WORKSPACE}"
+      - name: Self-check, one extra exec counts as one more process start
+        if: steps.gate.outputs.board_only != 'true'
+        # A copy of the checkout with /usr/bin/true after bin/swarm.sh's shebang, timed against the checkout on
+        # the usage command alone (swarm.sh with no arguments, which starts no second swarm.sh). The
+        # copy's row must show exactly one more process start. Its timing is not judged here.
+        run: |
+          plus="${RUNNER_TEMP}/plus"
+          git worktree add --detach "${plus}" HEAD
+          perl -pi -e 'print "/usr/bin/true\n" if $. == 2' "${plus}/bin/swarm.sh"
+          [[ "$(sed -n 2p "${plus}/bin/swarm.sh")" == /usr/bin/true ]] || { echo "speed: the extra exec did not go in"; exit 1; }
+          echo usage > "${RUNNER_TEMP}/self-list.txt"
+          rc=0
+          bash tests/speed_run.sh --runs 1 --require-count --list "${RUNNER_TEMP}/self-list.txt" "${GITHUB_WORKSPACE}" "${plus}" \
+            > "${RUNNER_TEMP}/self.out" 2>&1 || rc=$?
+          cat "${RUNNER_TEMP}/self.out"
+          # The row: usage, a's median and ms, b's median and ms, a's starts, b's starts, the result.
+          read -r a b <<< "$(awk '$1 == "usage" && $3 == "ms" { print $6, $7 }' "${RUNNER_TEMP}/self.out")"
+          [[ "${a}" =~ ^[0-9]+$ && "${b}" =~ ^[0-9]+$ ]] || { echo "speed: no counted usage row (speed_run.sh exit ${rc})"; exit 1; }
+          [[ $((b - a)) -eq 1 ]] || { echo "speed: the copy with one extra exec counted ${b} process starts, the checkout ${a}: not one more"; exit 1; }
+          echo "self-check: the checkout counted ${a} process starts, the copy with one extra exec ${b}"

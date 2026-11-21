@@ -57,6 +57,7 @@ for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md 
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
 for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo floor' > "${G}/tests/diff_run_test.sh"
+echo 'echo floor' > "${G}/tests/diff_run_hooks_test.sh"
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -224,13 +225,13 @@ check "the gh shim selects the shell-scan and removed-name floor and the test th
 check "scripts/test.sh selects every test" "$(sel "echo 1 >> scripts/test.sh; ${commit}")" "${ALL}"
 check "the Makefile selects every test" "$(sel "echo 1 >> Makefile; ${commit}")" "${ALL}"
 check "a bin/lib file's top level selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
-check "a test selects itself and the four tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
+check "a test selects itself and the five tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
   "$(lines "${TEST_FLOOR[@]}" tests/x_test.sh)"
-check "a new untracked test selects itself and those four" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
-check "a test helper selects the test that names it and removed_test.sh, which greps every tests/*.sh" \
+check "a new untracked test selects itself and those five" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
+check "a test helper selects the test that names it, removed_test.sh, which greps every tests/*.sh, and port_tests_list_test.sh" \
   "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
-check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, removed_test.sh and port_tests_list_test.sh" \
-  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
+check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, diff_run_hooks_test.sh, which runs the hook ones, removed_test.sh and port_tests_list_test.sh" \
+  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
 check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, and the port tests that scan Go, and no other" \
   "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
   "$(lines tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
