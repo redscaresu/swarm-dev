@@ -1,7 +1,6 @@
 ---
 kind: lead
 status: blocked
-epic: go-module
 depends_on: [go-checks-ci, go-macos-job]
 needs: go-checks-ci (the go-checks job and its green runs on a PR, a board-only PR and main's push); go-macos-job (the macos-tests job and the same green runs)
 touches: [ruleset 24181590:required_status_checks, AGENTS.md:required checks sentence (CI ... is required on main)]
