@@ -7,12 +7,17 @@
 # fixture for, which fails the case. A push with no bump writes steps=none and makes no gh call. A bump
 # with no tag, no release and the branch behind writes draft attach publish move and tag=v<version>,
 # with BEFORE all zeros or empty too; with the branch at the pushed commit or past it, the same without
-# move. Every refusal prints exactly its one line, writes nothing and exits 1: with no gh call, a
-# version that is not MAJOR.MINOR.PATCH (a newline at its end included), one not greater than BEFORE's,
-# and an empty one with BEFORE all zeros (only a readable BEFORE can make a push no bump); then an
-# annotated tag, a tag on another commit, a tag at the pushed commit, a release for the version (on the
-# list's second page), a missing or diverged branch, a failed read of the tag, the branch, the compare
-# or the releases, and a 404 on the releases.
+# move. A release that exists is finished: the tag at the pushed commit and a published release holding
+# the five files scripts/build.sh --list names writes move with the branch behind, and none with it at
+# the commit or past it; no tag and a draft of the pushed commit holding two of them writes attach
+# publish move, on the list's first page or its second. Every refusal prints exactly its one line,
+# writes nothing and exits 1: with no gh call, a version that is not MAJOR.MINOR.PATCH (a newline at its
+# end included), one not greater than BEFORE's, and an empty one with BEFORE all zeros (only a readable
+# BEFORE can make a push no bump); then an annotated tag, a tag on another commit, a published release
+# missing a file (or holding one not yet uploaded), a draft at another commit, two drafts for the
+# version, a tag at the pushed commit with no release or only a draft, a published release with no tag,
+# a draft of the pushed commit with the branch diverged, a missing or diverged branch, a failed read of
+# the tag, the branch, the compare or the releases, and a 404 on the releases.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -75,7 +80,32 @@ TAG_PATH=repos/o/r/git/ref/tags/v1.1.0
 REF_PATH=repos/o/r/git/ref/heads/prerelease
 CMP_PATH="repos/o/r/compare/${BASE}...${BUMP}"
 REL_PATH='repos/o/r/releases?per_page=100'
-release() { echo "{\"tag_name\": \"$1\", \"draft\": $2}"; }
+# The five files a release holds, one a line, read from scripts/build.sh --list as plan reads them (each
+# asset, then the checksums file), never a copy of it.
+FILES="$("${REPO}/scripts/build.sh" --list | awk -F'\t' '$1 == "asset" { print $3 } $1 == "checksums" { print $2 }')"
+SUMS="${FILES##*$'\n'}"
+# release <tag> <draft> [<target_commitish> [<file>[:<state>]]...] — a release as the releases list has
+# it, each file an asset in <state> (default uploaded).
+release() {
+  local tag="$1" draft="$2" target="${3:-}" assets="" f
+  shift 2; [ "$#" -eq 0 ] || shift
+  for f in "$@"; do
+    [[ "${f}" == *:* ]] || f+=":uploaded"
+    assets+="${assets:+, }{\"name\": \"${f%%:*}\", \"state\": \"${f#*:}\"}"
+  done
+  echo "{\"tag_name\": \"${tag}\", \"draft\": ${draft}, \"target_commitish\": \"${target}\", \"assets\": [${assets}]}"
+}
+# on_page <1|2> <release>... — the releases list with these added after the decoys on page 1 or page 2.
+on_page() {
+  local page="$1" file IFS=,
+  shift
+  if [ "${page}" = 1 ]; then
+    file="$(fx "${REL_PATH}")"; set -- "$(release v1.1.0-rc1 true)" "$(release v1.0.0 false)" "$@"
+  else
+    file="$(fx "${REL_PATH}" p2)"; set -- "$(release v1.1.00 false)" "$(release v1.1 false)" "$@"
+  fi
+  echo "[$*]" > "${file}"
+}
 # fixtures — the state of a new release: no tag, prerelease at BASE and behind BUMP, and two pages of
 # releases with none for v1.1.0, only tags that a loose match would take for it.
 fixtures() {
@@ -163,12 +193,75 @@ plan "${BUMP}"
 refused "a tag on another commit refuses" "the tag v1.1.0 is on ${BASE:0:7}, not ${BUMP:0:7}: that version was released from another commit"
 tag_at commit "${BUMP}"
 plan "${BUMP}"
-refused "a tag at the pushed commit refuses" "the tag v1.1.0 is already at ${BUMP:0:7}: its release exists, and plan does not finish one"
+refused "a tag at the pushed commit with no release refuses" \
+  "the tag v1.1.0 is at ${BUMP:0:7} with no published release (no release), and plan publishes only a release whose tag does not exist yet"
+on_page 1 "$(release v1.1.0 true "${BUMP}")"
+plan "${BUMP}"
+refused "a tag at the pushed commit with only a draft refuses" \
+  "the tag v1.1.0 is at ${BUMP:0:7} with no published release (a draft), and plan publishes only a release whose tag does not exist yet"
+
+# A release that a failed run left: the tag at the pushed commit, and its published release holding all
+# five files, with the branch behind, at the commit and past it.
+# shellcheck disable=SC2086 # FILES splits into its five names
+ALL="$(release v1.1.0 false "${BUMP}" ${FILES})"
+fixtures
+tag_at commit "${BUMP}"; on_page 1 "${ALL}"
+plan "${BUMP}"
+planned "the tag at the pushed commit with a published release holding all five files and the branch behind moves" move
+echo '{"status": "identical"}' > "$(fx "${CMP_PATH}")"
+plan "${BUMP}"
+planned "the same release with the branch at the pushed commit plans none" none
+echo '{"status": "behind"}' > "$(fx "${CMP_PATH}")"
+plan "${BUMP}"
+planned "the same release with the branch past the pushed commit plans none" none
 
 fixtures
-echo "[$(release v1.1.00 false), $(release v1.1.0 true)]" > "$(fx "${REL_PATH}" p2)"
+tag_at commit "${BUMP}"
+# shellcheck disable=SC2086 # FILES splits into its five names, all but the checksums file
+on_page 1 "$(release v1.1.0 false "${BUMP}" ${FILES%$'\n'*})"
 plan "${BUMP}"
-refused "a release for the version, on the list's second page, refuses" "v1.1.0 already has a draft: its release exists, and plan does not finish one"
+refused "a published release missing a file refuses" \
+  "v1.1.0's published release lacks ${SUMS}, and plan never writes to a published release"
+# shellcheck disable=SC2086 # FILES splits into its five names, the checksums file last
+on_page 1 "$(release v1.1.0 false "${BUMP}" ${FILES%$'\n'*} "${SUMS}:open")"
+plan "${BUMP}"
+refused "a published release whose checksums file is not uploaded yet refuses" \
+  "v1.1.0's published release lacks ${SUMS}, and plan never writes to a published release"
+fixtures
+on_page 1 "${ALL}"
+plan "${BUMP}"
+refused "a published release with no tag refuses" \
+  "v1.1.0 has a published release but no tag, and plan never writes to a published release"
+
+# A draft that a failed run left: no tag, and a draft of the pushed commit holding two of the five files.
+FIRST_TWO="$(head -n 2 <<< "${FILES}")"
+# shellcheck disable=SC2086 # FIRST_TWO splits into its two names
+TWO="$(release v1.1.0 true "${BUMP}" ${FIRST_TWO})"
+fixtures
+on_page 1 "${TWO}"
+plan "${BUMP}"
+planned "no tag and a draft of the pushed commit holding two of the five files attaches, publishes and moves" \
+  "attach publish move"
+fixtures
+on_page 2 "${TWO}"
+plan "${BUMP}"
+planned "the same draft on the releases list's second page attaches, publishes and moves" "attach publish move"
+fixtures
+on_page 1 "$(release v1.1.0 true "${BASE}")"
+plan "${BUMP}"
+refused "a draft at another commit refuses" \
+  "v1.1.0 has a draft at '${BASE:0:7}', not ${BUMP:0:7}, and plan finishes only a draft of the pushed commit"
+fixtures
+on_page 1 "${TWO}"; on_page 2 "${TWO}"
+plan "${BUMP}"
+refused "two drafts for the version, one on each page, refuse" \
+  "v1.1.0 has two or more releases (a draft, a draft), and plan cannot tell which to finish"
+fixtures
+on_page 1 "${TWO}"
+echo '{"status": "diverged"}' > "$(fx "${CMP_PATH}")"
+plan "${BUMP}"
+refused "a draft of the pushed commit with the branch diverged refuses" \
+  "the branch prerelease at ${BASE:0:7} has diverged from ${BUMP:0:7}, and a release only moves it forward"
 
 fixtures
 rm "$(fx "${REF_PATH}")"; : > "$(fx "${REF_PATH}" 404)"
