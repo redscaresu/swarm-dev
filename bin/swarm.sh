@@ -128,8 +128,78 @@ LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swa
 PLUGIN=swarm-dev@swarm-dev
 MARKETPLACE=swarm-dev
 
-# -I: no json.py in the cwd (a project's) is imported in the standard library's place.
-plugin_version() { python3 -I -c "import json,sys; print(json.load(sys.stdin)['version'])"; }
+# plugin_version — the top-level "version" string of the plugin.json on stdin, as python3's json.load
+# reads it, in bash builtins alone: each process start counts in the speed job. It scans the text,
+# keeping a stack of the open objects and arrays and reading each string to its closing quote, escapes
+# included, so a "version" key in a nested object is never taken. With two top-level "version" keys the
+# last wins, as in json.load. It exits 1 with nothing on stdout when the input is empty or not an
+# object, the object never closes or has more than whitespace after it, it has no top-level "version",
+# or that value is not a string. A \u escape in the value outside ASCII, or of NUL, also exits 1: bash
+# 3.2's printf has no \u. It checks the brackets pair up and the escapes are JSON's, and no more of the
+# grammar than that.
+plugin_version() {
+  local ws=$' \t\n\r' s rest c str chunk esc oct ch
+  local stack="" key=0 want=0 found=0 bad ver="" closed=0
+  local stop="[]\"{}[,:${ws}]"
+  IFS= read -r -d '' s || true
+  rest="${s#"${s%%[!"${ws}"]*}"}"
+  [[ "${rest:0:1}" == "{" ]] || return 1
+  while [[ -n "${rest}" ]]; do
+    c="${rest:0:1}"
+    case "${c}" in
+      '"')
+        rest="${rest:1}"; str=""; bad=0
+        while :; do
+          chunk="${rest%%[\"\\]*}"; str+="${chunk}"; rest="${rest:${#chunk}}"
+          [[ -n "${rest}" ]] || return 1
+          [[ "${rest:0:1}" == '"' ]] && { rest="${rest:1}"; break; }
+          esc="${rest:1:1}"; rest="${rest:2}"
+          case "${esc}" in
+            '"'|"\\"|/) str+="${esc}" ;;
+            b) str+=$'\b' ;;
+            f) str+=$'\f' ;;
+            n) str+=$'\n' ;;
+            r) str+=$'\r' ;;
+            t) str+=$'\t' ;;
+            u)
+              chunk="${rest:0:4}"; rest="${rest:4}"
+              [[ "${chunk}" == [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] ]] || return 1
+              if (( 16#${chunk} > 0 && 16#${chunk} < 128 )); then
+                printf -v oct '%03o' "$((16#${chunk}))"; printf -v ch '%b' "\\0${oct}"; str+="${ch}"
+              else
+                bad=1
+              fi ;;
+            *) return 1 ;;
+          esac
+        done
+        if [[ "${stack}" == "{" ]] && (( key )); then
+          key=0; want=0
+          if [[ "${str}" == version ]] && (( ! bad )); then want=1; fi
+        elif (( want )); then
+          want=0; ver="${str}"; found=$(( ! bad ))
+        fi ;;
+      '{'|'[')
+        (( want )) && { want=0; found=0; }
+        stack+="${c}"; key=0; [[ "${stack}" == "{" ]] && key=1
+        rest="${rest:1}" ;;
+      '}'|']')
+        case "${stack:${#stack}-1}${c}" in '{}'|'[]') ;; *) return 1 ;; esac
+        stack="${stack%?}"; key=0; rest="${rest:1}"
+        [[ -n "${stack}" ]] || { closed=1; break; } ;;
+      ,)
+        [[ "${stack}" == "{" ]] && key=1
+        rest="${rest:1}" ;;
+      :|' '|$'\t'|$'\n'|$'\r')
+        rest="${rest:1}" ;;
+      *)
+        (( want )) && { want=0; found=0; }
+        # shellcheck disable=SC2295 # stop is a pattern: the characters a scalar ends at
+        chunk="${rest%%${stop}*}"; rest="${rest:${#chunk}}" ;;
+    esac
+  done
+  (( closed && found )) && [[ -z "${rest//["${ws}"]/}" ]] || return 1
+  printf '%s\n' "${ver}"
+}
 
 # show_version — the installed version; when a newer one is published, a warning and how to update.
 # A failed lookup (offline) is not an error: /swarm-dev:swarm must still run.

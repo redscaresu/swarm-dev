@@ -65,6 +65,7 @@ SWARM_MERGE_CI_SECONDS	setting	bin/lib/merge.sh
 SWARM_MERGE_LOCK_PIDLESS	seam	bin/lib/merge.sh
 SWARM_MERGE_LOCK_WAIT	setting	bin/lib/merge.sh
 SWARM_MERGE_POLL	setting	bin/lib/merge.sh
+SWARM_MERGE_POLL_MAX	setting	bin/lib/merge.sh
 SWARM_MERGE_READ_WAIT	seam	bin/lib/merge.sh
 SWARM_META	handoff	bin/lib/outcomes_join.py bin/lib/reports.sh
 SWARM_NAME	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/lifecycle.sh bin/lib/merge.sh
