@@ -79,9 +79,12 @@ diff_gate_story_pr() {
   echo "$(git rev-parse HEAD) story/${s}" >> "${ROOT}/prs"
 }
 # diff_gate_next — the command: the tree's swarm.sh next, once main is pushed and origin/HEAD is main.
+# Its report reads get SWARM_REPORT_SECONDS=240, under diff_run.sh's 300 s timeout: at the default
+# 30 s a loaded machine cuts the last read (the open-PR list) on one side and not the other, which
+# reads as a difference between the trees.
 diff_gate_next() {
   git push -q origin HEAD:main; git fetch -q origin; git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-  FX_CWD="${P}"; FX_GH="${ROOT}/bin/gh"; FX_ENV=("SWARM_GH_CACHE=${ROOT}/gh-cache")
+  FX_CWD="${P}"; FX_GH="${ROOT}/bin/gh"; FX_ENV=("SWARM_GH_CACHE=${ROOT}/gh-cache" SWARM_REPORT_SECONDS=240)
   FX_CMD=(bash "${TREE}/bin/swarm.sh" next)
 }
 
