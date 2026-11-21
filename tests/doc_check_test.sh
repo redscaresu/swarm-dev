@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # doc_check_test.sh — the docs name only what swarm.sh has. In README.md, docs/*.md, commands/*.md,
 # skills/ and templates/ (not AGENTS.md, the lead's, nor llms.txt), every `swarm.sh <command>` in
-# code must be one of dispatch's arms (or version and update, which run before it), every key in a
+# code must be one of swarm.sh's commands (tests/swarm_commands.sh: dispatch's arms, version and update,
+# which run before it, and the ported commands' markers under bin/ported/), every key in a
 # setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
 # in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
 # and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. The repo paths
@@ -21,23 +22,27 @@
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
+# shellcheck source=tests/swarm_commands.sh
+source "$(dirname "${BASH_SOURCE[0]}")/swarm_commands.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KNOWN="${REPO}/tests/doc_check_known.txt"
 LINE_CAP=150   # under the shortest line a replay of the docs' conflicts found hot (155 words)
+COMMANDS="$(swarm_commands "${REPO}")" || exit 1
 
 # doc_check <docs root> — one `file<TAB>text` line per stale reference in the docs under <docs root>,
-# checked against ${REPO}'s bin/swarm.sh and tree.
+# checked against ${REPO}'s commands (COMMANDS), its bin/swarm.sh's CONFIG_KEYS and its tree. Fails, naming
+# it, when CONFIG_KEYS gives no setting.
 doc_check() {
-  python3 - "${REPO}" "$1" <<'EOF'
+  python3 - "${REPO}" "$1" "${COMMANDS}" <<'EOF'
 import glob, os, re, subprocess, sys
 repo, root = sys.argv[1], sys.argv[2]
+commands = set(sys.argv[3].split())
 src = open(os.path.join(repo, "bin/swarm.sh")).read()
-body = src.split("\ndispatch() {", 1)[1].split("\n  esac", 1)[0]
-early = src.split('\ncase "${1:-}" in', 1)[1].split("\nesac", 1)[0]
-commands = {a for arms in re.findall(r"^    ([a-z_|-]+)\)", body, re.M) for a in arms.split("|")}
-commands |= set(re.findall(r"^  ([a-z_-]+)\)", early, re.M))
-keys = set(re.search(r'^CONFIG_KEYS="([^"]+)"', src, re.M).group(1).split())
+config_keys = re.search(r'^CONFIG_KEYS="([^"]*)"', src, re.M)
+keys = set(config_keys.group(1).split()) if config_keys else set()
+if not keys:
+    sys.exit("FAIL doc_check: found no settings in CONFIG_KEYS of " + os.path.join(repo, "bin/swarm.sh"))
 ROOTS = r"(?:bin|cmd|commands|docs|hooks|internal|scripts|skills|templates|tests|\.claude-plugin|\.github)/"
 # OWN_PROTECTED's whole directories, each with its trailing slash: a doc may name one that does not
 # exist yet. Its form is an alternation of plain paths; any other form stops the check.

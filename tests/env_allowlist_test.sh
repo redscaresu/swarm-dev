@@ -86,6 +86,9 @@ DESK=(DBUS_SESSION_BUS_ADDRESS="unix:path=${ROOT}/bus" XDG_RUNTIME_DIR="${ROOT}/
   XDG_CACHE_HOME="${ROOT}/cache" XDG_STATE_HOME="${ROOT}/state")
 PROVIDER=(CLAUDE_CODE_USE_BEDROCK=1 CLAUDE_CODE_USE_VERTEX=0 CLAUDE_CODE_USE_FOUNDRY=0 ANTHROPIC_MODEL=m1 ANTHROPIC_SMALL_FAST_MODEL=m2
   AWS_REGION=eu-west-2 AWS_PROFILE=dev CLOUD_ML_REGION=europe-west4 ANTHROPIC_VERTEX_PROJECT_ID=proj-1)
+# The Go binary and the bash-to-Go handoff names (SWARMDEV_*), as a lead's session may hold them. No agent
+# gets them. SWARMDEV_BIN keeps the binary make test hands every test, so a ported command still runs.
+HANDOFF=(SWARMDEV_BIN="${SWARMDEV_BIN:-${ROOT}/swarm-bin}" SWARMDEV_PROJECT="${p}" SWARMDEV_DIE_FILE="${ROOT}/die")
 LEAD_PATH="${STUB_BIN}:${PATH}" TEST_HOME="${ROOT}/home"
 mkdir -p "${TEST_HOME}"; : > "${ROOT}/gitconfig"
 for f in zshenv zprofile zshrc; do echo "export ZSH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
@@ -94,7 +97,7 @@ run() {
   # The session's own Bedrock key and model pins (a builder on Bedrock has them) never reach a test agent: -u first, then the cases below set their own.
   (cd "${p}" && env -u SWARM_PROJECT -u AWS_BEARER_TOKEN_BEDROCK -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_SONNET_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
+    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" "${HANDOFF[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
@@ -185,6 +188,8 @@ check "a login shell the agent starts from SHELL sees no secret exported in HOME
 check "a stray AGENT_ENV_NAMES in swarm.sh's environment adds nothing" "" "$(var conduct-plain FAKE_SECRET)"
 # agent_env adds names only when the config sets it (the Foundry case below): without it, nothing extra leaks.
 check "with no agent_env, PROVIDER_KEY from the lead does not reach it" "" "$(var conduct-plain PROVIDER_KEY)"
+check "the lead's SWARMDEV_BIN and SWARMDEV_ handoff names do not reach a conductor's pane" "" \
+  "$(grep '^SWARMDEV_' "${ROOT}/agent-env-conduct-plain" || true)"
 
 # --- A story's env: reaches its conductor, then the builder that conductor starts, with the lead's value.
 check "conduct e starts, though a done story of its epic names a bad env:" "0" "$(set +e; run conduct e >/dev/null; echo $?)"
@@ -353,11 +358,15 @@ check "one the lead's session does not have is skipped with a warning, and the a
   "$(has "swarm: warning: agent_env: UNSET_HERE is not set here, so the agent starts without it" "${o}")|$(var co-author HERDR_ENV)"
 run story p1 >/dev/null
 check "and it reaches a builder whose story names no env:" "provider-key" "$(var p1 PROVIDER_KEY)"
+check "the lead's SWARMDEV_BIN and SWARMDEV_ handoff names do not reach a builder's pane" "" \
+  "$(grep '^SWARMDEV_' "${ROOT}/agent-env-p1" || true)"
 session="$(awk -F'\t' '$3 == "co-author" { s = $7 } END { print s }' "${p}/.swarm/agents.tsv")"
 check "its restart wrapper keeps it from the restored pane, and still drops a name nothing gave it" "PROVIDER_KEY=restored|" \
   "$(env -i PATH=/usr/bin:/bin PROVIDER_KEY=restored FAKE_SECRET=restored python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(PROVIDER_KEY|FAKE_SECRET)=' | paste -sd'|' -)|"
 check "its restart wrapper drops a timed run's SWARM_RUN_TIMED, and keeps the other SWARM_* settings" "SWARM_MERGE_CI_SECONDS=7|" \
   "$(env -i PATH=/usr/bin:/bin SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(SWARM_MERGE_CI_SECONDS|SWARM_RUN_TIMED)=' | paste -sd'|' -)|"
+check "its restart wrapper drops SWARMDEV_BIN and the SWARMDEV_ handoff names, and keeps a SWARM_* setting" "SWARM_MERGE_CI_SECONDS=7|" \
+  "$(env -i PATH=/usr/bin:/bin SWARM_MERGE_CI_SECONDS=7 SWARMDEV_BIN=/b SWARMDEV_PROJECT=/p SWARMDEV_DIE_FILE=/d python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(SWARM_MERGE_CI_SECONDS|SWARMDEV_[A-Z_]*)=' | paste -sd'|' -)|"
 # config_refused <agent_env value> <the refusal's text> — the config stops swarm.sh, naming its line, before any pane opens.
 config_refused() {
   local n o

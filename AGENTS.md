@@ -165,11 +165,12 @@ bin/lib/*.sh          the commands by group (agents, board, build, lifecycle, me
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
-cmd/swarm/            the Go command, the wiring layer; no command is ported yet
+cmd/swarm/            the Go command, the wiring layer: the table of entries by name and the frame bash hands
+                      over (frame.go); no command is ported yet, and wrapper-fixture is for the wrapper's tests
 internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
-                      with no methods yet, and the store's types
+                      the store's two methods for the frame's files and the store's types
 internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
-                      and store/ (.swarm/ and the board's files)
+                      and store/ (.swarm/, the board's files and the frame's die and fields files)
 internal/clock/       the one package that may read the time
 internal/layers/      the Go checks that give each package its layer, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
@@ -211,12 +212,17 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
                                             # if its swarm.sh reaches it; an unpinned swarm.sh call stops there
+                                            # before any file runs, it builds ./cmd/swarm once and hands it to every test in SWARMDEV_BIN
+                                            # it needs go on PATH: with no go, or a build that fails, it fails before any file runs
 claude plugin validate .
 ```
 
 Run `scripts/select-tests.sh --run` before a push. It never runs the full suite, even for a file the
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
 14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
+`make test` needs Go wherever it runs, and so does `scripts/select-tests.sh --run`, which runs make test.
+Each run builds `./cmd/swarm` from the tree it runs in, once, before any test file starts.
+When a test starts a make test of the same tree while the run that built the binary is still going, that make test reuses the binary and builds nothing.
 
 The `speed` job (`.github/workflows/speed.yml`) runs on each PR that is not board-only.
 It installs strace, then runs `tests/speed_run.sh --require-count` with the PR's base as tree a and the PR's merge commit as tree b.
@@ -262,7 +268,10 @@ Development rules for anyone, agent or person, working in this repository:
   too. Use the copy before the PR opens too when you have more than two proofs, or one on a SLOW
   test file.
   In the copy, break the fix, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=`, keep the FAIL
-  lines and delete the copy. Say in the PR that you used the worktree copy. Push what is ready, and
+  lines and delete the copy.
+  make test in the copy builds the copy's own Go, so a fix in Go is tested there too.
+  If the copy's Go does not build, the run fails before any test file starts.
+  Say in the PR that you used the worktree copy. Push what is ready, and
   put further points in the PR body rather than in more pushes. Never use `git checkout` or
   `git restore` on uncommitted work.
 
@@ -314,8 +323,9 @@ never `[[wikilinks]]`.
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+`go-checks` (`.github/workflows/go.yml`) is required on `main` too: it runs gofmt, go vet, go test and the Go layer checks.
 `macos-tests` (`.github/workflows/macos.yml`) runs `go test ./...` and a small subset of the bash tests on macOS arm64, under macOS's bash 3.2.
-It is not required on `main`, but `swarm.sh merge` waits for it green, as for every workflow a PR runs.
+It is required on `main` too.
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag and, for a numeric `x.y.z` tag, every one is a fix: a patch), the lead cuts a
