@@ -15,7 +15,8 @@
 # --run hands --known's list to a stub make with JOBS=4, naming the paths it leaves to CI, or runs
 # nothing and says so; it never runs every test. --functions names the bin/ functions and dispatch arms a change reaches,
 # from both sides of the diff, and the functions that run a changed .py; a line in no function, or a
-# .py no function runs, gives full. A Go file under cmd/ selects doc_check_test.sh alone. Last,
+# .py no function runs, gives full. A Go file under cmd/ selects the Go row's tests, and a marker under
+# bin/ported/ the tests that read the markers. Last,
 # --check-map: it names each unmapped path under bin/, scripts/, commands/, hooks/ and docs/, and each
 # unmapped Go file, go.mod or go.sum anywhere, refuses a map that lists a missing test, and passes the
 # real repo's ls-files.
@@ -55,7 +56,7 @@ mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" 
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh rules.md; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh tests/binary_dispatch_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo floor' > "${G}/tests/diff_run_test.sh"
 echo 'echo floor' > "${G}/tests/diff_run_hooks_test.sh"
 echo 'echo floor' > "${G}/tests/diff_allow_test.sh"
@@ -235,9 +236,12 @@ check "a differential-run fixture file selects diff_run_test.sh, which loads eve
   "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
 check "an allow list entry selects diff_allow_test.sh, which parses every entry on disk" \
   "$(sel "mkdir -p scripts/allow/stage-1 && echo x > scripts/allow/stage-1/a.md; ${commit}")" tests/diff_allow_test.sh
-check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, and command_names_test.sh, which greps it for a bare /swarm, and no other" \
+check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, command_names_test.sh, which greps it for a bare /swarm, and binary_dispatch_test.sh, which runs the binary, and no other" \
   "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
-  "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
+  "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/binary_dispatch_test.sh)"
+check "a marker under bin/ported/ selects the tests that read the markers, binary_dispatch_test.sh and the port list tests, and no other" \
+  "$(sel "mkdir -p bin/ported && : > bin/ported/x; ${commit}")" \
+  "$(lines tests/doc_check_test.sh tests/skill_test.sh tests/port_names_test.sh tests/events_test.sh tests/binary_dispatch_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
 check "a board story selects nothing" "$(sel "echo 1 >> board/stories/a.md; ${commit}")" ""
 check "a board README selects the test that checks it against its template" "$(sel "echo 1 >> board/stories/README.md; ${commit}")" \
   tests/board_readme_test.sh

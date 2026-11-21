@@ -33,6 +33,10 @@ bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/com
 # bin/lib/events_outcome.py among them.
 # The gh shim runs the port list tests too, as they scan bin/ (above).
 bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh tests/removed_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+# A ported command's marker: the tests that read the markers as command names (doc_check, skill_test,
+# port_names and events_test, through tests/swarm_commands.sh), the dispatch to the binary, and the port
+# list tests. CI's go-checks job runs cmd/swarm's check that the markers match the Go table.
+bin/ported/*	tests/doc_check_test.sh tests/skill_test.sh tests/port_names_test.sh tests/events_test.sh tests/binary_dispatch_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh
 # test.sh sets every test's environment, and the Makefile runs it.
 scripts/test.sh Makefile	all
 # The selector's own files. Its test's fixture names real paths, so select_tests.py never counts that
@@ -49,11 +53,12 @@ scripts/*	named
 commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
 # A hook: the shell scans and the port list tests, which read hooks/ by a glob (above).
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+# binary_dispatch_test.sh runs the binary built from cmd/swarm, its wrapper-fixture entry and the frame it reads.
 # The Go module: a renamed Go path can break a doc that names it, which doc_check_test.sh catches. Not
 # `named`, since no test names main.go and it would select every test; CI's go-checks job runs the Go tests.
 # port_swarm_names_test.sh, port_locks_test.sh and port_fields_test.sh scan the Go files by a glob, and
 # command_names_test.sh greps them for a bare /swarm.
-go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/command_names_test.sh
+go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/command_names_test.sh tests/binary_dispatch_test.sh
 # The docs: the tests that name the file, always the ones that check or read the real docs, and
 # command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
 # epic_briefs_test.sh, plan_epic_test.sh and upgrade_test.sh read docs/reference*.md through a glob.
