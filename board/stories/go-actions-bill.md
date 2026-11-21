@@ -1,7 +1,6 @@
 ---
 kind: lead
 status: blocked
-epic: go-module
 depends_on: [go-checks-ci, go-macos-job]
 needs: go-checks-ci (a week of go-checks runs); go-macos-job (a week of macos-tests runs)
 touches: []
