@@ -11,7 +11,7 @@
 # name	kind	files
 SWARM_AFTER	internal	bin/lib/panes.py
 SWARM_AGENT	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/lib/board.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/swarm.sh hooks/agent-state.sh hooks/lead-session.sh hooks/merge-guard.sh
-SWARM_AGENTS	handoff	bin/lib/dash.sh
+SWARM_AGENTS	handoff	bin/lib/agents.sh
 SWARM_AGENT_KINDS	handoff	bin/lib/board.sh bin/lib/build.sh bin/lib/flow_idle_slots.py bin/lib/flow_lead_queue.py bin/lib/reports.sh bin/lib/touches_rows.py
 SWARM_AGENT_NAME_MAX	handoff	bin/lib/flow_lead_queue.py bin/lib/reports.sh
 SWARM_AGENT_SHELL	seam	bin/lib/agents.sh
@@ -21,9 +21,6 @@ SWARM_BACKLOG_CONDUCTOR	handoff	bin/lib/board.sh bin/lib/flow_idle_slots.py bin/
 SWARM_BASE_MOVED_WAIT	seam	bin/lib/merge.sh
 SWARM_BOARD	handoff	bin/lib/flow_holds.py bin/lib/flow_idle_slots.py bin/lib/flow_reviewers.py bin/lib/reports.sh
 SWARM_BRIEFS	handoff	bin/lib/lifecycle.sh
-SWARM_CI_CACHE	handoff	bin/lib/dash.sh bin/lib/dash_slow.py
-SWARM_CI_PROJECT	handoff	bin/lib/dash.sh bin/lib/dash_slow.py
-SWARM_CI_TIME_ONLY	handoff	bin/lib/dash_slow.py bin/lib/flow_ci_health.py bin/lib/reports.sh
 SWARM_CLOSE_IDLE_POLL	seam	bin/lib/lifecycle.sh
 SWARM_CLOSE_IDLE_SECONDS	seam	bin/lib/lifecycle.sh
 SWARM_CODEX_GRACE	seam	bin/swarm.sh
@@ -31,16 +28,16 @@ SWARM_CODEX_RETRY_SECONDS	seam	bin/swarm.sh
 SWARM_CODEX_SECONDS	seam	bin/swarm.sh
 SWARM_CONDUCTOR_POLL	seam	bin/lib/agents.sh
 SWARM_CONDUCTOR_SLICE_MS	seam	bin/lib/agents.sh
-SWARM_DASH_NOW	seam	bin/lib/clock.py bin/lib/dash.sh bin/lib/dash_render.py bin/lib/flow_ci_health.py
+SWARM_DASH_NOW	seam	bin/lib/clock.py bin/lib/flow_ci_health.py internal/clock/clock.go
 SWARM_DEPS	handoff	bin/lib/flow_report.py bin/lib/reports.sh
 SWARM_DROPPED_FETCH_WAIT	seam	bin/lib/merge.sh
 SWARM_ESCALATE_MODEL	handoff	bin/lib/outcomes_rows.py bin/lib/reports.sh
 SWARM_FALLBACK_MIN_SECONDS	seam	bin/swarm.sh
 SWARM_FEATURES	setting	bin/lib/reports.sh
 SWARM_FIELD	handoff	bin/lib/agents.sh
-SWARM_FINDING_REVIEWERS	handoff	bin/lib/dash.sh bin/lib/report.py bin/lib/reports.sh bin/lib/retro_report.py
+SWARM_FINDING_REVIEWERS	handoff	bin/lib/report.py bin/lib/reports.sh bin/lib/retro_report.py
 SWARM_FIX_MAIN_LOG_SECONDS	setting	bin/lib/lifecycle.sh bin/lib/merge.sh
-SWARM_FLOW_SECTIONS	handoff	bin/lib/dash_slow.py bin/lib/reports.sh
+SWARM_FLOW_SECTIONS	handoff	bin/lib/reports.sh
 SWARM_FORBID_PROJECT	seam	bin/swarm.sh hooks/lead-stop.sh hooks/merge-guard.sh
 SWARM_GH_CACHE	setting	bin/lib/board.sh bin/lib/gh_cache.py bin/lib/reports.sh
 SWARM_GH_CALLER	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/lib/lifecycle.sh bin/swarm.sh hooks/lead-session.sh
@@ -50,7 +47,7 @@ SWARM_GH_LOG_KEEP	seam	bin/gh-shim/gh
 SWARM_GH_TRIM_EVERY	seam	bin/gh-shim/gh
 SWARM_GH_VIA	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/swarm.sh
 SWARM_HEAD	handoff	bin/lib/lifecycle.sh
-SWARM_HOME	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/build.sh bin/lib/dash.sh bin/lib/handover.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh
+SWARM_HOME	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/build.sh bin/lib/handover.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh
 SWARM_LABEL	handoff	bin/swarm.sh
 SWARM_LADDER	handoff	bin/lib/flow_review_loops.py bin/lib/reports.sh
 SWARM_LATEST_URL	seam	bin/swarm.sh
@@ -60,7 +57,7 @@ SWARM_LEAD_LIST_WAIT	setting	bin/lib/lifecycle.sh
 SWARM_LEAD_POLL	setting	bin/lib/lifecycle.sh
 SWARM_LEAD_PRS_WAIT	setting	bin/lib/lifecycle.sh
 SWARM_LEAD_PRS_WARN_AFTER	setting	bin/lib/lifecycle.sh
-SWARM_LIB	handoff	bin/lib/agents.sh bin/lib/dash.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/lib/retro_report.py bin/swarm.sh
+SWARM_LIB	handoff	bin/lib/agents.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/lib/retro_report.py bin/swarm.sh
 SWARM_LIST_OK	handoff	bin/lib/agents.sh
 SWARM_LOCK_WAIT	handoff	bin/lib/board.sh
 SWARM_MERGE_CI_GRACE	seam	bin/lib/merge.sh
@@ -76,28 +73,26 @@ SWARM_NON_FIX_WAIT	seam	bin/lib/board.sh
 SWARM_NOTE_HERDR_WAIT	setting	bin/lib/merge.sh
 SWARM_NOTE_WAKE_SECS	setting	bin/lib/agents.sh
 SWARM_NO_AGENT_STARTS	handoff	bin/lib/flow_lead_queue.py bin/lib/reports.sh
-SWARM_NO_CI_REFRESH	handoff	bin/lib/dash.sh bin/lib/dash_slow.py
 SWARM_ORIGIN_ASK_SECONDS	seam	bin/lib/lifecycle.sh
-SWARM_OWN	handoff	bin/lib/dash.sh bin/lib/dash_age.py bin/lib/dash_render.py bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/status_report.py bin/lib/tidy_panes.py
-SWARM_PAIRS	handoff	bin/lib/dash.sh bin/lib/dash_slow.py
+SWARM_OWN	handoff	bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/status_report.py bin/lib/tidy_panes.py
 SWARM_PANE	handoff	bin/lib/merge.sh
-SWARM_PANES	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/build.sh bin/lib/dash.sh bin/lib/lifecycle.sh
+SWARM_PANES	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/build.sh bin/lib/lifecycle.sh
 SWARM_PANE_LIST	handoff	bin/lib/agents.sh
 SWARM_POLL_CACHE	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_POLL_CACHE_AGE	handoff	bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_POLL_CACHE_SECONDS	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_PR	setting	bin/lib/build.sh bin/swarm.sh
-SWARM_PROJECT	setting	bin/lib/agents.sh bin/lib/build.sh bin/lib/dash.sh bin/lib/dash_slow.py bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh hooks/lead-session.sh hooks/lead-stop.sh
+SWARM_PROJECT	setting	bin/lib/agents.sh bin/lib/build.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh hooks/lead-session.sh hooks/lead-stop.sh
 SWARM_PROMPT_TIMEOUT_MS	setting	bin/lib/agents.sh bin/lib/lifecycle.sh
 SWARM_PRS	handoff	bin/lib/dataset.py bin/lib/reports.sh
 SWARM_QUEUE_MINUTES	handoff	bin/lib/board.sh bin/lib/touches_rows.py
 SWARM_RECHECK_CI_SECONDS	setting	bin/lib/build.sh
 SWARM_RECONCILE_WAIT	setting	bin/lib/board.sh
-SWARM_RECORD	handoff	bin/lib/dash.sh
+SWARM_RECORD	handoff	bin/lib/agents.sh
 SWARM_RELEASE_WAIT	setting	bin/lib/merge.sh
-SWARM_REPORT_END	handoff	bin/lib/dash.sh bin/lib/merge.sh bin/lib/panes.py
-SWARM_REPORT_SECONDS	setting	bin/lib/dash.sh bin/lib/merge.sh
-SWARM_REPORT_SKIP_FILE	handoff	bin/lib/dash.sh bin/lib/merge.sh bin/lib/panes.py
+SWARM_REPORT_END	handoff	bin/lib/merge.sh bin/lib/panes.py
+SWARM_REPORT_SECONDS	setting	bin/lib/merge.sh
+SWARM_REPORT_SKIP_FILE	handoff	bin/lib/merge.sh bin/lib/panes.py
 SWARM_REPORT_TIMES	setting	bin/lib/merge.sh
 SWARM_REPOS_DIR	handoff	bin/lib/flow_idle_slots.py bin/lib/reports.sh
 SWARM_REPO_DIRS	handoff	bin/lib/flow_merge_ins.py bin/lib/reports.sh
@@ -107,10 +102,10 @@ SWARM_REWORK_SINCE	handoff	bin/lib/outcomes_join.py bin/lib/reports.sh
 SWARM_ROLES	handoff	bin/lib/lifecycle.sh
 SWARM_ROWS	handoff	bin/lib/dataset.py bin/lib/flow_report.py bin/lib/outcomes_join.py bin/lib/outcomes_rows.py bin/lib/reports.sh
 SWARM_RUN_TIMED	handoff	bin/lib/agents.sh bin/swarm.sh
-SWARM_SEP	handoff	bin/lib/dash.sh
+SWARM_SEP	handoff	bin/lib/agents.sh
 SWARM_SESSIONS	handoff	bin/lib/merge.sh bin/lib/status_report.py
 SWARM_SET	handoff	bin/lib/board.sh
-SWARM_SLEEP_SCALE	seam	bin/lib/agents.sh bin/lib/dash.sh bin/lib/report.py bin/swarm.sh hooks/lead-stop.sh
+SWARM_SLEEP_SCALE	seam	bin/lib/agents.sh bin/lib/report.py bin/swarm.sh hooks/lead-stop.sh internal/clock/clock.go
 SWARM_STALL_POLL_MS	seam	bin/lib/agents.sh
 SWARM_STALL_READS	handoff	bin/lib/agents.sh bin/lib/lifecycle.sh
 SWARM_START_TRY	handoff	bin/lib/build.sh bin/lib/lifecycle.sh
@@ -134,4 +129,4 @@ SWARM_WAIT_PR_RETRY	seam	bin/lib/merge.sh
 SWARM_WAIT_SLICE	handoff	bin/lib/agents.sh
 SWARM_WAIT_STARTED	seam	bin/lib/agents.sh
 SWARM_WORKSPACES	handoff	bin/lib/merge.sh bin/lib/status_report.py
-SWARM_WS	handoff	bin/lib/agents.sh bin/lib/build.sh bin/lib/dash.sh
+SWARM_WS	handoff	bin/lib/agents.sh bin/lib/build.sh

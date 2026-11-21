@@ -166,7 +166,7 @@ and `wait --lead` takes the changed line as new and wakes the lead again. On a r
 lines, so a line already there wakes the lead only when it leaves and comes back. A poll whose check
 fails keeps the lines the last poll saw and prints one `warning: the idle check failed` line
 on stderr in place of a traceback, so a check that keeps failing warns on every poll. `status` lists the same lines under its Next section, with the same
-warning when the check fails, and `dash` in an `idle capacity` box.
+warning when the check fails.
 The PR heads are read with gh only on a run's first read and then at most once every 5 minutes
 (`SWARM_LEAD_HEADS_EVERY`, 300 seconds). Each of those reads writes every review item's result to
 `.swarm/lead/heads`, the open story PRs to `.swarm/lead/prs` and each base's CI to `.swarm/lead/bases` (both below). The polls in between read only those files and make no gh call. A PR in review
@@ -407,6 +407,11 @@ The kinds and their exits:
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+  For a ready story's builder, the line also writes `.swarm/lead/manual/<agent>`, which holds the
+  builder's session.
+  A restart of a marked builder starts a fresh session, because a resumed session comes back in
+  manual mode.
+  A later read that finds the pane out of manual mode drops the mark, and so does the restart.
   A permission prompt with that footer under it (a builder in manual mode is nearly always on one)
   is `manual` for a ready story's builder, whose restart clears both. For any other agent it is a
   `prompt` whose exit adds `, and turns manual mode off there`.
@@ -555,7 +560,7 @@ all.
 A try that began and has no outcome, because its command was interrupted or killed mid-start, may
 have sent the brief. The poll never starts it again, and the line names the check:
 `no-review: <slug> <PR URL> (try N of 3 was cut off mid-start and may have sent the brief), exit: check that no pane holds review-<slug> (swarm.sh status, then swarm.sh tidy for an empty one), then swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`.
-Any other case prints the line as above. `next`, `status` and `dash` print the same lines but start
+Any other case prints the line as above. `next` and `status` print the same lines but start
 nothing: where the poll would start the next try, they print the line with no `(started N of 3)`.
 
 A story whose `no-agent:` line printed in the same poll gets no `no-review:` line, because that
@@ -567,7 +572,7 @@ reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex'
 model `fallback_reviewer` names. The lead runs it only while the worktree is at the PR's head with
 nothing uncommitted, as `review-agent` checks; otherwise the builder is still at work. Its findings
 go to the builder with `swarm.sh tell <slug> findings <file>`, which is a round under way, so the
-line goes quiet. A clean run clears nothing: the line stays in `status` and on the dashboard until a
+line goes quiet. A clean run clears nothing: the line stays in `status` until a
 review agent starts on the PR, findings go to the builder, or the PR merges and the story leaves the
 board. The line reads the same herdr list, events.tsv and `ps` as `no-agent:`, with one more read of
 events.tsv for the stories with a build record, one more for each story that gets the line, and no gh
@@ -789,9 +794,9 @@ line is named again if it comes back. A run that stopped at `fix-main`, or whose
 check, forgets nothing. `wait --lead` keeps its own record, so the lead may hear of a line from both.
 Two `next` runs at once may both name the same line, and a `next` that cannot write the file still
 prints its step. A `step-up failed:` line is never the step: `wait --lead`
-hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
-frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
-`ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
+hands that one to the lead. Working out the step makes no gh call, because `status` and the lead's Stop hook read it on
+every call. `status` hands `next` the lines it has already read, so it does not ask herdr and `ps`
+twice.
 
 **`next` names a PR of yours that no story lists.** `swarm.sh merge` refuses a PR that no story or
 epic lists on its `prs:` line, so a lead's own PR (a config change, a doc fix) used to wait unseen. After
@@ -804,7 +809,7 @@ read fails, is cut at the deadline or gets no list of PRs back, `next` prints `u
 (<why>): an open PR of yours that no story or epic lists would not show here` in its place. Only that
 line names a cut of this read; the `skipped` line keeps naming the reads the step was worked out
 without. A project with no origin has no PR to list, and `next` prints no unlisted line for it.
-`status`, `dash` and `hooks/lead-stop.sh` work out the step without this read, so they make no such
+`status` and `hooks/lead-stop.sh` work out the step without this read, so they make no such
 call.
 
 `status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
@@ -867,6 +872,9 @@ It runs on a ready story that has a worktree and whose builder herdr no longer l
 If the builder's last Claude session left a resume command, and that session took its brief, restart reopens it and tells the builder to carry on.
 A resume command moved to a new session by `/clear` reopens the new one.
 If not, it starts a fresh builder on the last model, with a handover brief like a step-up's.
+It starts a fresh builder, too, when `wait --lead` last saw the builder in manual mode in that same session (the `manual` kind of `prompt:` line marks it), since a resumed session comes back in manual mode.
+That brief adds a note: the builder was restarted out of manual mode, the open PR or that none is open, and the branch head.
+Its line is `restart <slug> ok (fresh on <model>: out of manual mode)`.
 It refuses, and starts nothing, while herdr still lists the builder, and when the story:
 
 - has a PR that merged or is set to auto-merge

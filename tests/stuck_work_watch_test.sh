@@ -12,7 +12,8 @@
 # in the next. A turn that ends on the same stop, or the same stop in a new pane, wakes the lead again; a
 # write to the session log that is no work of the agent's does not, nor does an API error a wait hid once
 # the wait ends with no new work; a prompt over the manual-mode footer is manual, which never does. Manual mode on a ready story's builder
-# closes its pane, then restarts or holds the story, found by its full slug (cut_record).
+# closes its pane, then restarts or holds the story, found by its full slug (cut_record), and marks the builder
+# (.swarm/lead/manual/<agent>) for restart to start fresh until a read finds its pane out of manual mode.
 # herdr is a stub listing ${ROOT}/agents (failing while ${ROOT}/list-fails exists, cut short while
 # ${ROOT}/list-garbled does), whose agent read logs itself to ${ROOT}/reads, hangs while ${ROOT}/hang-<pane>
 # exists, and prints ${ROOT}/pane.txt, failing without it.
@@ -299,6 +300,15 @@ printf '2026-10-27\tcode\t%s\tclaude\topus\t-\tsession-1\n' "${A}" > "${P}/.swar
 out="$(run)"
 check "manual mode on a ready story's builder closes its pane, then holds it (no worktree to restart)" \
   grep -qxF "prompt: ${A} (manual), exit: herdr pane close w:p1 then swarm.sh hold ${A} <reason>" <<< "${out}"
+check "and marks the builder in manual mode, in its agents.tsv session, for restart to start fresh" \
+  test "$(cat "${P}/.swarm/lead/manual/${A}" 2>/dev/null)" = session-1
+agent working manual.txt; run > /dev/null
+check "a poll that sees it working keeps the mark" test -e "${P}/.swarm/lead/manual/${A}"
+agent blocked mid-command-manual.txt; run > /dev/null
+check "a read mid-command, the manual-mode footer still on, keeps the mark" test -e "${P}/.swarm/lead/manual/${A}"
+# A status change has the next poll read the pane, which it would skip for STUCK_RECHECK as last found clear.
+agent idle empty-box.txt; run > /dev/null
+check "a read that finds its pane out of manual mode drops the mark" test ! -e "${P}/.swarm/lead/manual/${A}"
 
 # The same for a story whose slug is past AGENT_NAME_MAX (32): its builder's name is the slug cut short.
 LONG=sww-a-story-whose-slug-runs-past-the-name-cap; A="${LONG:0:32}"

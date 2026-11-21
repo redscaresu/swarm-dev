@@ -68,10 +68,9 @@ also run one by one, and which each wait for the user's approval:
 Useful while it runs:
 
 - `swarm.sh status [--all]`: agents that need a look (including empty panes where a start failed), stacked builds whose parent moved or merged, and what waits on the user; `--all` lists idle agents and blocked stories too.
-- `swarm.sh dash [--watch [seconds]]`, and `swarm.sh dash --project <dir>` (repeatable): the board, agents, running-now box, merges-per-day speedometer, model ladder and recent events on one read-only screen; each `--project` draws another project.
 - `swarm.sh where <agent>`: the pane, workspace and tab of one of this project's agents. `swarm.sh swarms`: every swarm running on this machine.
 - `swarm.sh tidy [--yes]`: close empty panes and retired agents' panes; lists them first.
-- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag and every one is a fix (a patch), `retro v<x.y.z>` before a minor release that no done retro file covers, `stage v<T>` when staged draft epics can go active because the base has a tag at or above the minor before their stage, and `idle:` lines for capacity nothing uses (`dash` shows them too).
+- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag and every one is a fix (a patch), `retro v<x.y.z>` before a minor release that no done retro file covers, `stage v<T>` when staged draft epics can go active because the base has a tag at or above the minor before their stage, and `idle:` lines for capacity nothing uses.
 - `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic. It starts builds and review agents, never reviews or merges a PR, and ends the epic with its report, written only once no agent work is left (the `finish:` line on a merge or handover note says so). `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead, and with `--epic` or `--backlog` also once when a story PR of theirs opens.
 - `swarm.sh watch --epic <slug>`, with no repos named, also returns `epic-done: <slug> has no agent work left` (exit 0) on a poll where the epic has no agent work left by the `finish:` line's rule and no PR of its stories is open, so the conductor writes its report.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story, a green PR that waits on the user, an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode, one of `next`'s `idle:` lines for blocked stories, for ready stories with no build and for an epic that can start or has no plan running, a reviewed story PR left unmerged past `queue_minutes` (`unmerged:`), a story PR that conflicts with its base (`conflict:`), a review agent's stop note that no running conductor has (`stopped:`), a plan swarm whose agents have all written their output (`planned:`) or one that ended without it (`plan-missing:`), or a `usage:` warning once the usage estimate passes `usage_warn_percent`, among others: [§ The lead](docs/reference-lead.md#the-lead) in docs/reference-lead.md lists every line.
@@ -103,8 +102,7 @@ Useful while it runs:
   With `merge_admin = on` it passes `--admin` once its own checks pass.
   In a swarm project the plugin's guard hook refuses any other merge.
 - `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`. `step-up --resume <slug>` starts a rung whose start failed.
-- `swarm.sh intervene lead-hand|user-caught <cause> "<one line>"`: log a time a person had to step in, and why (a cause from `INTERVENE_CAUSES` in bin/swarm.sh; an unknown one fails and lists them); `flow` and `dash` count them.
-- `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
+- `swarm.sh intervene lead-hand|user-caught <cause> "<one line>"`: log a time a person had to step in, and why (a cause from `INTERVENE_CAUSES` in bin/swarm.sh; an unknown one fails and lists them); `flow` counts them.
 - `swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one (and with `--because` the builder's own reason, which codex sees on the PR's next review), who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped) and the review round (0 for a plan or board PR), which flow's `reviewers` section counts per round. `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `swarm.sh retro`'s recurring list names each one with no check before a minor release.
 - `herdr agent read <name> --source recent-unwrapped`: what an agent is doing.
 
@@ -163,11 +161,17 @@ Useful while it runs:
 
 ```
 bin/swarm.sh          the entry point: usage, settings, the model policy, the command dispatch
-bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecycle, merge, reports)
+bin/lib/*.sh          the commands by group (agents, board, build, lifecycle, merge, reports)
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
-cmd/swarm/            the Go command, the module's only package; no command is ported yet
+cmd/swarm/            the Go command, the wiring layer; no command is ported yet
+internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
+                      with no methods yet, and the store's types
+internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
+                      and store/ (.swarm/ and the board's files)
+internal/clock/       the one package that may read the time
+internal/layers/      the Go checks that give each package its layer, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),
@@ -206,7 +210,7 @@ scripts/select-tests.sh --run               # before a push: the tests mapped to
                                             # the guard refuses it in an agent's session; an agent names TESTS= or runs select-tests.sh --run
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
-                                            # if its swarm.sh reaches it; an unpinned swarm.sh call stops there; dash starts no detached refresh
+                                            # if its swarm.sh reaches it; an unpinned swarm.sh call stops there
 claude plugin validate .
 ```
 
@@ -229,6 +233,10 @@ Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file,
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Go layers: a rules package (every package but `cmd/` and those under it, `internal/iface`, `internal/clock` and the four adapters under `internal/adapter/`) starts no process, touches no file, uses no network and imports no adapter.
+  Only `internal/clock` reads the time.
+  The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
+  `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
@@ -239,10 +247,10 @@ Development rules for anyone, agent or person, working in this repository:
 - Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
   hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
   `make test` already unsets it.
-- Never run `flow`, `dash`, `outcomes`, `retro` or `dataset` against the real repo in a loop, in parallel or
+- Never run `flow`, `outcomes`, `retro` or `dataset` against the real repo in a loop, in parallel or
   over days, even when a story's Done when names a multi-day window. Run it once, after
-  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash`, `retro` and
-  `dataset` as they are (`dash` and `dataset` take no `--since`; `retro` takes a tag). After a test run, check that no `dash_slow.py` or
+  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `retro` and
+  `dataset` as they are (`dataset` takes no `--since`; `retro` takes a tag). After a test run, check that no
   `swarm.sh flow --since` from your worktree is left. Kill by PID only what names your worktree or
   a test temp dir.
 - A stress or load run uses at most 4 CPUs in all, with `make test` at `JOBS=4` or fewer, and you

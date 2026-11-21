@@ -246,7 +246,7 @@ state_read() {
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
 # that found its item) ends it quietly: with SIGPIPE ignored, as under a python parent, echo would
-# print a write error, and dash would draw it in the frame.
+# print a write error into the report.
 board() {
   local f
   for f in "${BOARD}/$1"/*.md; do
@@ -260,7 +260,7 @@ board() {
 # and after: (slug_list) names its own epic, alone or in a list. Such a story waits on the epic, so it
 # does not count in it (the epic goes, and reads as done, without it); it stays on the board and is
 # listed with the lead's stories. An after: that does not name its own epic is ignored. after_story
-# reads a story file with it, dash_finished and epic_deleted_here a deleted one.
+# reads a story file with it, stories_finished and epic_deleted_here a deleted one.
 waits_on_epic() {
   local a list
   [[ -n "$3" && "$1" == lead ]] || return 1
@@ -308,14 +308,14 @@ epic_has_stories() {
 }
 
 # epic_planned <epic> — true once code stories were planned for <epic>: one counts in it on the board
-# (epic_stories, done ones too), one of them finished and left the board (dash_finished, from its
+# (epic_stories, done ones too), one of them finished and left the board (stories_finished, from its
 # repo's history) or was deleted and not committed yet (epic_deleted_here, as finish does on a board
 # outside the repo), or the board has no history to read (not in git, or no commit yet), which never
 # reads as unplanned.
 epic_planned() {
   [[ -n "$(epic_stories "$1")" ]] && return 0
   git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
-  dash_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' && return 0
+  stories_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' && return 0
   epic_deleted_here "$1"
 }
 
@@ -333,13 +333,43 @@ epic_deleted_here() {
   return 1
 }
 
-# FINISHED_NOW: dash_finished's lines epic_built reads, with FINISHED_SET set once they are read. Read
+# history_ref [dir] — in the repo at [dir] (default PROJECT_DIR), origin's default branch as last
+# fetched (origin/HEAD; it never fetches), else HEAD.
+history_ref() {
+  if git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then echo origin/HEAD; else echo HEAD; fi
+}
+
+# stories_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
+# board is not in git). A finished story's file is deleted, so these are the story files deleted on
+# the first-parent history of that repo's base branch and HEAD: one git log, names only, commits split
+# on NUL (no diff text, so diff.noprefix or color settings cannot change it), each deleted file read
+# from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
+# counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
+# added again): it is open. It counts when any of its deletions closed the story: the deleting commit
+# names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file that is
+# not the board's own (its stories/, epics/, hld/, .obsidian/, Board.base and README.md) nor a repo-root *.md, and its
+# subject names no board/, close/ or epic/ branch: a squash-merged story PR, whose work may sit beside
+# the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
+# the deleted file's last status was done or review (reconcile finishes only items in review) or it
+# listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
+# STATUS.md) has none of these, so it counts as nothing. An after: story (waits_on_epic, on the deleted
+# version's front matter) never counts in its epic.
+stories_finished() {
+  local prefix tag epic kind after
+  prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
+  { python3 "${SWARM_HOME}/bin/lib/finished.py" "${BOARD}" "${prefix}" "$(history_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true; } \
+    | while IFS=$'\t' read -r tag epic kind after; do
+        if [[ "${tag}" == story ]] && ! waits_on_epic "${kind}" "${after}" "${epic}"; then printf '%s\n' "${epic}"; fi
+      done | sort | uniq -c | awk '{ print "finished\t" $2 "\t" $1 }'
+}
+
+# FINISHED_NOW: stories_finished's lines epic_built reads, with FINISHED_SET set once they are read. Read
 # in a subshell, they stay that subshell's.
 FINISHED_NOW=""; FINISHED_SET=""
 
 # epic_built <epic> — true for an active epic with no story file left on the board (none counts in it,
 # epic_stories, and no after_story: epic_has_after) whose stories have all left it, on two reads of
-# the board's history: a story under its slug finished at some time (dash_finished), and a story
+# the board's history: a story under its slug finished at some time (stories_finished), and a story
 # naming it was deleted, by a merge or a board-only drop, since the epic's file was last added
 # (epic_story_gone over that range, for a file HEAD has); or one was deleted and not committed yet
 # (epic_deleted_here). So a new epic that takes a finished epic's slug is planned, until a story of
@@ -352,8 +382,8 @@ epic_built() {
   [[ "$(fm "${BOARD}/epics/$1.md" status 2>/dev/null)" == active ]] || return 1
   git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
   [[ -z "$(epic_stories "$1")" ]] && ! epic_has_after "$1" || return 1
-  # dash_finished reads the whole history: once a run, as NO_AGENT_NOW is read.
-  if [[ -z "${FINISHED_SET}" ]]; then FINISHED_NOW="$(dash_finished)"; FINISHED_SET=1; fi
+  # stories_finished reads the whole history: once a run, as NO_AGENT_NOW is read.
+  if [[ -z "${FINISHED_SET}" ]]; then FINISHED_NOW="$(stories_finished)"; FINISHED_SET=1; fi
   if awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' <<< "${FINISHED_NOW}"; then
     # The first-parent commit that last added the epic's file, for a file HEAD has: a new file not
     # committed yet (a finished epic's slug taken again) has no history of its own.
@@ -428,7 +458,7 @@ epic_has_after() {
 }
 
 # NO_AGENT_NOW: the no_agent_lines next_step reads, with NO_AGENT_SET set once they are read. A
-# caller that already holds them (status, dash, _step --dash) sets both, so next_step asks herdr and
+# caller that already holds them (status) sets both, so next_step asks herdr and
 # ps nothing more. NO_AGENT_CHECKED: set when next_step's own read checked (no_agent_lines exited 0),
 # the only time next_seen may prune. NEXT_NO_AGENT: the no-agent: line next_step named.
 NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
@@ -440,7 +470,7 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     build (main_red, the newest such of any repo and base): start it before
 #                     anything else, a conductor's wait included
 #   no-agent <slug>   a started story no agent works on (no_agent_lines' first no-agent: line, read-only
-#                     and gh-free: dash runs next every frame): its why is the line's exit. Before a
+#                     and gh-free: status runs next on every call): its why is the line's exit. Before a
 #                     conductor's wait, which would hide it. Named once: a line in NEXT_SEEN (one
 #                     swarm.sh next already named) falls through to the steps below
 #   collect <agent>   a conductor has written its report: read it, then close its tab
@@ -592,7 +622,7 @@ next_step() {
   done < <(board epics)
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
-  # Neither HLD arm calls gh: dash runs next every frame. An open plan PR (its worktree) lets the
+  # Neither HLD arm calls gh: status runs next on every call, and the lead's Stop hook on every turn. An open plan PR (its worktree) lets the
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
     slug="${f##*/}"; slug="${slug%.md}"
@@ -621,7 +651,7 @@ next_step() {
   done < <(board stories)
   read -r n tag base <<< "$(release_due)"
   if [[ -n "${n}" ]]; then
-    # The stage read only now: dash runs next every frame, and it costs a git log.
+    # The stage read only now: status runs next on every call, and the lead's Stop hook on every turn, and it costs a git log.
     stage="$(release_stage "${tag}" "${base}")" || stage=""
     RELEASE_HELD="$(sed -n 2p <<< "${stage}")"
     since="origin/${base} has ${n} commit(s) since ${tag} that change files outside the board"
@@ -668,7 +698,7 @@ next_step() {
 # covers line: a patch-version retro file never selects a release. With none, `retro v<x.(y+1).0>`
 # (retro_step). Its gh calls, origin_nwo's and non_fix_change's, are made only while their caches have
 # no answer, and an answer non_fix_change leaves uncached (a commit no PR lists yet) is kept for
-# NON_FIX_RETRY seconds (release_memo), so dash, which runs next every frame, asks gh at most that often.
+# NON_FIX_RETRY seconds (release_memo), so status, which runs next on every call, asks gh at most that often.
 release_bare() {
   local since="$1" tag="$2" base="$3" ver="${2#v}" out rc=0 why f v got="" cov="" line
   # A version that is not x.y.z (1.2.0-beta) has no patch or minor to name: a release as before, as
@@ -706,8 +736,8 @@ release_bare() {
 # reads it. The answer is kept in .swarm/origin-repo as "<origin URL> <owner/name>" and read from there
 # while the URL is unchanged, so only the first read asks gh. That gh repo view is bounded as
 # non_fix_change bounds its own: it ends at the report's deadline (REPORT_END) under a report (next,
-# dash, status), else after SWARM_NON_FIX_WAIT seconds (60 by default), as under `swarm.sh _step`,
-# which the lead's Stop hook and dash --check run with no report. A call cut there fails, as gh failing
+# status), else after SWARM_NON_FIX_WAIT seconds (60 by default), as under `swarm.sh _step`,
+# which the lead's Stop hook runs with no report. A call cut there fails, as gh failing
 # does. Fails with why on stdout.
 origin_nwo() {
   local origin cache="${PROJECT_DIR}/.swarm/origin-repo" url own bound="${SWARM_NON_FIX_WAIT:-60}"
@@ -752,9 +782,9 @@ release_memo() {
 # release_fixes <tag> <base> — non_fix_change's lines for refs/tags/<tag>..origin/<base> in the repo
 # origin_nwo names, for release_bare and release_stage: nothing when every change is a fix, else one
 # line per change. When either read fails (a board outside the repo among them) it exits 1 and the
-# last line is `failed: <why>`. An answer is kept (see release_bare), so dash, which runs next every
-# frame, asks gh at most every NON_FIX_RETRY seconds. A failure is not kept: gh is asked again on the
-# next call, so offline, or with gh logged out, every frame asks it.
+# last line is `failed: <why>`. An answer is kept (see release_bare), so status, which runs next on every
+# call, asks gh at most every NON_FIX_RETRY seconds. A failure is not kept: gh is asked again on the
+# next call, so offline, or with gh logged out, every call asks it.
 release_fixes() {
   local tag="$1" base="$2" repo="" out rc=0
   if [[ ${BOARD_IN_REPO} == 1 ]] && ! repo="$(origin_nwo)"; then echo "failed: ${repo}"; return 1; fi
@@ -793,7 +823,7 @@ retro_step() {
 }
 
 # next_lines — next_step's lines, then its release-held: line (RELEASE_HELD) when it has one: what
-# status and dash show.
+# status shows.
 next_lines() {
   next_step
   [[ -z "${RELEASE_HELD}" ]] || echo "${RELEASE_HELD}"
@@ -845,7 +875,7 @@ queued_lines() {
 }
 
 # buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
-# builds (agent_kind), with no epic or in an active one. dash counts the same ones.
+# builds (agent_kind), with no epic or in an active one.
 buildable_story() {
   local epic
   [[ "$(fm "$1" status)" == ready ]] && agent_kind "$(fm "$1" kind)" || return 1
@@ -865,11 +895,10 @@ one_off_started() {
 # (touches_rows.py --idle, given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR),
 # from the board, its state and events.tsv alone (and one git read of the story branches per checkout
 # with a ready story about to get a line, 5 s at most in all); then idle_epic_lines' epic lines, given
-# [<step>], the first line of the step next takes (next_report's and status_report's, dash's from
-# next_lines): the lines are capacity no step uses, so the epic a `plan-epic <epic>` step names gets
+# [<step>], the first line of the step next takes (next_report's and status_report's): the lines are capacity no step uses, so the epic a `plan-epic <epic>` step names gets
 # none. wait --lead takes no step and passes none, so its epic lines include that epic's. No gh or
 # herdr call.
-# next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
+# next (idle_lines), wait --lead (lead_queue) and status each call it on every read, so a blocked
 # story's line goes once its dependency is in review or done, a ready story's once its build starts, and
 # an epic's once it is active and has stories, or its plan runs.
 # Fails when the story check does: a story file reconcile removes between the script's glob and its
@@ -961,7 +990,7 @@ plan_pr_open() { [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-scope-$1")" ]]; 
 # idle_warned [<tail>] [<step>] — idle_now's lines, given <step> (idle_now's). When the check fails: no
 # line, one `warning: the idle check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place
 # of Python's traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and
-# status read it; dash reads idle_now, a frame having no place for a warning.
+# status read it.
 idle_warned() {
   local out
   out="$(idle_now "${2:-}" 2>/dev/null)" || { echo "warning: the idle check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
@@ -993,7 +1022,7 @@ idle_lines() {
 
 # next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, are
 # report_wrappers' (merge.sh), so each read runs within the report's deadline and a cut one is named as
-# status and dash name it. Inside herdr, `herdr agent list` is answered from the one list next_report
+# status names it. Inside herdr, `herdr agent list` is answered from the one list next_report
 # read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a later list cut
 # at the deadline cannot hide a conductor an earlier one showed; herdr's other reads go on to
 # report_herdr. off: the programs again (unset -f).
@@ -1028,7 +1057,7 @@ next_queued() (
 # story or epic lists), so without this line it waits unseen. One gh call, within the report's deadline
 # (REPORT_END, so after report_start), but not through report_read: a cut read is named on its own
 # not-checked line, and the skipped: line keeps naming only the reads the step was worked out without.
-# next_step, which dash and status run every frame, never calls it. A check that cannot run prints one
+# next_step, which status runs on every call, never calls it. A check that cannot run prints one
 # `unlisted: not checked (<why>)` line, never nothing: a gh read that fails or is cut at the deadline, or
 # an answer that is not a list of PRs (a gh stub that does not know the call). A project with no origin
 # has no PR on GitHub for merge to take, so it prints nothing and calls no gh. Returns 0.
@@ -1088,7 +1117,7 @@ next_report() {
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'; report_cleanup" EXIT
   # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
-  # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
+  # no_agent_lines takes it as a caller hands it one (lead_agents runs herdr through within, past the
   # deadline).
   # shellcheck disable=SC2034 # no_agent_lines reads them
   if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(report_read "herdr agent list" herdr agent list </dev/null 2>/dev/null)"; then
@@ -1097,8 +1126,8 @@ next_report() {
   next_reads on
   next_step > "${tmp}"
   step="$(< "${tmp}")"
-  # Every working conductor's queued: lines go after the why, here alone: dash and status read
-  # next_step every frame, and these cost gh calls.
+  # Every working conductor's queued: lines go after the why, here alone: status reads
+  # next_step on every call, and these cost gh calls.
   queued="$(next_queued)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
@@ -1346,7 +1375,7 @@ plannable_epic() { plannable_epics | sed -n 1p; }
 # nothing: once planned unasked it is never offered again, and the gate says what to do with it
 # (waiting_on_user). An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
 # the user, and a split later epic's later children wait for the user to start them, so both stay
-# the user's. Board files only, no gh: dash runs it every frame.
+# the user's. Board files only, no gh: status runs next on every call, and the lead's Stop hook on every turn.
 unblocked_epic() {
   local f slug deps
   while IFS= read -r f; do
@@ -1555,7 +1584,7 @@ staged_chain() {
 # parent alone, so the flag guards a git that does not. Its PR is the merged PR whose mergeCommit is that
 # commit, from one gh pr list --repo <owner/repo> --state merged of the PRs merged from the day before
 # <from>'s commit date (UTC), <limit> at most: a change whose PR is past that prints as having none.
-# That call ends at the report's deadline (REPORT_END) under a report (next, dash), else after <wait>
+# That call ends at the report's deadline (REPORT_END) under a report (next, status), else after <wait>
 # seconds (SWARM_NON_FIX_WAIT, for tests); a call cut there is a failing gh.
 # The change is a fix when that PR's head is story/fix-main-<sha7> exactly (a fix-main build: fix_main
 # writes no other name, so a planner's slug such as fix-main-docs is no fix), or story/<slug> whose
@@ -1589,7 +1618,7 @@ staged_chain() {
 # SWARM_GH_FRESH set skips the cached read) under NON_FIX_RULE, the board's path and both SHAs, written only
 # once git and gh both answered, no line says no merged PR, no read passed a commit no PR lists (gh's
 # search can lag a fresh merge) and no change sits at a shallow clone's edge, which prints whatever its
-# head: a merged commit's PR and a file at a commit never change, so next, which dash runs every frame,
+# head: a merged commit's PR and a file at a commit never change, so next, which status runs on every call,
 # pays one gh call per base move. A repo that merges PRs of several commits by rebase passes such
 # commits, so there it pays one per call.
 # NON_FIX_RULE: the rule's version, in the cache file's name and release_memo's key; a change to what
@@ -1876,7 +1905,7 @@ stage_pr_open() { [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-stage-v${1//./-
 # stage_due — "<T> <P> <base> <slug>..." when the staged drafts' (staged_draft) lowest stage T is due:
 # the local origin/HEAD names <base>, the newest v<x.y.z> tag on origin/<base> (newest_tag, local
 # refs) is at or above v<P>, the minor before T, and no stage_pr_open for T; the slugs are T's drafts.
-# Else nothing. Reads no git while no draft is staged: dash runs next every frame.
+# Else nothing. Reads no git while no draft is staged: status runs next on every call, and the lead's Stop hook on every turn.
 stage_due() {
   local f s p t="" tp="" slugs="" base n
   while IFS= read -r f; do
@@ -2750,7 +2779,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
-# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
+# next_step's gate and status. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
 # is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. An unstaged draft the epic guard
@@ -2806,7 +2835,7 @@ waiting_on_user() {
   done <<< "$(stage_worktrees)"
   while IFS= read -r f; do
     slug="${f##*/}"; slug="${slug%.md}"
-    # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
+    # The directory test first: hld_due reads every epic, and each status and next runs this.
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
     elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'

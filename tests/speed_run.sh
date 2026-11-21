@@ -104,7 +104,7 @@ WORK="$(mktemp -d)"; WORK="$(cd "${WORK}" && pwd -P)"
 # build and the runner first, so none starts a command after it, gives a command the runner had forked
 # time to record itself, then sends the recorded command's group a TERM, and half a second later a
 # KILL. The TERM comes first because a command may hold a group of its own under a supervisor that
-# kills it on TERM (dash's report_read, bin/lib/merge.sh's within), which a KILL would stop first.
+# kills it on TERM (a report's report_read, bin/lib/merge.sh's within), which a KILL would stop first.
 # shellcheck disable=SC2329 # the EXIT trap calls it
 cleanup() {
   local f g stopped=""

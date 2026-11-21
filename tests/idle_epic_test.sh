@@ -150,7 +150,7 @@ run
 check "a lone active epic with no stories is next's plan-epic step" "plan-epic e" "${STEP}"
 check "the active epic next's plan-epic step names gets no line" "" "${LINES}"
 # status prints what next would do and passes that step on, so the epic it names gets no idle: line
-# there either (dash does the same; its goldens hold it).
+# there either.
 out="$(cd "${CASE}" && env -u HERDR_ENV bash "${REPO}/bin/swarm.sh" status 2>&1)" || { echo "FAIL swarm.sh status failed: ${out}"; fails=$((fails + 1)); }
 check "status's Next names the plan-epic step" "plan-epic e" "$(grep -E '^  plan-epic ' <<< "${out}" | sed 's/^  //' || true)"
 check "status passes the step on, so the epic it names gets no idle: line there either" "" "$(grep -E '^ *idle: epic ' <<< "${out}" || true)"

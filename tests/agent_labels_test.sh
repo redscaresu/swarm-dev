@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# agent_labels_test.sh — status and dash end each agent's row with its pane, its workspace's label and
+# agent_labels_test.sh — status ends each agent's row with its pane, its workspace's label and
 # its tab's. Two projects under one herdr (a stub on PATH, its lists in ${ROOT}/herdr.json) each have
 # an agent called s1; herdr lists b's first, so a report that took any project's s1 would give a's s1
 # b's labels. a's s3 has no tab or workspace in herdr's agent list, only in its pane list, which comes
-# first. Each report reads herdr's workspace and tab lists once. dash --tree heads a's agents by herdr's
-# labels, one heading per tab (its three panes are in one record, t1, but in three herdr tabs, two of them
-# labelled e1), each row ending with its pane. where names an agent's tab and workspace as status does.
-# With no workspace or tab list, the workspace is - and the tab the name swarm-dev gave it (its record's)
-# with its id, `t1 (w1:t1)`, in status, dash, where and the tree's headings alike.
+# first. Each report reads herdr's workspace and tab lists once. where names an agent's tab and workspace as
+# status does. With no workspace or tab list, the workspace is - and the tab the name swarm-dev gave it
+# (its record's) with its id, `t1 (w1:t1)`, in status and where alike.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -69,10 +67,9 @@ project "${A}" $'w1:p1 s1\nw1:p3 s3\nw1:p4 s4'
 project "${B}" $'w2:p1 s1'
 
 # report <project> <command>... — its output from <project>, herdr's log emptied first.
-report() { : > "${ROOT}/herdr.log"; (cd "$1" || exit 1; shift; HERDR_ENV=1 DASH_W=200 bash "${SWARM}" "$@" 2>&1) || true; }
-# row <agent> <output> — <agent>'s row: status's from two spaces in, dash's from its symbol on. A tree tab
-# heading is two spaces in from the border; an agent row's stem is deeper, so `^│  [├└]─ ` takes headings alone.
-row() { sed -n "s/^  $1  .*\\[\\(.*\\)\\]\$/\\1/p; s/^│   [^ ] $1  .*  \\(w[0-9]:p[0-9] in .*›[^│]*[^ │]\\) *│.*/\\1/p" <<< "$2"; }
+report() { : > "${ROOT}/herdr.log"; (cd "$1" || exit 1; shift; HERDR_ENV=1 bash "${SWARM}" "$@" 2>&1) || true; }
+# row <agent> <output> — <agent>'s row in status, from two spaces in.
+row() { sed -n "s/^  $1  .*\\[\\(.*\\)\\]\$/\\1/p" <<< "$2"; }
 lists() { grep -c "^$1 list\$" "${ROOT}/herdr.log" || true; }
 
 out="$(report "${A}" status --all)"
@@ -83,36 +80,16 @@ check "status reads herdr's tab list once" 1 "$(lists tab)"
 out="$(report "${B}" status --all)"
 check "status: b's s1 names b's pane, workspace and tab" "pane w2:p1, workspace b · e2, tab e2-2" "$(row s1 "${out}")"
 
-out="$(report "${A}" dash)"
-check "dash: a's s1 names a's pane, workspace and tab" "w1:p1 in a · e1 › e1" "$(row s1 "${out}")"
-check "dash: a's s3 takes its tab and workspace from herdr's pane list" "w1:p3 in a · e1 › e1-2" "$(row s3 "${out}")"
-check "dash reads herdr's workspace list once" 1 "$(lists workspace)"
-check "dash reads herdr's tab list once" 1 "$(lists tab)"
-out="$(report "${B}" dash)"
-check "dash: b's s1 names b's pane, workspace and tab" "w2:p1 in b · e2 › e2-2" "$(row s1 "${out}")"
-
-# The tree (--tree) heads a's agents by herdr's labels: all three are in one tab record, t1, but in three
-# herdr tabs, and t3's label is t1's, so a tree keyed by label would merge them.
-out="$(report "${A}" dash --tree)"
-check "dash --tree heads a's agents by its workspace label" "a · e1" "$(sed -n 's/^│ \(a · e1\) *│.*/\1/p' <<< "${out}")"
-check "dash --tree heads a's agents by herdr's tab labels, not their record's name, one heading per tab" "e1,e1-2,e1" "$(sed -n 's/^│  [├└]─ \([^│]*[^ │]\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
-check "dash --tree shows s3's pane on its row" "w1:p3" "$(sed -n 's/^│[ │]*└─ [^ ] s3  .* \(w1:p3\) *│.*/\1/p' <<< "${out}")"
-
 # where names s3's tab and workspace as status does: from herdr's pane list, when its agent entry has none.
 check "where: a's s3 takes its tab and workspace from herdr's pane list, as status does" "s3: pane w1:p3, workspace a · e1, tab e1-2" \
   "$(cd "${A}" || exit 1; HERDR_ENV=1 bash "${SWARM}" where s3 2>&1)"
 
 # With no workspace or tab list from herdr, the workspace is - and the tab is the name swarm-dev gave it
-# (its record's, t1) with its id, in status, dash, where and the tree's headings (one per herdr tab still).
+# (its record's, t1) with its id, in status and where.
 touch "${ROOT}/fail-workspace" "${ROOT}/fail-tab"
 out="$(report "${A}" status --all)"
 check "status: with no workspace or tab list, the workspace is - and the tab its record's name with its id" "pane w1:p1, workspace -, tab t1 (w1:t1)" "$(row s1 "${out}")"
 check "status: s3's unlabelled tab takes its id from herdr's pane list" "pane w1:p3, workspace -, tab t1 (w1:t2)" "$(row s3 "${out}")"
-out="$(report "${A}" dash)"
-check "dash: with no workspace or tab list, the workspace is - and the tab its record's name with its id" "w1:p1 in - › t1 (w1:t1)" "$(row s1 "${out}")"
-out="$(report "${A}" dash --tree)"
-check "dash --tree: with no workspace list, the workspace heading is its id" "w1" "$(sed -n 's/^│ \(w1\) *│.*/\1/p' <<< "${out}")"
-check "dash --tree: with no tab list, each tab is headed by its record's name and its id" "t1 (w1:t1),t1 (w1:t2),t1 (w1:t3)" "$(sed -n 's/^│  [├└]─ \([^│]*[^ │]\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
 check "where: with no workspace or tab list, the workspace is - and the tab its record's name with its id" "s1: pane w1:p1, workspace -, tab t1 (w1:t1)" \
   "$(cd "${A}" || exit 1; HERDR_ENV=1 bash "${SWARM}" where s1 2>&1)"
 rm "${ROOT}/fail-workspace" "${ROOT}/fail-tab"

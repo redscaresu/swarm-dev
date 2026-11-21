@@ -20,7 +20,7 @@ def fold_group(kind):
 
 def board_log(board, *args):
     # git log over the board's stories on its default branch, where merges land (HEAD when there is no
-    # origin/HEAD, as dash_base_ref), so a story branch's own commits are no merge; "" when git fails.
+    # origin/HEAD, as board.sh's history_ref), so a story branch's own commits are no merge; "" when git fails.
     # --first-parent dates a commit by the merge, and --no-renames keeps a story deleted beside a
     # similar new one a deletion.
     has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)

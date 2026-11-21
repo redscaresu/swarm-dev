@@ -56,10 +56,10 @@ check "the stuck: api error arm follows the restart rule by name" yes \
   "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the restart rule under "More rules for the lead" says')"
 check "a conductor is closed only when the restart rule says so" yes \
   "$(has "${DOC}" 'Never close a conductor that has not reported, unless the restart rule under "More rules for the lead" says to')"
-check "alive from events.tsv, its PR, status and dash, never a pane read alone" yes \
-  "$(has "${DOC}" 'whether an agent is alive from .\.swarm/events\.tsv., its PR where it has one, and `swarm.sh status` or `swarm.sh dash`, never from a pane read alone')"
-check "only dash shows the age; status shows the state" yes \
-  "$(has "${DOC}" '`dash` shows `working <N>m` or `stalled <N>m`, `status` shows the agent.s state, and neither acts on anything')"
+check "alive from events.tsv, its PR and status, never a pane read alone" yes \
+  "$(has "${DOC}" 'whether an agent is alive from .\.swarm/events\.tsv., its PR where it has one, and `swarm.sh status`, never from a pane read alone')"
+check "status shows the state and acts on nothing" yes \
+  "$(has "${DOC}" '`status` shows the agent.s state and acts on nothing')"
 check "wait --stall is not a liveness check" yes \
   "$(has "${DOC}" 'Do not use `swarm.sh wait --stall` as a check')"
 

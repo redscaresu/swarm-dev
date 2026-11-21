@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # after_key_test.sh — a kind: lead story whose after: names its own epic does not count in it: an epic
-# that had code stories planned, with only such a story open, counts as done in next, dash and
+# that had code stories planned, with only such a story open, counts as done in next and
 # status, and the story is still listed as a lead story. With the after: line removed, the epic is
-# open in all three. An epic whose only story ever was an after: one is planned, never done.
+# open in both. An epic whose only story ever was an after: one is planned, never done.
 # A throwaway board in git: the active epic alpha, whose stories are the lead story check and a code
 # story, and the active epic beta, which depends_on alpha. herdr and gh are stubbed to fail.
 set -euo pipefail
@@ -41,7 +41,7 @@ item() { # <path under docs> <front-matter line>...
 }
 
 run() { # <command> — swarm.sh <command> in the project, outside herdr
-  (cd "${P}" && rm -rf "${TMPDIR}"/swarm-dash-* && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" "$1" 2>&1) || true
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" "$1" 2>&1) || true
 }
 commit() { # <subject> — commit the whole board
   git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@example.com commit -qm "$1"
@@ -50,17 +50,9 @@ commit() { # <subject> — commit the whole board
 first() { printf '%s\n' "${1%%$'\n'*}"; }
 # step <status output> — the step under status's Next heading.
 step() { sed -n '/^Next$/{n;s/^  //;p;}' <<< "$1"; }
-# rows <dash frame> — its lines with box borders, the status symbol and progress bars cut, spaces
-# squeezed. epic_line <dash frame> <epic> — the row of that epic; quiet <dash frame> — the line of the
-# active epics with no open story.
-rows() { sed 's/^[^a-z0-9]*//; s/ *│$//; s/█//g; s/░//g; s/  */ /g' <<< "$1"; }
-epic_line() { rows "$1" | awk -v e="$2" '$1 == e' || true; }
-quiet() { rows "$1" | grep -F "with no open story" || true; }
-# mark <dash frame> <epic> — the status symbol on that epic's row (! look, ✓ done, ○ ready).
-mark() { sed -n "s/^│ \([^ ]*\) $2 .*/\1/p" <<< "$1"; }
 
 mkdir -p "${P}/docs/stories" && git -C "${P}" init -q
-echo "# Stories" > "${P}/docs/stories/README.md"   # dash reads a board only with it
+echo "# Stories" > "${P}/docs/stories/README.md"   # init's mark of a board
 item epics/alpha.md 'status: active'
 item epics/beta.md 'status: active' 'depends_on: [alpha]'
 commit "epics"   # a history to read from the start: no history reads as planned (epic_planned)
@@ -75,18 +67,6 @@ check "next: an after: lead story leaves its epic done, so the epic after it is 
 out="$(run status)"
 check "status: an after: lead story leaves its epic done" test "$(step "${out}")" = "plan-epic beta"
 check "status: the after: story is listed as a lead story" has "lead: check" "${out}"
-out="$(run dash)"
-check "dash: the done epic's row names its after: story" test "$(epic_line "${out}" alpha)" = "alpha 1/1 after: check waits on the lead"
-check "dash: the epic after it is with the epics with no open story" test "$(quiet "${out}")" = "1 active epic with no open story: beta"
-check "dash: the after: story is still listed for the lead" has "run lead story check" "${out}"
-check "dash: the after: story in the lead's queue still marks its done epic for a look" test "$(mark "${out}" alpha)" = "!"
-# An epic with a ready code story sorts before alpha by name; alpha's look ranks it first.
-item epics/aardvark.md 'status: active'
-item stories/dig.md 'status: ready' 'kind: code' 'epic: aardvark'
-out="$(run dash)"
-check "dash: the done epic whose after: story needs a look is ranked above an epic with ready work" \
-  test "$(rows "${out}" | awk '$1 == "alpha" || $1 == "aardvark" { print $1 }' | head -1)" = "alpha"
-rm "${P}/docs/epics/aardvark.md" "${P}/docs/stories/dig.md"
 
 # after: is read as a slug list: brackets, quotes, a comment, trailing spaces and a CR name alpha.
 for v in '[alpha]' '[alpha, beta]' '"alpha"' 'alpha  # once the code is in' 'alpha   ' $'alpha\r'; do
@@ -97,7 +77,7 @@ done
 item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
 
 # built merged and left the board; an earlier after: story of alpha finished too. History says alpha
-# was planned, so it is still done, and dash counts only built as finished.
+# was planned, so it is still done.
 item stories/old-check.md 'status: review' 'kind: lead' 'epic: alpha' 'after: alpha'
 commit "board"
 # finish on a board outside the repo deletes the file and commits nothing: alpha is still done.
@@ -114,8 +94,6 @@ item stories/check.md 'status: done' 'kind: lead' 'epic: alpha' 'after: alpha'
 out="$(run next)"
 check "next: an epic whose code left the board and whose after: story is done is not planned again" test "$(first "${out}")" = "plan-epic beta"
 item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
-out="$(run dash)"
-check "dash: a finished after: story is not counted in its epic" test "$(epic_line "${out}" alpha)" = "alpha 1/1 after: check waits on the lead"
 
 # With beta gone, nothing is left but the lead's: next stops at the gate and lists check, and alpha,
 # done, is not planned again.
@@ -140,17 +118,13 @@ for v in beta tbd '[beta, tbd]'; do
   out="$(run next)"
   check "next: after: ${v} (not its epic) holds its epic open" test "$(first "${out}")" = "gate"
 done
-out="$(run dash)"
-check "dash: after: tbd (not its epic) shows the epic's ready story" test "$(epic_line "${out}" alpha)" = "alpha 1/2 1 ready"
 
 # kind is read state-aware, as next reads it: a board-state kind: lead over the file's kind: code
-# makes it an after: story, in next and in dash alike.
+# makes it an after: story, as next reads it.
 item stories/check.md 'status: ready' 'kind: code' 'epic: alpha' 'after: alpha'
 mkdir -p "${P}/.swarm/board-state/stories" && echo 'kind: lead' > "${P}/.swarm/board-state/stories/check"
 out="$(run next)"
 check "next: a board-state kind: lead makes it an after: story" test "$(first "${out}")" = "plan-epic beta"
-out="$(run dash)"
-check "dash: a board-state kind: lead makes it an after: story" test "$(epic_line "${out}" alpha)" = "alpha 1/1 after: check waits on the lead"
 rm -r "${P}/.swarm/board-state"
 
 # Without after: the lead story holds alpha open, so beta waits and next stops at the gate.
@@ -161,9 +135,6 @@ check "next: the gate lists it as a lead story" has "lead: check" "${out}"
 out="$(run status)"
 check "status: without after: the epic is open" test "$(step "${out}")" = "gate"
 check "status: without after: the story is listed as a lead story" has "lead: check" "${out}"
-out="$(run dash)"
-check "dash: without after: the epic shows its ready story" test "$(epic_line "${out}" alpha)" = "alpha 1/2 1 ready"
-check "dash: without after: the epic after it waits on it" test "$(epic_line "${out}" beta)" = "beta – waits on alpha"
 
 # A check story written before /plan-epic: gamma's only story ever is an after: one. gamma is planned,
 # not done: delta waits, and unblock leaves a story that depends on gamma blocked.
@@ -176,10 +147,6 @@ out="$(run next)"
 check "next: an epic whose only story is an after: one is planned" test "$(first "${out}")" = "plan-epic gamma"
 out="$(run status)"
 check "status: an epic whose only story is an after: one is planned" test "$(step "${out}")" = "plan-epic gamma"
-out="$(run dash)"
-check "dash: the epic after an epic with only an after: story waits on it" test "$(epic_line "${out}" delta)" = "delta – waits on gamma"
-check "dash: an epic whose only story is an after: one is not planned yet" test "$(epic_line "${out}" gamma)" = "gamma – not planned yet · after: gcheck waits on the lead"
-check "dash: an epic whose only story is an after: one has no done mark" test "$(mark "${out}" gamma)" = "!"
 out="$(run unblock)"
 check "unblock: a story that depends on an epic with only an after: story stays blocked" test "$(grep -c waiter <<< "${out}")" -eq 0
 # Once gamma's code is planned and done, it is done: unblock readies the story.

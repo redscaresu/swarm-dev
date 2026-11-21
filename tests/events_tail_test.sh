@@ -2,8 +2,6 @@
 # events_tail_test.sh — whole commands read events.tsv the same with a key=value tail on every row. Two
 # stand-in projects (events_tail_helpers.sh) hold the v0.29.1 fixture plus a few synthetic rows, the second
 # with ` ~~ k=v` on every row, and the same board; same_output compares, over the two:
-#   - `swarm.sh dash --check`, at a fixed now near the fixture's end: it exits 0 and prints the same, so the
-#     frame's figures agree with status, next and flow's sections in both.
 #   - lead_queue, the function wait --lead reads, after lead_agents, as lead_wake runs them. It runs from a
 #     copy of swarm.sh whose last line calls the two in place of main, so the queue is read with every
 #     setting and file swarm.sh sets and nothing else: wait --lead itself blocks, asks gh and writes.
@@ -45,7 +43,7 @@ esac
 STUB
 chmod +x "${STUB_BIN}"/*
 echo '[]' > "${ROOT}/claude.json"
-unset COLUMNS LINES DASH_COLOR DASH_W DASH_H NO_COLOR
+unset COLUMNS LINES NO_COLOR
 export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json" CLAUDE_PROJECTS_DIR="${ROOT}/projects" \
   TMPDIR="${ROOT}/tmp"
 
@@ -82,18 +80,14 @@ sed -e "s#^SWARM_HOME=.*#SWARM_HOME='${REPO}'#" -e 's/^main "\$@"; exit$/lead_ag
 if [[ "$(grep -cxE "SWARM_HOME='.*'|lead_agents; lead_queue; exit" "${LQ}")" != 2 ]]; then
   echo "FAIL the lead_queue runner: swarm.sh's SWARM_HOME line or its last line changed; update the sed above"; exit 1
 fi
-# dash --check at 2026-10-29 12:00 UTC, the fixture's day, so its 7-day figures count the fixture's merges.
-NOW="$(python3 -c 'import datetime; print(int(datetime.datetime(2026, 10, 29, 12, tzinfo=datetime.timezone.utc).timestamp()))')"
-# Each project's queue and dash --check run once, the two projects side by side, each into a file in the
-# directory above it with its exit status beside it; queue and dash_check print that file and return that status.
+# Each project's queue runs once, the two projects side by side, each into a file in the directory
+# above it with its exit status beside it; queue prints that file and returns that status.
 for p in "${PLAIN}" "${TAILED}"; do
-  (cd "${p}" || exit 1; rc=0; HERDR_ENV=1 bash "${LQ}" > ../queue 2>/dev/null || rc=$?; echo "${rc}" > ../queue.rc
-   rc=0; env -u HERDR_ENV SWARM_DASH_NOW="${NOW}" bash "${SWARM}" dash --check > ../check 2>/dev/null || rc=$?; echo "${rc}" > ../check.rc) &
+  (cd "${p}" || exit 1; rc=0; HERDR_ENV=1 bash "${LQ}" > ../queue 2>/dev/null || rc=$?; echo "${rc}" > ../queue.rc) &
   pids+=("$!")
 done
 for p in "${pids[@]}"; do wait "${p}" || true; done
 queue() { cat ../queue; return "$(cat ../queue.rc)"; }
-dash_check() { cat ../check; return "$(cat ../check.rc)"; }
 
 check "lead_queue prints the same lines with a tail" same_output "${PLAIN}" "${TAILED}" queue
 out="$(cd "${PLAIN}" && queue)" || true
@@ -102,10 +96,6 @@ check "lead_queue untailed: no-agent: for zzcl and zzep, closed with their build
 check "lead_queue untailed: no-review: for zzlqa, whose review start failed" \
   grep -qxF 'no-review: zzlqa https://github.com/o/r/pull/40, exit: swarm.sh review-agent zzlqa https://github.com/o/r/pull/40, or the fallback reviewer' <<< "${out}"
 check "lead_queue untailed: none for zzlqb, a findings tell after its failed start" lacks zzlqb "${out}"
-
-check "dash --check prints the same with a tail" same_output "${PLAIN}" "${TAILED}" dash_check
-check "dash --check exits 0 with a tail: every figure agrees" test "$(cat "${ROOT}/tailed/check.rc")" -eq 0
-check "dash --check says so with a tail" grep -qxF 'proj: every dash figure agrees with the command that owns it' "${ROOT}/tailed/check"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

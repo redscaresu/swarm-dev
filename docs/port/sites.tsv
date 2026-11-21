@@ -3,7 +3,7 @@
 # Each row is one (file, function, module). The function is the bash function holding the site, or (top)
 # outside any. The module is one the site imports itself; what that module imports in turn is left out.
 # n counts the sites in that function that import it. A site that imports modules of two epics goes to
-# the later one of helpers-shared, helpers-panes and helpers-dash.
+# the later one of helpers-shared and helpers-panes.
 # tests/port_sites_test.sh fails on a site with no row here.
 # file	function	imports	n	epic
 bin/lib/agents.sh	agent_where_in	panes	1	helpers-panes
@@ -21,10 +21,6 @@ bin/lib/agents.sh	sign_held	panes	1	helpers-panes
 bin/lib/agents.sh	test_running	panes	1	helpers-panes
 bin/lib/agents.sh	usage_state	panes	1	helpers-panes
 bin/lib/board.sh	non_fix_cache	gh_cache	1	helpers-shared
-bin/lib/dash.sh	dash_legend	dash_legend	1	helpers-dash
-bin/lib/dash.sh	dash_render	dash_age	1	helpers-dash
-bin/lib/dash.sh	dash_render	panes	1	helpers-dash
-bin/lib/dash.sh	dash_render	stall	1	helpers-dash
 bin/lib/lifecycle.sh	archive_session	report	1	helpers-shared
 bin/lib/lifecycle.sh	prompt_lines	panes	1	helpers-panes
 bin/lib/lifecycle.sh	prompt_lines	report	1	helpers-panes

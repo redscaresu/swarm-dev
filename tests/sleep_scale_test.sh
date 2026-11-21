@@ -92,7 +92,7 @@ check "SWARM_SLEEP_SCALE=0 stops swarm.sh at startup, saying why, before merge c
   "${rc}|$([[ "${o}" == *"SWARM_SLEEP_SCALE: '0' is not a number of at least 0.001"* ]] && echo yes || echo "no: ${o}")|$([[ -e "${ROOT}/gh.log" ]] && echo "gh ran" || echo "no gh")"
 
 # board's reader stopping early, with SIGPIPE ignored (as under ptywatch.py's python), prints nothing:
-# a write error in a dash frame made it repaint (a flake the parallel runs showed).
+# a write error in a report's output was a flake the parallel runs showed.
 mkdir -p "${ROOT}/b/stories"; for i in $(seq 1 200); do : > "${ROOT}/b/stories/s${i}.md"; done
 o="$( (trap '' PIPE; PROJECT_DIR="${ROOT}/b"; BOARD="${ROOT}/b"
   # shellcheck source=bin/lib/board.sh
