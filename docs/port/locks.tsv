@@ -1,12 +1,12 @@
 # docs/port/locks.tsv: every place swarm-dev takes a lock, in the code the v0.32 port starts from.
-# 21 lock files, taken with 7 protocols. tests/port_locks_test.sh fails on a take site that has no row here, or that a function takes more often than its row's n.
+# 20 lock files, taken with 6 protocols. tests/port_locks_test.sh fails on a take site that has no row here, or that a function takes more often than its row's n.
 # A take site is a lock primitive, or a call to a function that holds one. Each row is keyed by file, function and expr, never by line.
 # lock: the lock file, under the project unless it starts with <TMPDIR>. A call that takes two lock files names both, joined by " + ".
 # A lock that starts with <caller's path> is a path the function's callers pass. Their rows name it, so the count above leaves it out.
 # protocol: perl-mkdir is mkdir(2) through perl, since uutils mkdir lets two racing callers both succeed (board.sh, state_lock).
 # mkdir-pid is a plain mkdir with the holder's pid in a file inside. mkdir is a plain mkdir with nothing inside.
 # link-pid is a pid file hard-linked into place, so no reader sees it half written. noclobber is bash's set -C: the create fails when the file is there.
-# o-excl is a file opened with O_CREAT|O_EXCL that holds the pid. flock is flock(2) on an open file.
+# o-excl is a file opened with O_CREAT|O_EXCL that holds the pid.
 # stale: how the code breaks a lock that a killed holder left behind.
 # expr: for a primitive, the lock path as written there; for a call, the call itself. Whitespace is collapsed.
 # n: how many times that function takes that expr.
@@ -40,8 +40,6 @@
 .swarm/reconcile.lock	perl-mkdir	never: dies after RECONCILE_LOCK_WAIT (300 s); a die inside frees it through the subshell's EXIT trap	bin/lib/board.sh	reconcile	state_lock "${lock}"	1
 <caller's path>	perl-mkdir	never: dies after SWARM_LOCK_WAIT, else STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/board.sh	state_lock	"$1"	1
 .swarm/board-state/<stories|epics>/<slug>.lock	perl-mkdir	never: the write dies after STATE_LOCK_WAIT (10 s), naming the lock to remove by hand	bin/lib/board.sh	state_set	state_lock "${s}.lock"	1
-<TMPDIR>/swarm-dash-ci-<uid>/<key>.run	flock	none to break: the kernel drops it when the refresh that holds it ends, however it ends	bin/lib/dash_slow.py	-	start_refresh(project, m.group(1), cache)	1
-<TMPDIR>/swarm-dash-ci-<uid>/<key>.run	flock	none to break: the kernel drops it when the refresh that holds it ends, however it ends	bin/lib/dash_slow.py	start_refresh	fd	1
 .swarm/locks/step-up-<slug>	mkdir-pid	a dead pid: taken over; a live pid, or no pid yet, fails the take	bin/lib/lifecycle.sh	ladder_step	step_lock "${lock}"	1
 .swarm/lead/pid + .swarm/lead/pid.reclaim	link-pid + perl-mkdir	the holder function finds no live holder: removed under its .reclaim, then linked again	bin/lib/lifecycle.sh	lead_lock	pid_lock "${LEAD_PID}" "$$" lead_holder	1
 .swarm/lead/review-<slug>.restart.lock	perl-mkdir	never: tried once; until it goes, the story gets its no-review line with no restart	bin/lib/lifecycle.sh	no_review_line	review_restart "${slug}" "${url}" "${n}"	1

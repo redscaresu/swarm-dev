@@ -8,7 +8,7 @@
 # names the lead's real project: SWARM_PROJECT, which swarm.sh takes before the directory a test cd's
 # into, the other SWARM_* settings, and HERDR_SOCKET_PATH, the real herdr. events_test.sh once logged
 # its fixtures into the real .swarm/findings.tsv and events.tsv that way. So this drops every SWARM_*
-# but the two make test sets (SWARM_SLEEP_SCALE, defaulted here as there, and SWARM_NO_CI_REFRESH) and
+# but the one make test sets (SWARM_SLEEP_SCALE, defaulted here as there) and
 # HERDR_SOCKET_PATH, and HERDR_WORKSPACE_ID, the pane's own workspace, which next_pane compares a tab
 # record's panes with (CI has none; a test that needs one sets it). It does not change directory: a test names its files from BASH_SOURCE, which a
 # direct run gives as a relative path. Each project a test makes is pinned by a cd into it, or by
@@ -22,7 +22,7 @@
 # no_version, for a test that compares whole events.tsv lines, in_new_group, group_record,
 # stop_group and stop_groups, for a test that stops a background process and every process it started,
 # and stop_test_group, which the EXIT trap of every test that starts a background process runs.
-for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
+for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 unset HERDR_SOCKET_PATH HERDR_WORKSPACE_ID
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
 _th_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"

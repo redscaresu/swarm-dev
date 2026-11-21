@@ -50,7 +50,7 @@ finding_flags() {
 # is refused. Rows from before the outcome column have four fields and were all
 # fixed, rows from before the reviewer column have five, and rows from before the round column (or
 # logged without --round) are round unknown. An escaped defect's outcome is escaped, so outcomes and
-# flow's reviewers, which count what review raised, leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones. A
+# flow's reviewers, which count what review raised, leave it out; outcomes' recurring block counts fixed and escaped rows, never declined ones. A
 # filed row (a declined out-of-scope or deferred finding the lead filed as a story) is counted by none of them: it
 # only stops out_of_scope_findings offering that text again.
 record_finding() {
@@ -132,16 +132,9 @@ out_of_scope_findings() {
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 
-# cost_report <YYYY-MM-DD> — flow's cost section alone, since that day, for dash's cost of the day.
-# No calling session: dash runs every project's frame from one pane, and that session is no
-# project's own (a lead's is already in its project's Claude Code directory).
-cost_report() {
-  flow_sections "$1" 9999-12-30 "" "" "" cost
-}
-
 # A finished story's PR rows, read once: its file off the board, every PR merged or closed and every
 # check on them completed, they never change. Each line <slug> TAB <its newest build's day>/<builds that day> TAB <prs>
-# (outcomes' join), so a rebuild reads gh again; per story gh was flow's and dash's top GraphQL caller,
+# (outcomes' join), so a rebuild reads gh again; per story gh was flow's top GraphQL caller,
 # at one gh pr list per story ever built on every run (dataset still lists each merged story's own).
 OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
 # The other finished GitHub records outcomes and flow read (bin/lib/gh_cache.py); SWARM_GH_CACHE set
@@ -325,9 +318,7 @@ dataset_report() {
 #     (a byte that is not UTF-8 read as U+FFFD), a file once per run, worst first, over the runs created in the window in the repos of the window's PRs
 #     and the project's origin (one gh api call each, more when GitHub cuts a listing at its 1000; with the cache, only from 3 days before the newest cached run on, and the days a cut listing left out; with --epic, its PRs' runs), at most 100 gh
 #     invocations (not REST requests) and none past the hourly rate limit, with flaky tests: lines for what was cut, left out or unparsed,
-#     or that none was flaky. dash's ci line is its origin repo's row of the CI time table of
-#     `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips the health row and the
-#     flaky tests.
+#     or that none was flaky.
 #   cost: tokens and estimated cost per role, then per ladder rung for each step-up (its outcome) and each rung's share of builds, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
@@ -397,7 +388,7 @@ dataset_report() {
 #     rows print -. Then, after a blank line, TSV file conflicts: the top three files, or
 #     `none conflicted`.
 #   merges: TSV day finished, the stories finished per local day (a finish ok line, or reconcile's ok
-#     (finished, each slug once on its newest such day), which dash's speedometer shows. Then, after a
+#     (finished, each slug once on its newest such day). Then, after a
 #     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
 #     their hold= field, unmarked for one with no field (written before merge passed it). --epic does
 #     not narrow it.
@@ -436,7 +427,7 @@ dataset_report() {
 #     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
 #     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
 #     block 1 or 2 counted.
-#   run_times: .swarm/run-times.tsv, one row per status, next and dash run (timed), its rows whose
+#   run_times: .swarm/run-times.tsv, one row per status and next run (timed), its rows whose
 #     start's local day is in the window: TSV command runs median_s p90_s over_60s, per command, with
 #     the median and p90 (nearest rank) seconds and the share over 60 s; after a blank line, a by-load
 #     block, TSV command load runs median_s, per command and 1-minute load band (<10, 10-20, 20+, -).
@@ -491,7 +482,7 @@ dataset_report() {
 # its gh calls' lines in .swarm/gh-calls.tsv (bin/gh-shim's log), its cache of finished GitHub records
 # (GH_CACHE, bin/lib/gh_cache.py; --no-cache reads them all from gh again and rewrites them), the PR heads merge_ins
 # fetches and the trees and blobs its git merge-tree writes into each repo.
-# SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
+# SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone, as the tests do.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 flow_report() {
   local since="" until="" epic="" rows=""

@@ -135,15 +135,17 @@
 # becomes <seq>, and a value of another shape there is left as it is too.
 # A step's label line ("@@ [<argv>] <first call>") gets the same mask, in its argv and its call.
 #
-# With --stage, --only, --base or --draft, tests/diff_allow.py compares the streams once every fixture has
+# With --stage, --only or --draft, tests/diff_allow.py compares the streams once every fixture has
 # run. The entries apply to a's streams in the order their PRs merged (tests/diff_allow.py's
 # merge_order: by the first-parent commit that added each, then by stage and PR number); a
 # hunk for a fixture outside the run is skipped, and one that does not apply on a fixture the run
 # ran is red (ALLOW-FAIL <fixture> <stream> ...). There the files stream is split in two: files is its
 # list of written and deleted paths, and file:<path> one written file's content. scripts/allow/README.md
 # gives the entry format; a malformed entry stops the run before any fixture, with exit 2.
-# The entries apply to the two trees' first runs alone. With --times, each repeat is still compared
-# with its own tree's first run as it is, since no entry covers a tree that differs from itself.
+# --base has it compare them too, with the entries of the stories --branch names.
+# The entries apply to the two trees' first runs alone, which it reads as <fixture>.<a|b>, a link to
+# that tree's first run. With --times, each repeat is still compared with its own tree's first run
+# as it is, since no entry covers a tree that differs from itself.
 # A background step's stream has the same name there as here, calls:[<argv>] <first call>.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
@@ -161,7 +163,8 @@ TIMEOUT=300
 MAX_PROCS=200
 TIMES=1
 KEEP=""
-STAGE="" ONLY="" DRAFT="" BASE="" BRANCHES=()
+STAGE="" ONLY="" DRAFT=""
+BASE="" BRANCHES=()
 STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -911,6 +914,8 @@ for fx in "${names[@]}"; do
     done
   done
   if [[ ${#allow[@]} -gt 0 ]]; then
+    # tests/diff_allow.py reads a tree's run as <fixture>.<a|b>: a link to its first run.
+    for side in a b; do ln -s "${fx}.${side}.1" "${WORK}/${fx}.${side}"; done
     ran+=("${fx}")
     [[ -z "${red}" ]] || { reds+=(--red "${fx}"); [[ ${status} -eq 2 ]] || status=1; }
     continue

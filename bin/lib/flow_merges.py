@@ -1,7 +1,6 @@
 # Merges, a flow section (flow_report.py gives its globals): the stories finished per local day, from
 # events.tsv: a finish ok line, or reconcile's "ok (finished" once a PR merged, each slug once, on the
-# day of its newest such line (a drop or a rescope writes neither). dash's speedometer counts the same
-# lines its own way; dash --check compares the two. --epic does not narrow it.
+# day of its newest such line (a drop or a rescope writes neither). --epic does not narrow it.
 # Then, after a blank line, the merges held for the user per local day by kind: each merge line whose
 # outcome starts "held:", counted by its hold= field (dropped-lines, protected or money, merge_fail's), or
 # under unmarked for an older line written before the field (or one naming a kind it does not know). A
