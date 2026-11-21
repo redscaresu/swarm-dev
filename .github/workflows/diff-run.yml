@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "The stage whose allow lists apply, stage-1 through stage-<n>, from v0.31.2"
+        description: "The stage number <n>, such as 1: the allow lists scripts/allow/stage-1/ through stage-<n>/ apply, from v0.31.2"
         required: true
         type: string
 
