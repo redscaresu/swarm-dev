@@ -167,7 +167,13 @@ bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecyc
 bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
-cmd/swarm/            the Go command, the module's only package; no command is ported yet
+cmd/swarm/            the Go command, the wiring layer; no command is ported yet
+internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
+                      with no methods yet, and the store's types
+internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
+                      and store/ (.swarm/ and the board's files)
+internal/clock/       the one package that may read the time
+internal/layers/      the Go checks that give each package its layer, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),
@@ -229,6 +235,10 @@ Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file,
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Go layers: a rules package (every package but `cmd/` and those under it, `internal/iface`, `internal/clock` and the four adapters under `internal/adapter/`) starts no process, touches no file, uses no network and imports no adapter.
+  Only `internal/clock` reads the time.
+  The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
+  `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
   returns 141 once grep's input passes 64 KB, since grep exits at its first match and the writer
