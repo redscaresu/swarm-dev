@@ -214,6 +214,18 @@ Run `scripts/select-tests.sh --run` before a push. It never runs the full suite,
 map does not know. CI's sharded run is the gate: `test` is the required check, and it passes when its
 14 `test-shard` jobs do. The full `make test` is for when you want the whole suite locally.
 
+The `speed` job (`.github/workflows/speed.yml`) runs on each PR that is not board-only.
+It installs strace, then runs `tests/speed_run.sh --require-count` with the PR's base as tree a and the PR's merge commit as tree b.
+The merge commit is the head merged into the base, which GitHub checks out, so the run measures only the PR's own change.
+Its log has one row for each command in `tests/speed_list.txt`, with each tree's median wall time and process starts.
+It fails a command the merge commit runs slower than the base by more than 20% and at least 100 ms, and a run where strace cannot count.
+A self-check step then times a copy of the merge commit with one extra exec (`/usr/bin/true` after `bin/swarm.sh`'s shebang) on the `usage` command.
+It fails unless the copy counts exactly one more process start than the merge commit.
+A run by hand (`workflow_dispatch`) takes a `base` ref, such as a tag, to time the dispatched ref against.
+It is not a required check, but `swarm.sh merge` waits for it like every other pull_request workflow, and a red run holds the merge.
+A port epic adds each command it ports to `tests/speed_list.txt`, one fixture name to a line.
+Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file, or the run is red.
+
 `tests/diff_run.sh` is the differential run: it runs each fixture against two trees and compares what the two runs did.
 A fixture is an `fx_<name>` function in a `tests/diff_fixtures_<area>.sh` file, and the run loads every such file.
 The `diff-run` job (`.github/workflows/diff-run.yml`) runs `tests/diff_run.sh --base <base> <head>` on each PR, and runs the merge fixtures ten times, head against head.
@@ -302,6 +314,8 @@ never `[[wikilinks]]`.
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
+`macos-tests` (`.github/workflows/macos.yml`) runs `go test ./...` and a small subset of the bash tests on macOS arm64, under macOS's bash 3.2.
+It is not required on `main`, but `swarm.sh merge` waits for it green, as for every workflow a PR runs.
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
 through the retro with the user first.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag and, for a numeric `x.y.z` tag, every one is a fix: a patch), the lead cuts a
