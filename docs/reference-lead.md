@@ -407,6 +407,11 @@ The kinds and their exits:
 - `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
   `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
   builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+  For a ready story's builder, the line also writes `.swarm/lead/manual/<agent>`, which holds the
+  builder's session.
+  A restart of a marked builder starts a fresh session, because a resumed session comes back in
+  manual mode.
+  A later read that finds the pane out of manual mode drops the mark, and so does the restart.
   A permission prompt with that footer under it (a builder in manual mode is nearly always on one)
   is `manual` for a ready story's builder, whose restart clears both. For any other agent it is a
   `prompt` whose exit adds `, and turns manual mode off there`.
@@ -867,6 +872,9 @@ It runs on a ready story that has a worktree and whose builder herdr no longer l
 If the builder's last Claude session left a resume command, and that session took its brief, restart reopens it and tells the builder to carry on.
 A resume command moved to a new session by `/clear` reopens the new one.
 If not, it starts a fresh builder on the last model, with a handover brief like a step-up's.
+It starts a fresh builder, too, when `wait --lead` last saw the builder in manual mode in that same session (the `manual` kind of `prompt:` line marks it), since a resumed session comes back in manual mode.
+That brief adds a note: the builder was restarted out of manual mode, the open PR or that none is open, and the branch head.
+Its line is `restart <slug> ok (fresh on <model>: out of manual mode)`.
 It refuses, and starts nothing, while herdr still lists the builder, and when the story:
 
 - has a PR that merged or is set to auto-merge
