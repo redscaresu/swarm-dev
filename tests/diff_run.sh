@@ -305,8 +305,8 @@ normalize() {
 # and "?" when the chain could not be read. Each pid in the chain goes to
 # <meta>/procs too, with its parent then and its argv: "<pid>\t<ppid>\t<argv>" lines.
 shim() {
-  { printf '#!/usr/bin/env bash\nTOOL=%q LOG=%q STUB=%q PATHS=%q GROUP=%q PROCS=%q PERL=%q PS=%q\n' \
-      "$1" "$2/calls" "$3" "$2/paths" "$2/group" "$2/procs" "$(command -v perl)" "$(command -v ps)"
+  { printf '#!/usr/bin/env bash\nTOOL=%q LOG=%q STUB=%q PATHS=%q GROUP=%q PROCS=%q PERL=%q PS=%q WAITED=%q\n' \
+      "$1" "$2/calls" "$3" "$2/paths" "$2/group" "$2/procs" "$(command -v perl)" "$(command -v ps)" "$2/waited.pl"
     cat <<'SHIM'
 # This pid's start probe has just run for this shim: place_calls drops that record by this line.
 [[ -z "${DIFF_RUN_STARTS:-}" ]] || printf '%s\tshim\n' "$$" >> "${DIFF_RUN_STARTS}" 2>/dev/null || true
@@ -318,7 +318,7 @@ shim() {
 # outside the run.
 # shellcheck disable=SC2016 # perl's own variables
 place="$("${PERL}" -e '
-  my ($me, $gf, $pf, $ps) = @ARGV;
+  my ($me, $gf, $pf, $ps, $wl) = @ARGV;
   my $mark = "DIFF_RUN_MARK=" . ($ENV{DIFF_RUN_MARK} // "");
   # marked <pid> — whether <pid> holds the marker: from /proc where there is one, else from ps -E.
   sub marked {
@@ -374,33 +374,10 @@ place="$("${PERL}" -e '
   open(my $o, ">>", $pf) or exit 1;
   print $o join("", map { "$_\t$up{$_}\t$argv{$_}\n" } @chain);
   close $o or exit 1;
-  # A process is waited on when its parent sleeps in a wait and it is the youngest child of that parent (the
-  # highest pid): bash forks a foreground command and then waits, so its newest child is the one it
-  # waits on, and an `&` job it forked earlier is older. `( ... ) & wait $!` leaves its subshell so too:
-  # "<pid>=w". Where /proc names what the parent sleeps in (Linux), the parent itself is read, not ps:
-  # ps reads /proc one process at a time, so a child forked meanwhile can be missing. The parent must
-  # be in a wait before and between two reads of its own list of children, and this process must be
-  # the youngest in both; a parent blocked in a read or a FIFO open is not waiting. Where /proc names
-  # nothing (macOS, whose ps reads the whole table at once, or a kernel that hides it), the snapshot
-  # is read the same way, a sleeping parent taken as waiting.
-  sub slurp { my ($f) = @_; open(my $h, "<", $f) or return ""; my $c = join("", <$h>); close $h; return $c }
-  sub youngest { my $y = -1; for (@_) { $y = $_ if $_ =~ /^\d+$/ && $_ > $y } return $y }
-  sub waited_on {
-    my ($u, $child) = @_;
-    my $w1 = slurp("/proc/$u/wchan");
-    if ($w1 =~ /[a-z]/) {
-      return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4)/;
-      my $cf = "/proc/$u/task/$u/children";
-      if (-e $cf) {
-        # The list the kernel keeps holds a child not yet reaped too. Read twice around a second wchan,
-        # so a child forked or reaped between two reads shows in one of them.
-        my $one = sub { youngest(split " ", slurp($cf)) eq $child };
-        return $one->() && slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4)/ && $one->() ? 1 : 0;
-      }
-    }
-    return ($stat{$u} // "") =~ /^S/ && youngest(@{$kids{$u} // []}) eq $child ? 1 : 0;
-  }
-  print "$flag\t", join(" ", (map { waited_on($up{$_} // "", $_) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" 2>/dev/null)" || place=""
+  # A process its parent waits on is marked "<pid>=w" (meta/waited.pl, which the start probe uses too).
+  require $wl;
+  my $snap = sub { (\%stat, \%kids) };
+  print "$flag\t", join(" ", (map { dr_waited($up{$_} // "", $_, $snap) ? "$_=w" : $_ } @chain), $end);' "$$" "${GROUP}" "${PROCS}" "${PS}" "${WAITED}" 2>/dev/null)" || place=""
 [[ "${place}" == [bf]g$'\t'* ]] || place=$'?\t?'
 # A call from inside a stub, or from this shim through anything on PATH, is refused: a loop back
 # through the shim would fork without end.
@@ -479,7 +456,8 @@ place_calls() {
   # shellcheck disable=SC2016 # perl's own variables
   DR_TOP="$2" perl -e '
     my $m = shift; my $g = $ENV{DR_TOP};
-    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, %waited_first, @order);
+    require "$m/waited.pl";
+    my (%argv, %first_up, @calls, %fg_proc, %bg_start, %step, %waited_first, %probe_waited, @order);
     if (open(my $f, "<", "$m/procs")) { while (<$f>) { chomp; my ($p, $u, $a) = split /\t/, $_, 3; $argv{$p} //= $a // ""; $first_up{$p} //= $u if ($u // 0) > 1 } }
     if (open(my $f, "<", "$m/starts")) {
       my %starts;
@@ -487,6 +465,7 @@ place_calls() {
         chomp; my ($p, $s, $rest) = split /\t/, $_, 3; $s //= ""; $rest //= "";
         if ($s eq "up") { $rest =~ s/^\s+//; my ($u, $a) = split /\s+/, $rest, 2; $argv{$p} //= $a // ""; $first_up{$p} //= $u if ($u // 0) > 1; next }
         if ($s eq "shim") { pop @{$starts{$p}}; next }
+        if ($s eq "w" || $s eq "nw") { $probe_waited{$p} //= $s eq "w" ? 1 : 0; next }
         push @{$starts{$p}}, [$s, $rest];
       }
       for my $p (keys %starts) {
@@ -507,7 +486,7 @@ place_calls() {
     for my $c (@calls) { next unless $c->{flag} eq "fg"; $fg_proc{$_} = 1 for @{$c->{chain}} }
     # Whether each process was waited on, as the first call that saw it found it. A parent waiting on
     # a process at once forks nothing until it ends, so one whose parent made a call through a newer
-    # child (a higher pid) before its own last call was joined later (`( ... ) & gh ...; wait`), not
+    # child (a newer pid, as dr_newer reads them) before its own last call was joined later (`( ... ) & gh ...; wait`), not
     # waited on at once: it stays off the foreground path, whenever its first call came.
     my (%parent, %last, @kid_calls);
     for my $n (0 .. $#calls) {
@@ -521,10 +500,13 @@ place_calls() {
         push @kid_calls, [$u, $ch[$i], $n];
       }
     }
+    # A start probe saw the parent of a background bash while it ran, before that bash made any call,
+    # and a launcher that exits before its worker calls is known only so: its view comes first.
+    $waited_first{$_} = $probe_waited{$_} for keys %probe_waited;
     for my $k (@kid_calls) {
       my ($u, $e, $n) = @$k;
       for my $x (keys %waited_first) {
-        next unless $waited_first{$x} && ($parent{$x} // "") eq $u && $e > $x && $n < $last{$x};
+        next unless $waited_first{$x} && ($parent{$x} // "") eq $u && dr_newer($e, $x) && $n < $last{$x};
         $waited_first{$x} = 0;
       }
     }
@@ -581,20 +563,74 @@ place_calls() {
 # (bash 3.2 sets no $0 a probe could tell a shim by): a record left for a shim's pid is a bash that
 # ran there before it, as `exec gh` leaves.
 bash_env() {
-  { printf 'DIFF_RUN_PS=%q DIFF_RUN_PERL=%q\n' "$(command -v ps)" "$(command -v perl)"
+  { printf 'DIFF_RUN_PS=%q DIFF_RUN_PERL=%q DIFF_RUN_WAITED=%q\n' "$(command -v ps)" "$(command -v perl)" "$1/waited.pl"
     cat <<'PROBE'
 if [ -n "${DIFF_RUN_STARTS-}" ]; then
-  DIFF_RUN_REC="$("${DIFF_RUN_PERL}" -e 'my ($pid, $pp, $ps) = @ARGV;
+  DIFF_RUN_REC="$("${DIFF_RUN_PERL}" -e 'my ($pid, $pp, $ps, $wl) = @ARGV;
     unless (($SIG{INT} // "") eq "IGNORE" && ($SIG{QUIT} // "") eq "IGNORE") { print "$pid\tfg\t$pp\n"; exit 0 }
     print "$pid\tign\t$pp\n";
-    if (open(my $l, "-|", $ps, "-ww", "-o", "ppid=,args=", "-p", $pp)) { my $u = join("", <$l>); chomp $u; print "$pp\tup\t$u\n" if length $u }' \
-    "$$" "${PPID}" "${DIFF_RUN_PS}" 2>/dev/null)" || DIFF_RUN_REC=""
+    my $u = "";
+    if (open(my $l, "-|", $ps, "-ww", "-o", "ppid=,args=", "-p", $pp)) { $u = join("", <$l>); chomp $u; print "$pp\tup\t$u\n" if length $u }
+    my ($gp) = $u =~ /^\s*(\d+)/;
+    exit 0 unless $gp && require $wl;
+    my $snap = sub {
+      my (%stat, %kids);
+      if (open(my $a, "-|", $ps, "-A", "-o", "pid=,ppid=,stat=")) { while (<$a>) { s/^\s+//; my ($p, $q, $st) = split; $stat{$p} = $st; push @{$kids{$q}}, $p } }
+      return (\%stat, \%kids);
+    };
+    print "$pp\t", (dr_waited($gp, $pp, $snap) ? "w" : "nw"), "\n";' \
+    "$$" "${PPID}" "${DIFF_RUN_PS}" "${DIFF_RUN_WAITED}" 2>/dev/null)" || DIFF_RUN_REC=""
   [ -z "${DIFF_RUN_REC}" ] || printf '%s\n' "${DIFF_RUN_REC}" >> "${DIFF_RUN_STARTS}" 2>/dev/null || :
   unset DIFF_RUN_REC
 fi
-unset DIFF_RUN_PS DIFF_RUN_PERL
+unset DIFF_RUN_PS DIFF_RUN_PERL DIFF_RUN_WAITED
 PROBE
   } > "$1/bash-env"
+}
+
+# waited_lib <meta> — write <meta>/waited.pl, which the shim and the start probe both load:
+# dr_waited <parent> <child> <snapshot> is 1 when <parent> sleeps in a wait with <child> as its
+# youngest child (the newest pid, in circular order, as pids wrap). Bash forks a foreground command
+# and then waits, so its newest child is the one it waits on, and an `&` job it forked earlier is older; `( ... ) & wait $!` leaves
+# its subshell so too. Where /proc names what <parent> sleeps in (Linux), <parent> itself is read, not
+# ps: ps reads /proc one process at a time, so a child forked meanwhile can be missing. <parent> must
+# be in a wait before and between two reads of its own list of children (which holds a child not yet
+# reaped too), and <child> must be the youngest in both; one blocked in a read or a FIFO open is not
+# waiting. Where /proc names nothing (macOS, whose ps reads the whole table at once, or a kernel that
+# hides it), <snapshot> (a sub that returns ps -A's stat and children by pid) is read the same way, a
+# sleeping parent taken as waiting.
+waited_lib() {
+  cat > "$1/waited.pl" <<'WAITED'
+sub dr_slurp { my ($f) = @_; open(my $h, "<", $f) or return ""; my $c = join("", <$h>); close $h; return $c }
+# Pids wrap (at pid_max on Linux, past 99999 on macOS), so their order is circular: the youngest of a
+# set forked close together is the last before the widest gap between them, and a pid is newer than
+# another when it lies less than half the range after it.
+sub dr_range { my $m = dr_slurp("/proc/sys/kernel/pid_max"); return $m =~ /^(\d+)/ ? $1 + 1 : 100000 }
+sub dr_newer { my ($e, $x) = @_; my $r = dr_range(); my $d = ($e - $x) % $r; return $d > 0 && $d < $r / 2 }
+sub dr_youngest {
+  my @p = sort { $a <=> $b } grep { /^\d+$/ } @_;
+  return -1 unless @p;
+  my $r = dr_range(); my ($best, $gap) = ($p[-1], $p[0] + $r - $p[-1]);
+  for my $i (0 .. $#p - 1) { ($best, $gap) = ($p[$i], $p[$i + 1] - $p[$i]) if $p[$i + 1] - $p[$i] > $gap }
+  return $best;
+}
+sub dr_waited {
+  my ($u, $child, $snap) = @_;
+  return 0 unless length $u;
+  my $w1 = dr_slurp("/proc/$u/wchan");
+  if ($w1 =~ /[a-z]/) {
+    return 0 unless $w1 =~ /^(?:do_wait|kernel_wait4)/;
+    my $cf = "/proc/$u/task/$u/children";
+    if (-e $cf) {
+      my $one = sub { dr_youngest(split " ", dr_slurp($cf)) eq $child };
+      return $one->() && dr_slurp("/proc/$u/wchan") =~ /^(?:do_wait|kernel_wait4)/ && $one->() ? 1 : 0;
+    }
+  }
+  my ($stat, $kids) = $snap->();
+  return ($stat->{$u} // "") =~ /^S/ && dr_youngest(@{$kids->{$u} // []}) eq $child ? 1 : 0;
+}
+1;
+WAITED
 }
 
 # split_steps <steps> <out> — write each step of <steps> (place_calls' blocks, normalized) to
@@ -665,6 +701,7 @@ run_one() {
   mkdir -p "${root}/tmp"
   : > "${meta}/calls"; : > "${meta}/procs"; : > "${meta}/starts"
   bash_env "${meta}"
+  waited_lib "${meta}"
   for v in "<tree>"$'\t'"${tree}" "<tree>"$'\t'"${tree_l}" "<root>"$'\t'"${root}" "<run>"$'\t'"${dir}"; do printf '%d\t%s\n' "${#v}" "${v}"; done |
     LC_ALL=C sort -rn | cut -f2- > "${meta}/paths"
   shim gh "${meta}" "${FX_GH}"
@@ -673,6 +710,7 @@ run_one() {
   for v in "${meta}/shims/gh" "${meta}/shims/herdr" "${meta}/bash-env"; do
     bash -n "${v}" 2> "${meta}/parse.log" || { echo "BUILD-FAIL ${fx} (${tag}): diff_run's own ${v##*/} does not parse"; sed 's/^/  /' "${meta}/parse.log"; return 2; }
   done
+  perl -c "${meta}/waited.pl" > /dev/null 2> "${meta}/parse.log" || { echo "BUILD-FAIL ${fx} (${tag}): diff_run's own waited.pl does not parse"; sed 's/^/  /' "${meta}/parse.log"; return 2; }
   # FX_ENV goes before the settings that keep the shims in front, as env's last word for a name wins:
   # a PATH of the fixture's own goes behind the shims, and HERDR_BIN_PATH and GH_CONFIG_DIR stay ours.
   # The marker and the bash start probe stay ours too.
@@ -738,7 +776,8 @@ run_one() {
   done
   if [[ -n "${KEEP}" ]]; then
     s="${KEEP}/${fx}/${side}"; [[ "${n}" -eq 1 ]] || s+=".${n}"
-    mkdir -p "${s}" && cp "${dir}/out/"* "${s}/"
+    # A kept directory used before may hold more steps than this run has: those go first.
+    mkdir -p "${s}" && find "${s}" -maxdepth 1 -name 'step.*' -type f -delete && cp "${dir}/out/"* "${s}/"
   fi
   if [[ -s "${meta}/killed" ]]; then
     IFS=$'\t' read -r kind why < "${meta}/killed"; echo "${kind} ${fx} (${tag}): ${why}"; return 3

@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # diff_run_order_test.sh — tests/diff_run.sh's order of stub calls, on two copies of the harness at
-# different paths. (1) Three fixtures whose gh calls from the background land at a random point among
-# the foreground's (an anonymous `( ... ) &` subshell, a detached `nohup bash swarm.sh ... &` run, a
-# setsid'd run launched as bin/lib/lifecycle.sh launches its own, and such a run started from inside a
-# subshell the command waits on at once, as bin/swarm.sh's dispatch starts lifecycle.sh's) compare
-# clean ten runs in ten, each step in a stream of its own, and each is red under one global order
-# (the harness changed to put every call on calls:fg). A job the command joins later with a plain
-# wait, after a call of its own, is a step, clean ten runs in ten. (2) Two foreground calls swapped in one copy are red on calls:fg, and
-# two calls swapped within a background step are red on that step, by its label. (3) A stub whose
-# answer alternates by run is red under --times 2, run 2 against run 1, and clean under --times 1.
-# A setsid'd step whose calls come a second after the command exits is waited for, and a setsid'd
-# process past --bound is red by its argv and killed. A worker whose launcher exits between its
-# calls, or before its first, keeps the launcher's step; a background bash that runs exec gh, or the
-# command's own background gh, is a step whether the command still runs or not; and a foreground call
-# inside two nested process groups is on calls:fg. Foreground calls through a wrapper that runs gh as
-# a waited background job (bin/gh-shim/gh's way), answered by a bash stub, stay on calls:fg, in
-# order, and so do calls made after trap '' INT and the calls of subshells the command waits on at
-# once, so two such subshells swapped are red; on Linux, a subshell whose parent is blocked opening a
-# FIFO is a step all the same. And a step that ends before the command exits gives the same
-# streams, ten runs in ten, as one that ends after.
+# different paths.
+# (1) Four fixtures whose gh calls from the background land at a random point among the
+# foreground's compare clean ten runs in ten, each step in a stream of its own, and each is red under
+# one global order (the harness changed to put every call on calls:fg). They are an anonymous
+# `( ... ) &` subshell, a detached `nohup bash swarm.sh ... &` run, a setsid'd run launched as
+# bin/lib/lifecycle.sh launches its own, and such a run started from inside a subshell the command
+# waits on at once, as bin/swarm.sh's dispatch starts lifecycle.sh's. A job the command joins later
+# with a plain wait, after a call of its own, is a step, clean ten runs in ten.
+# (2) Two foreground calls swapped in one copy are red on calls:fg, and two calls swapped within a
+# background step are red on that step, by its label.
+# (3) A stub whose answer alternates by run is red under --times 2, run 2 against run 1, and clean
+# under --times 1.
+# Also: a setsid'd step whose calls come a second after the command exits is waited for, and a
+# setsid'd process past --bound is red by its argv and killed. A worker whose launcher exits between
+# its calls, or before its first, keeps the launcher's step, and one whose waited launcher exits
+# before its first call is a step of its own. A background bash that runs exec gh, or the command's
+# own background gh, is a step whether the command still runs or not, and a foreground call inside
+# two nested process groups is on calls:fg. Foreground calls through a wrapper that runs gh as a
+# waited background job (bin/gh-shim/gh's way), answered by a bash stub, stay on calls:fg in order,
+# and so do calls made after trap '' INT and the calls of subshells the command waits on at once, so
+# two such subshells swapped are red. On Linux, a subshell whose parent is blocked opening a FIFO is a
+# step all the same. A step that ends before the command exits gives the same streams, ten runs in
+# ten, as one that ends after. A kept directory used again holds the new run's steps alone.
 # shellcheck disable=SC2016 # the copies' scripts and the harness's perl, expanded when a run runs them
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -55,6 +59,9 @@ fx_order_set() { FX_CMD=(bash "${TREE}/set.sh"); }
 fx_order_dispatch() { FX_CMD=(bash "${TREE}/dispatch.sh"); }
 # A job the command joins later, with a call of its own before the plain wait.
 fx_order_join() { FX_CMD=(bash "${TREE}/join.sh"); }
+# A waited subshell that only starts a worker and exits before the worker makes its first call.
+fx_order_launch() { FX_CMD=(bash "${TREE}/launch.sh"); }
+fx_order_steps() { FX_CMD=(bash "${TREE}/steps.sh"); }
 fx_order_setlate() { FX_CMD=(bash "${TREE}/setlate.sh"); }
 fx_order_nest() { FX_CMD=(bash "${TREE}/nest.sh"); }
 fx_order_gone() { FX_CMD=(bash "${TREE}/gone.sh"); }
@@ -105,8 +112,10 @@ trees() {
       echo '  bash "$(dirname "$0")/bin/swarm.sh" late < /dev/null > /dev/null 2>&1 &'; echo 'exit 0'; } > "${t}/setlate.sh"
     # A launcher that starts a worker and exits between the worker's first call and its second. The gaps
 # are seconds wide, so a slow process start on a loaded machine still lands each call where meant.
-    printf '( bash "$(dirname "$0")/worker.sh" & sleep 2 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/nest.sh"
-    printf 'gh api w-1 > /dev/null 2>&1\nsleep 3\ngh api w-2 > /dev/null 2>&1\ngh api w-3 > /dev/null 2>&1\n' > "${t}/worker.sh"
+    printf '( bash "$(dirname "$0")/worker.sh" & sleep 4 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/nest.sh"
+    printf 'gh api w-1 > /dev/null 2>&1\nsleep 6\ngh api w-2 > /dev/null 2>&1\ngh api w-3 > /dev/null 2>&1\n' > "${t}/worker.sh"
+    printf '%s\n' '( bash "$(dirname "$0")/launch-worker.sh" & sleep 2; : ) & wait $!' 'gh api f-1 > /dev/null 2>&1' 'exit 0' > "${t}/launch.sh"
+    printf 'sleep 5\ngh api l-1 > /dev/null 2>&1\ngh api l-2 > /dev/null 2>&1\n' > "${t}/launch-worker.sh"
     # A launcher that exits before its worker's first call.
     printf '( bash "$(dirname "$0")/late-worker.sh" & sleep 4 ) > /dev/null 2>&1 &\nexit 0\n' > "${t}/gone.sh"
     printf 'sleep 6\ngh api v-1 > /dev/null 2>&1\ngh api v-2 > /dev/null 2>&1\n' > "${t}/late-worker.sh"
@@ -188,7 +197,7 @@ start "${ROOT}/clean" "${A}/tests/diff_run.sh" --times 10 --keep "${K}" "${A}" "
 start "${ROOT}/global" "${GLOBAL}" --times 10 "${A}" "${B}" order_sub order_det order_set order_dispatch
 start "${ROOT}/step" "${A}/tests/diff_run.sh" --times 10 --keep "${KS}" "${A}" "${B}" order_step
 start "${ROOT}/late" "${A}/tests/diff_run.sh" --times 2 --keep "${KL}" "${A}" "${B}" order_setlate
-start "${ROOT}/nest" "${A}/tests/diff_run.sh" --times 3 --keep "${KN}" "${A}" "${B}" order_nest order_gone order_within order_exec order_solo
+start "${ROOT}/nest" "${A}/tests/diff_run.sh" --times 3 --keep "${KN}" "${A}" "${B}" order_nest order_gone order_within order_exec order_solo order_launch
 finish
 if [[ "$(rc_of "${ROOT}/clean")" == 0 ]]; then ok "the fixtures with background steps compare clean ten runs in ten"
 else bad "the fixtures with background steps compare clean ten runs in ten" "exit $(rc_of "${ROOT}/clean"): $(cat "${ROOT}/clean")"; fi
@@ -258,6 +267,12 @@ if grep -qxF "same order_solo" "${ROOT}/nest" && [[ "$(field "${KN}/order_solo/b
   && ! -s "${KN}/order_solo/a/calls:fg" ]]; then ok "the command's own background gh is a step, before the command exits or after"
 else bad "the command's own background gh is a step, before the command exits or after" \
   "b steps: $(cat "${KN}/order_solo/b/steps" 2>/dev/null), a calls:fg: $(field "${KN}/order_solo/a/calls:fg"); $(cat "${ROOT}/nest")"; fi
+# The waited subshell is a boundary even when its worker calls only after it has exited: the start
+# probe saw it waited on, so the worker is the step.
+if grep -qxF "same order_launch" "${ROOT}/nest" && [[ "$(cat "${KN}/order_launch/a/steps" 2>/dev/null)" == "[bash <tree>/launch-worker.sh] gh api l-1" \
+  && "$(field "${KN}/order_launch/a/calls:fg")" == "gh api f-1;" ]]; then ok "a worker whose waited launcher exits before its first call is a step of its own"
+else bad "a worker whose waited launcher exits before its first call is a step of its own" \
+  "a steps: $(cat "${KN}/order_launch/a/steps" 2>/dev/null); $(cat "${ROOT}/nest")"; fi
 # A foreground call inside two nested groups is placed on calls:fg.
 if grep -qxF "same order_within" "${ROOT}/nest" && [[ "$(field "${KN}/order_within/a/calls:fg")" == "gh api in-1;" ]]; then
   ok "a foreground call inside two nested groups is on calls:fg"
@@ -353,6 +368,18 @@ if [[ "${nap_in}" =~ [a-z] ]]; then
     "exit $(rc_of "${ROOT}/read"): $(cat "${ROOT}/read"); steps: $(cat "${ROOT}/keep-read/order_read/a/steps" 2>/dev/null)"; fi
   rm -rf "${ROOT}/keep-read"
 else echo "skip a subshell whose parent is blocked in a FIFO open is a step: /proc names no wait channel here"; fi
+
+# A kept directory used again by a run with fewer steps holds that run's steps alone.
+KR="${ROOT}/keep-reuse"
+# Steps the command never waits on (a plain wait right after one would make it a waited subshell).
+for t in "${A}" "${B}"; do printf '%s\n' '( gh api s-1 2> /dev/null ) &' '( sleep 0.3; gh api s-2 2> /dev/null ) &' 'sleep 1' > "${t}/steps.sh"; done
+start "${ROOT}/steps-2" "${A}/tests/diff_run.sh" --keep "${KR}" "${A}" "${B}" order_steps; finish
+for t in "${A}" "${B}"; do printf '%s\n' '( gh api s-1 2> /dev/null ) &' 'sleep 1' > "${t}/steps.sh"; done
+start "${ROOT}/steps-1" "${A}/tests/diff_run.sh" --keep "${KR}" "${A}" "${B}" order_steps; finish
+kept_steps="$(find "${KR}/order_steps/a" -maxdepth 1 -name 'step.*' -type f 2>/dev/null | sed 's#.*/##' | LC_ALL=C sort | tr '\n' ' ')"
+if [[ "$(rc_of "${ROOT}/steps-2")" == 0 && "$(rc_of "${ROOT}/steps-1")" == 0 && "${kept_steps}" == "step.1 " ]]; then ok "a kept directory used again holds the new run's steps alone"
+else bad "a kept directory used again holds the new run's steps alone" "steps kept: ${kept_steps}; $(cat "${ROOT}/steps-2" "${ROOT}/steps-1")"; fi
+rm -rf "${KR}"
 
 # (3) The stub answers "answer 1" on a tree's odd runs and "answer 0" on its even ones.
 trees
