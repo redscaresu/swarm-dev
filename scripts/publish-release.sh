@@ -30,7 +30,10 @@
 # plan run with a read-only token cannot see one: the publish job's plan, run with its write token, is
 # the one the workflow acts on.
 # Every gh read goes through gh_read. A 404 is an answer only on the tag and REF reads; any other
-# failure refuses.
+# failure refuses, and a re-run of the job, once the failure has passed, plans again. plan sets no
+# timeout on a gh call, so the calling job's timeout bounds it. plan only reads, so two runs at once do
+# not disturb each other, but both can plan draft for the same version: the workflow that calls plan
+# must run one publish at a time.
 set -euo pipefail
 
 PLUGIN=.claude-plugin/plugin.json
