@@ -1,0 +1,17 @@
+---
+kind: code
+status: later
+epic: helpers-dropped-lines
+depends_on: []
+touches: [internal/merge/dropped_diff.go, internal/merge/dropped_diff_test.go]
+estimate_lines: 290
+risk: high
+---
+
+# The lines a remerge diff removes, and the text dropped-lines prints, are read in Go
+
+port: true; Go that nothing runs yet. internal/merge/dropped_diff.go ports from bin/lib/dropped_lines.py. unquote (152-169): a backslash then three bytes that are all ASCII digits, or fewer at the string's end, is one octal byte; otherwise the next byte goes through ESCAPES, or is kept as is. Digits 8 or 9, or a value over 255, make the Python raise and exit 1; the Go returns an error (git writes neither). removed (171-211): each line the diff removes, with its file, its name in the merge and its section (OUTSIDE, FIRST, SECOND or ANCESTOR); hunk counts from the header, a missing count meaning 1; 'No newline' lines skipped; a section followed across hunks; the ---/+++ name's trailing tabs taken off before unquote (201). Inside a section, every line MARKER matches is left out, whatever the opening size. Only a run of exactly the opening size changes the section, and the marker test is taken before the change (186-195). clean and the 300-character cut (91,94-95,327): decode as Python's utf-8 'replace' does, one U+FFFD per maximal invalid subpart (a lead byte and the continuation bytes its ranges allow: e0 a0-bf, ed 80-9f, f0 90-bf, f4 80-8f; c0, c1 and f5-ff never lead), not one per byte (a range loop) or one per run (strings.ToValidUTF8). Then remove bytes 00-1f and 7f; the cut counts characters. Lines stay []byte. Standard library only. Every package-level name, in _test.go files too, starts with dropped or Dropped, so helpers-ci-gate's files in the package cannot clash; no file here carries the package comment (ci-gate-go-entry's). The PR body maps each table case to the mutation that turns it red (one may cover several), with FAIL lines. The reviewer reads the three Python functions against the Go, rule by rule (P6).
+
+**Done when:**
+- (1) go test ./internal/merge/ passes with table cases from diff text: a hunk with counts and one without; a 'No newline at end of file' line; a conflict split over two hunks, the } dropped in the second taken as the PR side; the ancestor part; markers of size 9; in a size-7 section, a line of eight | left out with the next line still FIRST; a new diff --git line resetting the section; --- /dev/null and +++ /dev/null; a name with a space and a trailing tab (a b); a quoted path with a tab, a double quote, a backslash and an octal é; unquote of "a\12x" (a12x), of "a\1" (a then byte 01) and of "\189" (an error); clean of e2 82 41 (one U+FFFD), ff fe 41 (two), f0 9f 98 41 (one), ed a0 80 41 (three), e0 80 41 (two), f4 90 80 80 41 (four), c0 af 41 (two), a trailing e2 82 (one), and of control bytes; a 301-character line holding é cut to 300 characters. (2) The PR body's table turns every case red on a worktree copy without .git, with FAIL lines; its mutations include clean through strings.ToValidUTF8, a per-byte decode, the left-out check needing the opening size, no tab trim, and a missing count taken as 0. (3) gofmt -l prints nothing, and go vet ./..., staticcheck ./..., errcheck ./... (as go-checks runs them: .github/workflows/go.yml:74-99) and go test ./internal/layers/ pass. (4) scripts/select-tests.sh --run passes.
+- scripts/select-tests.sh --run passes
