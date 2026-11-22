@@ -11,7 +11,7 @@ A release publishes four checked binaries and only then moves the prerelease ref
 
 Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewrite.md).
 
-**Done when:** On a public throwaway copy of the repo: (1) The build check reports on every PR. It passes on a story PR that is no bump, builds the four binaries in a read-only job on a version-bump PR, and stays red when one platform fails to build. (2) After the merge the workflow builds again in a read-only job. A second job attaches the four binaries, their SHA-256 checksums and a build attestation, and only then moves the prerelease ref. Each of the four downloaded assets passes `sha256sum -c` and `gh attestation verify` with release.yml as the signer. (3) A failed publish leaves the ref where it was, and a rerun after a publish that failed once the release existed attaches the files and moves the ref. (4) A marketplace added the way users add it today installs what the stable ref holds and does not move when prerelease moves. (5) With prerelease moved back one version, an update and a restart bring back the older plugin.json, hooks and binary. If Claude Code does not go back, docs/lead-by-hand.md has the rollback that does, before any port merges. (6) The workflow's push to prerelease works under the rulesets on stable and prerelease, and the pinned plugin validator passes main's marketplace.json. An install on that v0.31.x tag does not move when the marketplace.json PR merges.
+**Done when:** On a public throwaway copy of the repo: (1) The build check reports on every PR. It passes on a story PR that is no bump, builds the four binaries in a read-only job on a version-bump PR, and stays red when one platform fails to build. (2) After the merge the workflow builds again in a read-only job. A second job attaches the four binaries, their SHA-256 checksums and a build attestation, and only then moves the prerelease ref. Each of the four downloaded assets passes `sha256sum -c` and `gh attestation verify` with release.yml as the signer. (3) A failed publish leaves the ref where it was, and a rerun after a publish that failed once the release existed attaches the files and moves the ref. (4) A marketplace added the way users add it today installs what the stable ref holds and does not move when prerelease moves. (5) With prerelease moved back one version, an update and a restart bring back the older plugin.json and hooks; the binary half is proved by release-client's real-release check (release-client.md Done when (5)), as the user agreed on 2026-11-21. If Claude Code does not go back, docs/lead-by-hand.md has the rollback that does, before any port merges. (6) The workflow's push to prerelease works under the rulesets on stable and prerelease, and the pinned plugin validator passes main's marketplace.json. An install on that v0.31.x tag does not move when the marketplace.json PR merges.
 
 **Out of scope:**
 - swarm.sh's side: the plugin's ID, the version check, when a release counts as done (release-client)
@@ -95,3 +95,20 @@ As the lead (the admin role), through `gh api`:
 - Delete stable, prerelease and pre-marketplace: each refused, 422 "Cannot delete this branch".
 
 After the tests: main 16332d9b, stable cfe2a200, prerelease c046ae95, pre-marketplace ba2d21f2.
+
+## release-refs results (2026-11-21)
+
+The user created the branches and rulesets on redscaresu/swarm-dev from the lead's commands. The lead read them back the same day:
+- stable: 06b35a67 (v0.31.3)
+- prerelease: 06b35a67 (v0.31.3)
+- pre-marketplace: 653d9366, one signed orphan commit (GitHub: verified). Its `.claude-plugin/marketplace.json` is named `swarm-dev-pre`, with one plugin whose source is `{source: url, url: https://github.com/redscaresu/swarm-dev.git, ref: prerelease}`. It passed the pinned validator (`@anthropic-ai/claude-code@2.1.284 plugin validate`) before the push.
+
+The rulesets, as GitHub read them back:
+
+```json
+{"id":27812527,"name":"no-delete","enforcement":"active","include":["refs/heads/stable","refs/heads/prerelease","refs/heads/pre-marketplace"],"rules":["deletion"],"bypass":[]}
+{"id":27812633,"name":"locked","enforcement":"active","include":["refs/heads/stable","refs/heads/pre-marketplace"],"rules":["update","non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+{"id":27812756,"name":"prerelease-ff","enforcement":"active","include":["refs/heads/prerelease"],"rules":["non_fast_forward"],"bypass":["RepositoryRole:5:always"]}
+```
+
+They match the spike's rulesets above. Main's ruleset 24181590 is unchanged.

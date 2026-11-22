@@ -101,8 +101,8 @@ PORTED_NAME_RE='^[a-z_][a-z0-9_-]*$'
 is_ported() { [[ "$1" =~ ${PORTED_NAME_RE} && -f "${SWARM_HOME}/bin/ported/$1" ]]; }   # loose-match: ok PORTED_NAME_RE is a fixed regex
 
 # binary_run <name> [args] — bin/swarm.sh's dispatch of a ported command: run the file binary_path
-# names (or die with its line, and any Go error after it) as `<binary> <name> [args]`, in a subshell, and return its exit
-# code. stdin passes through. It hands over the frame (cmd/swarm/frame.go): SWARMDEV_HOME,
+# names (or die with its line, and any Go error after it) as `<binary> <name> [args]`, in a subshell,
+# and return its exit code. stdin passes through. It hands over the frame (cmd/swarm/frame.go): SWARMDEV_HOME,
 # SWARMDEV_PROJECT, SWARMDEV_BOARD, and each CONFIG_KEYS key as SWARMDEV_CFG_<key> and SWARMDEV_SRC_<key>,
 # valued as `swarm.sh config` shows them (board_dir and repos_dir resolved). The die file and the fields
 # file pass only at the command's own level, as die() and event_fields keep them. Every name is set on

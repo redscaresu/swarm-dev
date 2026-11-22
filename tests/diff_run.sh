@@ -6,6 +6,7 @@
 #   bash tests/diff_run.sh [--bound <s>] [--timeout <s>] [--max-procs <n>] [--keep <dir>] <tree-a> <tree-b> [fixture...]
 #   bash tests/diff_run.sh [those options] [--stage <n>] [--only <slug>] [--draft] <tree-a> <tree-b> [fixture...]
 #   bash tests/diff_run.sh [those options] [--times <n>] <tree-a> <tree-b> [fixture...]
+#   bash tests/diff_run.sh [those options] --base [--branch <ref>]... [--draft] <tree-a> <tree-b> [fixture...]
 #
 #   --bound <s>        how long a run waits, once its command has exited, for the processes it left in
 #                      its group (default 10); one still alive then is red, by its argv, and is killed
@@ -22,6 +23,10 @@
 #                      first, so only a difference no entry's hunk covers is red
 #   --only <slug>      apply that one story's entry alone (from any stage, or up to --stage's), to
 #                      check it against the story's own merge commit
+#   --base             tree-a is a PR's base and tree-b its head: apply only the entries of the stories
+#                      --branch names (from any stage), so a PR passes with its own entry and no other's
+#   --branch <ref>     with --base, a head branch; story/<slug> names story <slug>, whose entry applies
+#                      when it has one, and any other ref names none (a merge group gives one per PR)
 #   --draft            print each difference as the hunks that would cover it, to edit into an entry
 #
 # A fixture is a function fx_<name> in a tests/diff_fixtures_<area>.sh file. Every such file in this
@@ -138,9 +143,11 @@
 # ran is red (ALLOW-FAIL <fixture> <stream> ...). There the files stream is split in two: files is its
 # list of written and deleted paths, and file:<path> one written file's content. scripts/allow/README.md
 # gives the entry format; a malformed entry stops the run before any fixture, with exit 2.
+# --base has it compare them too, with the entries of the stories --branch names.
 # It compares each tree's first run; with --times, each repeat is still compared with its tree's
 # first run by diff_run.sh itself. Each background step goes to it as two streams, steps (the
-# labels, sorted) and step.<k> (the calls of the k-th), which no entry's ## heading can name yet.
+# labels, sorted) and step.<k> (the calls of the k-th), which it reads as the stream calls:<label>,
+# the step's name here, so an entry's ## heading can name one.
 #
 # Exit 0 when every fixture's streams are the same, 1 when any differ (DIFF <fixture> <stream> and a
 # diff for each), a process outlived the bound (STUCK <fixture> ...), or a group passed --max-procs
@@ -158,11 +165,12 @@ MAX_PROCS=200
 TIMES=1
 KEEP=""
 STAGE="" ONLY="" DRAFT=""
+BASE="" BRANCHES=()
 STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-usage() { sed -n '6,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '6,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 bad() { echo "diff_run: $*" >&2; usage >&2; exit 2; }
 
 while [[ $# -gt 0 ]]; do
@@ -174,6 +182,8 @@ while [[ $# -gt 0 ]]; do
     --keep) [[ -n "${2-}" ]] || bad "--keep takes a directory"; KEEP="$2"; shift 2 ;;
     --stage) [[ "${2-}" =~ ^[1-9][0-9]*$ ]] || bad "--stage takes a stage number above 0, not '${2-}'"; STAGE="$2"; shift 2 ;;
     --only) [[ "${2-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || bad "--only takes a story slug, not '${2-}'"; ONLY="$2"; shift 2 ;;
+    --base) BASE=1; shift ;;
+    --branch) [[ -n "${2-}" ]] || bad "--branch takes a branch name"; BRANCHES+=("$2"); shift 2 ;;
     --draft) DRAFT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
@@ -208,6 +218,14 @@ ALLOW_DIR="$(cd "${HERE}/.." && pwd -P)/scripts/allow"
 allow=()
 [[ -z "${STAGE}" ]] || allow+=(--stage "${STAGE}")
 [[ -z "${ONLY}" ]] || allow+=(--only "${ONLY}")
+if [[ -n "${BASE}" ]]; then
+  [[ -z "${STAGE}${ONLY}" ]] || bad "--base takes neither --stage nor --only: it applies the head's own stories' entries alone"
+  allow+=(--base)
+  for b in ${BRANCHES[@]+"${BRANCHES[@]}"}; do
+    if [[ "${b}" =~ ^story/([a-z0-9][a-z0-9-]*)$ ]]; then allow+=(--story "${BASH_REMATCH[1]}")
+    else echo "--base: ${b} is no story/<slug> branch, so it names no entry"; fi
+  done
+elif [[ ${#BRANCHES[@]} -gt 0 ]]; then bad "--branch goes with --base"; fi
 [[ ${#allow[@]} -eq 0 ]] || python3 "${HERE}/diff_allow.py" check "${ALLOW_DIR}" "${allow[@]}" > /dev/null || exit 2
 [[ -z "${DRAFT}" ]] || allow+=(--draft)
 

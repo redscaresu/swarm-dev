@@ -29,6 +29,7 @@ jobs:
       #   tests/env_allowlist_test.sh  the environment an agent starts with (AGENT_ENV in bin/lib/agents.sh)
       #   tests/binary_find_test.sh    binary_find (bin/lib/binary.sh), which finds the swarm binary
       #   tests/binary_dispatch_test.sh  dispatch's run of the binary for a ported command, and the frame it hands over
+      #   tests/binary_build_test.sh   binary_path's build of the binary in a git checkout, under BSD find
       SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh tests/binary_find_test.sh tests/binary_dispatch_test.sh tests/binary_build_test.sh
     steps:
       - name: Checkout
