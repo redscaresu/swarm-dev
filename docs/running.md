@@ -155,7 +155,7 @@ lists them all.
 ## First run
 
 An installed copy of swarm-dev has no `swarm` binary until its first `swarm.sh` call fetches one.
-Every call does this except `swarm.sh version` and `swarm.sh update`, inside a project or not.
+Every call does this except `swarm.sh update`, inside a project or not.
 Each version fetches its own binary once:
 
 1. `gh release download` fetches the release's binary for this machine, and its `SHA256SUMS`, into a new `.fetch-<pid>` folder in the plugin folder.
@@ -169,7 +169,9 @@ A git checkout of swarm-dev never fetches: it builds the binary from its own tre
 With `SWARMDEV_BIN` set, swarm.sh runs that file and fetches nothing.
 
 When the download cannot work here (no binary for this platform, no gh, a gh older than 2.57.0, or a failed `gh release download`), a machine with Go builds the binary from source instead, as [Offline](#offline) says.
-Otherwise, or when that build fails too, the call stops with one line that starts `binary:`, and the command does not run:
+Otherwise, or when that build fails too, the call stops with one line that starts `binary:`, and the command does not run.
+`swarm.sh version` is the exception: it prints that line after its version line, and goes on.
+What each line means:
 
 - `swarm-dev publishes no binary for <os>/<arch>`: build one with `go build ./cmd/swarm` and set `SWARMDEV_BIN` to its path.
 - `gh is not on PATH`: install the GitHub CLI and run `gh auth login`.
@@ -202,6 +204,7 @@ A build that is stopped part way leaves no `swarm`.
 It can leave a `swarm.build-<pid>` file in the plugin folder, which no call runs; the next call builds again, and you can delete the file.
 Once the binary is there, a call needs no network to find it.
 `swarm.sh version` and `swarm.sh update` never need the binary, so they still run.
+`swarm.sh version` still tries the download and the build, and prints their `binary:` lines after its version line.
 
 ## Updating
 
@@ -218,7 +221,12 @@ you release some other way, update by hand:
 claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
 ```
 
-Restart Claude Code afterwards. Agents already running stay on the old version until
+Restart Claude Code afterwards.
+Then run `swarm.sh version`: it fetches the new version's binary, as [First run](#first-run) describes, or builds it, as [Offline](#offline) describes.
+When it can do neither, it says why after its version line, in one line that starts `binary:` and then any error Go printed, and still exits 0.
+The next `swarm.sh` call tries again.
+
+Agents already running stay on the old version until
 `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. A builder
 waits while the Claude review agent reviewing its PR is busy and still on the old version. upgrade
 runs detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
