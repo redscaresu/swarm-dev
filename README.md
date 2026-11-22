@@ -65,6 +65,8 @@ stories). A run can stop anywhere, and the next `/swarm-dev:swarm` picks up wher
    claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
    ```
 
+   This installs the stable release, which moves when a stage ends.
+
 2. In your project's folder, run `claude` once and accept "do you trust this folder?". Agents cannot
    start in a folder you have not trusted.
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name. With your yes, it sets

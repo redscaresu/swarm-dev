@@ -144,8 +144,10 @@ Useful while it runs:
   key in `REMOVED_KEYS` still loads for at least one release: it is ignored, with a warning on
   stderr naming it and its line (`tests/removed_test.sh` pins this).
 - A fix to the swarm's own loop (the conductor, review agent, guard or `wait` commands) ships as a
-  patch release soon after it merges, so running projects get it. The lead cuts it, through the
+  patch release soon after it merges. The lead cuts it, through the
   release arm below; a builder's story PR never bumps the version.
+  The release moves `prerelease`, so the machine on `swarm-dev@swarm-dev-pre` gets the fix at once.
+  Every other machine follows `stable`, which the lead moves when the stage ends, so it gets the fix then.
   It ships as a patch only when every change since the tag is from a `fix: true` story or a fix-main build.
   In swarm-dev's own repo, a PR that changes only files under `tests/`, and a `port: true` story's PR whose changed `tests/` files are all in its `touches`, ship as a patch too.
   Otherwise `merge --release` refuses the patch, and the fix ships in the next minor, after its retro.
@@ -344,8 +346,10 @@ When `swarm.sh next` prints `release` (`main` has changes since the last `v<vers
 release through `/swarm-dev:swarm`'s release arm and `swarm.sh merge --release`: a PR that bumps `version` in
 `.claude-plugin/plugin.json` and nothing else. `claude plugin update` fetches nothing while the version is
 unchanged. No story PR bumps it, and a story PR without a bump is not a review finding. Merging a version
-bump to `main` publishes the release and its `v<version>` tag (`.github/workflows/release.yml`); a merge
-without one publishes nothing. Before a release, bring AGENTS.md, README.md, docs/ and commands/ in
+bump to `main` publishes the release and its `v<version>` tag (`.github/workflows/release.yml`).
+The workflow attaches the four binaries and `SHA256SUMS`, then moves `prerelease`.
+It never moves `stable`; the lead does that when the stage ends.
+A merge without a bump publishes nothing. Before a release, bring AGENTS.md, README.md, docs/ and commands/ in
 line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
 `commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
 the release PR body has a `Docs: none — <reason>` line.
