@@ -2,13 +2,14 @@
 # binary.sh — find the swarm binary a command runs, and run it. A hook sources it on its own, and
 # bin/swarm.sh with its other libs: it needs no other bin/lib file, sets no shell option and starts no
 # process when sourced, and binary_find and is_ported start none either. binary_path and binary_run are
-# swarm.sh's alone. Only binary_path builds, and only in a git checkout; nothing here downloads.
+# swarm.sh's alone. Only binary_build builds, and only binary_path calls it, in a git checkout; nothing
+# here downloads.
 
 # BINARY_BUILD_PATH: where a git checkout of the plugin keeps the binary built from its tree, relative to
 # the plugin root. It is the file `go build ./cmd/swarm` writes at the root, which .gitignore already
 # ignores, and it is outside bin/, which several tests scan file by file.
 BINARY_BUILD_PATH=swarm
-# BINARY_BUILD_TMP: the suffix of the file binary_path builds into beside BINARY_BUILD_PATH, before its
+# BINARY_BUILD_TMP: the suffix of the file binary_build builds into beside BINARY_BUILD_PATH, before its
 # rename; the caller's PID follows it. .gitignore ignores it too, so a build cut short leaves no
 # untracked file.
 BINARY_BUILD_TMP=.build-
@@ -20,7 +21,9 @@ BINARY_BUILD_TMP=.build-
 #     error, never a fall-through to the build path.
 #   SWARMDEV_BIN unset, the root a git checkout (its .git a directory, or a worktree's file): the
 #     executable at <root>/BINARY_BUILD_PATH. It does not check whether that file is older than the tree.
-#   Otherwise (an installed copy has no .git): there is no binary.
+#   Otherwise (an installed copy has no .git): the executable at <root>/BINARY_BUILD_PATH, where an
+#     installed copy keeps its binary. With no executable file there, one line saying the root is not a
+#     git checkout.
 binary_find() {
   local root="${1:-}" built
   if [[ -n "${SWARMDEV_BIN+set}" ]]; then
@@ -36,6 +39,8 @@ binary_find() {
   fi
   root="${root%/}"
   if [[ ! -e "${root}/.git" ]]; then
+    built="${root}/${BINARY_BUILD_PATH}"
+    if [[ -f "${built}" && -x "${built}" ]]; then printf '%s\n' "${built}"; return 0; fi
     echo "binary: no swarm binary: SWARMDEV_BIN is unset and ${root} is not a git checkout" >&2; return 1
   fi
   built="${root}/${BINARY_BUILD_PATH}"
@@ -125,19 +130,89 @@ binary_stale() {
   [[ -n "$(find "${dirs[@]}" -type f -name '*.go' -newer "${bin}" -print -quit 2>/dev/null)" ]]
 }
 
+# binary_go_want <root> — print the Go version <root>/go.mod's `go` line names (1.27.1), read with
+# builtins, and return 0; print nothing and return 1 when it has no such line.
+binary_go_want() {
+  local k v rest
+  while read -r k v rest || [[ -n "${k}" ]]; do
+    if [[ "${k}" == go && -n "${v}" ]]; then printf '%s\n' "${v}"; return 0; fi
+  done < "$1/go.mod"
+  return 1
+}
+
+# binary_go_older <have> <want> — true when Go version <have> (`go env GOVERSION`: go1.25.3, and any
+# word after the first ignored) is older than <want> (go.mod's: 1.27.1), by a numeric compare of the
+# dotted fields, a missing field counting as 0. Returns 1 when it is not older, or when either is not
+# all dotted numbers once a leading go is dropped (a devel build, an rc): the caller then says nothing
+# about versions, as it cannot tell.
+binary_go_older() {
+  local have="${1%% *}" want="${2%% *}" re='^[0-9]+(\.[0-9]+)*$' h=() w=() i a b
+  have="${have#go}"; want="${want#go}"
+  [[ "${have}" =~ ${re} && "${want}" =~ ${re} ]] || return 1   # loose-match: ok re is a fixed regex
+  IFS=. read -r -a h <<< "${have}"; IFS=. read -r -a w <<< "${want}"
+  for ((i = 0; i < ${#h[@]} || i < ${#w[@]}; i++)); do
+    a="${h[i]:-0}"; b="${w[i]:-0}"
+    if ((10#${a} != 10#${b})); then ((10#${a} < 10#${b})); return; fi
+  done
+  return 1
+}
+
+# binary_build <root> — build ./cmd/swarm from the source at <root> into <root>/BINARY_BUILD_PATH and
+# return 0, printing nothing. <root> may be a git checkout or an installed copy with no .git. go builds
+# into a file of its own beside the binary, <root>/swarm.build-<pid> (BINARY_BUILD_PATH, BINARY_BUILD_TMP
+# and the caller's PID), which is then renamed over it, so a call started at the same time never runs
+# half a file. A KILL mid-build leaves that file, which no call runs.
+# Each stop prints one `binary: ` line on stderr (a failed build's then has Go's error after it), returns
+# 1 and leaves any old binary as it was:
+#   <root> has no go.mod or no cmd/swarm (an installed 0.31.x has no source);
+#   no go on PATH: the line names go.mod's Go version;
+#   a failed build: when the installed Go (GOTOOLCHAIN=local go env GOVERSION, run from /, so the probe
+#     never tries to fetch a newer Go) is older than go.mod's by binary_go_older, the line names both and
+#     says to install go.mod's or reconnect so Go can fetch it. Otherwise, or with a GOVERSION it cannot
+#     read, the line says only that the build failed.
+# Only binary_path calls it.
+binary_build() {
+  local root="${1%/}" built tmp out want have
+  built="${root}/${BINARY_BUILD_PATH}"
+  if [[ ! -f "${root}/go.mod" ]]; then
+    echo "binary: ${root} has no go.mod, so it holds no source to build the swarm binary from" >&2; return 1
+  fi
+  if [[ ! -d "${root}/cmd/swarm" ]]; then
+    echo "binary: ${root} has no cmd/swarm, so it holds no source to build the swarm binary from" >&2; return 1
+  fi
+  want="$(binary_go_want "${root}")" || want=""
+  if ! command -v go >/dev/null 2>&1; then
+    echo "binary: go is not on PATH, and the swarm binary builds from the source in ${root}: install Go${want:+ ${want} or later, the version ${root}/go.mod names}" >&2
+    return 1
+  fi
+  tmp="${built}${BINARY_BUILD_TMP}$$"
+  if ! out="$(cd "${root}" && go build -o "${tmp}" ./cmd/swarm 2>&1)"; then
+    rm -f "${tmp}"
+    have="$(cd / && GOTOOLCHAIN=local go env GOVERSION 2>/dev/null)" || have=""
+    if binary_go_older "${have}" "${want}"; then
+      printf 'binary: go build ./cmd/swarm failed in %s, and the installed Go is %s, older than the %s go.mod names: install Go %s or later, or reconnect so Go can fetch it:\n%s\n' \
+        "${root}" "${have}" "${want}" "${want}" "${out}" >&2
+    else
+      printf 'binary: go build ./cmd/swarm failed in %s, so the ported command did not run:\n%s\n' "${root}" "${out}" >&2
+    fi
+    return 1
+  fi
+  mv -f "${tmp}" "${built}" || { rm -f "${tmp}"; echo "binary: could not move the build to ${built}" >&2; return 1; }
+}
+
 # binary_path <plugin root> — binary_find, and in a git checkout with SWARMDEV_BIN unset, the binary
 # built from the checkout's tree. It prints the path to run and returns 0, or prints why there is none
 # on stderr, its first line one line of its own, and returns 1.
 #   SWARMDEV_BIN set, or the root no git checkout: binary_find's answer, unchanged. It builds nothing.
-#   A git checkout: it builds ./cmd/swarm into <root>/BINARY_BUILD_PATH when there is no executable file
-#     there, or when binary_stale says the tree is newer. go builds into a file of its own beside it,
-#     which is then renamed over it, so a call started at the same time never runs half a file. With no
-#     go on PATH it stops in one line. A failed build stops with a line and Go's error, removes its own
-#     file and leaves the old binary as it was; the caller never runs the old one.
+#   A git checkout: binary_build builds ./cmd/swarm into <root>/BINARY_BUILD_PATH when there is no
+#     executable file there, or when binary_stale says the tree is newer. With no go on PATH it stops in
+#     one line of its own, naming SWARMDEV_BIN, before binary_build runs. A failed build stops with
+#     binary_build's line and Go's error, and leaves the old binary as it was; the caller never runs
+#     the old one.
 # Only binary_run calls it, for a marked command, so no other command starts a find. A hook that
 # needs the binary uses binary_find, which never builds.
 binary_path() {
-  local root="${1:-}" built tmp out
+  local root="${1:-}" built
   if [[ -n "${SWARMDEV_BIN+set}" || -z "${root}" || ! -e "${root%/}/.git" ]]; then
     binary_find "${root}"; return
   fi
@@ -149,13 +224,7 @@ binary_path() {
     echo "binary: ${root} is a git checkout, which builds the ported command's binary from its tree, and go is not on PATH: install Go, or set SWARMDEV_BIN to a swarm binary" >&2
     return 1
   fi
-  tmp="${built}${BINARY_BUILD_TMP}$$"
-  if ! out="$(cd "${root}" && go build -o "${tmp}" ./cmd/swarm 2>&1)"; then
-    rm -f "${tmp}"
-    printf 'binary: go build ./cmd/swarm failed in %s, so the ported command did not run:\n%s\n' "${root}" "${out}" >&2
-    return 1
-  fi
-  mv -f "${tmp}" "${built}" || { rm -f "${tmp}"; echo "binary: could not move the build to ${built}" >&2; return 1; }
+  binary_build "${root}" || return 1
   printf '%s\n' "${built}"
 }
 
