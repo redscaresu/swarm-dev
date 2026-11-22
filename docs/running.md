@@ -163,7 +163,7 @@ Each version fetches its own binary once:
 3. `gh attestation verify` checks that swarm-dev's release workflow built it.
 4. swarm.sh moves the binary to `swarm` in the plugin folder, then removes the `.fetch-<pid>` folder.
 
-Later calls find `swarm` there and check nothing again.
+Later calls find `swarm` there and check nothing again, except on macOS, where every call checks it for the quarantine mark.
 The fetch runs the real `gh`, past swarm-dev's gh-shim, and needs gh 2.57.0 or newer, logged in.
 A git checkout of swarm-dev never fetches: it builds the binary from its own tree.
 With `SWARMDEV_BIN` set, swarm.sh runs that file and fetches nothing.
@@ -180,6 +180,7 @@ When the fetch fails, the call stops with one line that starts `binary:`, and th
 - `cannot tell which release files are this copy's binary`, `cannot read this copy's version`, or a line about `--list`: the plugin folder is broken. Reinstall swarm-dev.
 - `could not make` or `could not move`: the plugin folder is not writable.
 - `is a folder`: something left a folder named `swarm` in the plugin folder. Remove it.
+- `carries macOS's quarantine mark`: macOS puts this mark on a file that a browser, AirDrop or a mail app writes, and swarm.sh will not run a binary that has it. It checks the download, and on every call it checks the `swarm` file in the plugin folder, as copying the plugin folder can add the mark later. Delete that `swarm` file and run the command again: the call downloads and checks a new copy. If the download itself had the mark, run the command again, and report it if it fails the same way. A line that says `/usr/bin/xattr is not an executable file`, or that it `could not list the extended attributes`, means swarm.sh could not check for the mark, so it did not run the binary.
 
 A fetch stopped by Ctrl-C or a TERM removes its `.fetch-<pid>` folder.
 A KILL leaves the folder with the downloaded files in it, none of them executable.
