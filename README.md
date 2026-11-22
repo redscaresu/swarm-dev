@@ -50,7 +50,7 @@ stories). A run can stop anywhere, and the next `/swarm-dev:swarm` picks up wher
 |---|---|---|
 | [Claude Code](https://claude.com/claude-code) | 2.1.145+ | runs every agent |
 | [herdr](https://herdr.dev) | 0.9.2+ | the terminal multiplexer: one pane per agent |
-| [GitHub CLI](https://cli.github.com) | logged in | PRs, CI checks, merges |
+| [GitHub CLI](https://cli.github.com) | 2.57.0+, logged in | PRs, CI checks, merges, and fetching the `swarm` binary |
 | [codex CLI](https://github.com/openai/codex) | logged in | the second reviewer, a different model family |
 | `git`, `python3`, `bash` | any recent | the `swarm.sh` scripts |
 | a GitHub repo | with `make check` | CI and the pre-commit hook run it |
