@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # removed_test.sh — the switches, modes and reports that were removed stay gone: none of their names
 # is in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh (this file excepted), and they say
-# verify only as git's --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify
-# builds counted. cost, features and review-yield, folded into flow, each print the flow section that
+# verify only as git's --verify, as gh's `gh attestation verify` (binary.sh's binary_attest), or in the
+# one LEGACY_BUILDER_ROLES line that keeps past verify builds counted. cost, features and review-yield, folded into flow, each print the flow section that
 # holds their numbers and exit 0.
 # A config that sets a removed key (pr_per, finished, review_bot, keep_panes) loads with a warning;
 # a made-up key still stops the script.
@@ -50,9 +50,9 @@ if [[ ${code} -ne 0 && "${out}" == *"config:1: unknown key 'made_up'"* ]]; then
   echo "ok   a made-up key still stops the script"
 else echo "FAIL a made-up key: exit ${code}, output '${out}'"; fails=$((fails + 1)); fi
 
-if found="$(grep -hn '' "${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/lib/*.py | sed -e '/^[0-9]*:LEGACY_BUILDER_ROLES=/d' -e 's/--verify//g' | grep -w verify)"; then
-  echo "FAIL bin/swarm.sh or bin/lib says verify other than as git --verify:"; echo "${found}"; fails=$((fails + 1))
-else echo "ok   bin/swarm.sh and bin/lib say verify only as git --verify and in LEGACY_BUILDER_ROLES"; fi
+if found="$(grep -hn '' "${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/lib/*.py | sed -e '/^[0-9]*:LEGACY_BUILDER_ROLES=/d' -e 's/--verify//g' -e 's/gh attestation verify//g' | grep -w verify)"; then
+  echo "FAIL bin/swarm.sh or bin/lib says verify other than as git --verify or gh attestation verify:"; echo "${found}"; fails=$((fails + 1))
+else echo "ok   bin/swarm.sh and bin/lib say verify only as git --verify, gh attestation verify and in LEGACY_BUILDER_ROLES"; fi
 
 # review.md is narrowed to docs/review.md: commands/epic.md still writes the epic reviewer's D/review.md.
 DOCS_GONE='pr_per|finished = mark|keep_panes|review_bot|release story|swarm.sh decisions|swarm.sh export|docs/review\.md|kind: verify|verify story|swarm\.sh cost'

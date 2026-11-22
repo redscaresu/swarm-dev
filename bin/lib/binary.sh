@@ -50,6 +50,74 @@ binary_find() {
   printf '%s\n' "${built}"
 }
 
+# BINARY_GH_MIN: the oldest gh whose `gh attestation verify` takes every flag binary_attest passes, as
+# X.Y.Z to compare with the `gh version X.Y.Z` line of `gh --version`. Two releases set it:
+#   v2.51.0 added the signer flag. Its release note (https://github.com/cli/cli/releases/tag/v2.51.0):
+#     "Add `signer-repo` and `signer-workflow` flags to `gh attestation verify`"
+#     (https://github.com/cli/cli/pull/9137).
+#   v2.57.0 added --hostname to the command. Its release note
+#     (https://github.com/cli/cli/releases/tag/v2.57.0): "Added tenancy aware attestation commands"
+#     (https://github.com/cli/cli/pull/9542), whose diff adds the flag to `gh attestation verify`. gh
+#     2.51.0 to 2.56.0 have no --hostname on it, so they refuse the call.
+# Before gh 2.102.0, --signer-workflow matched only the start of the signing certificate's identity
+# (https://github.com/cli/cli/security/advisories/GHSA-wjmr-j3rp-mh2g), and before 2.97.0 a . in it
+# matched any character (https://github.com/cli/cli/security/advisories/GHSA-mm27-mwq9-fr5g). Both
+# advisories say --repo is not affected, so on such a gh the attestation still comes from <repo>, and
+# only which of its workflows signed is checked less strictly.
+BINARY_GH_MIN=2.57.0
+
+# BINARY_ATTEST_SECONDS: how long binary_attest lets `gh attestation verify` run before it KILLs it.
+# Nothing in gh bounds the call. Its HTTP client comes from go-gh, whose ClientOptions.Timeout says
+# "Default is no timeout" (cli/go-gh v2.16.1, the one gh 2.101.0 pins), and gh sets none. So on a
+# network that drops packets, the call can wait for ever, and the swarm.sh call behind it with it.
+BINARY_ATTEST_SECONDS=60
+
+# binary_within <seconds> <command>... — the command in its own process group, the group KILLed after
+# <seconds> (at least 1) with exit 142; else the command's own status (128+N for a signal). gh, a Go
+# program, ignores SIGALRM, so the alarm goes to perl, which KILLs the group. A HUP, INT or TERM to perl
+# KILLs the command too and exits 128+N: in a group of its own, the command would run on with no alarm.
+# Each KILL is followed by a waitpid, so the command is reaped and gone when binary_within returns,
+# not a zombie left for init. It is merge.sh's within in whole seconds, plus that reap, copied as
+# hooks/lead-stop.sh copies it: this file needs no other bin/lib file.
+binary_within() {
+  perl -e 'my $t = shift; $t = 1 if $t < 1;
+    defined(my $p = fork) or exit 127;
+    if (!$p) { setpgrp; exec @ARGV or exit 127 }
+    # The parent sets the group too, before the alarm: one that fires first would KILL no group.
+    setpgrp $p, $p;
+    sub stop { kill "KILL", -$p, $p; waitpid $p, 0; exit shift }
+    my %n = (HUP => 1, INT => 2, TERM => 15);
+    for my $s (keys %n) { $SIG{$s} = sub { stop(128 + $n{$s}) } }
+    $SIG{ALRM} = sub { stop(142) };
+    alarm $t; waitpid $p, 0;
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
+}
+
+# binary_attest <file> <repo> <signer> — return 0 when gh verifies <file>'s build attestation: built in
+# <repo> (<owner>/<name>) on github.com, and signed by its workflow at <signer>, a path in <repo> such as
+# .github/workflows/release.yml. gh comes from PATH and needs BINARY_GH_MIN or newer. It prints none of
+# gh's output. Any failure prints one line on stderr saying what to do and returns 1: an empty argument,
+# gh's own failure, or no answer within BINARY_ATTEST_SECONDS, when binary_within KILLs gh. There is no
+# fallback, so the caller never runs <file>. An empty <signer> stops before gh: an older gh would read
+# github.com/<repo>/ as a prefix that every workflow in <repo> matches.
+# Two runs at once are safe. gh reads <file> and never writes it. It writes only its sigstore cache
+# under its cache dir, through go-tuf v2.4.2 (the one gh 2.101.0 pins): metadata through a temp file and
+# a rename, and a target in place, but a cached target is used only once its length and hashes match,
+# so a half-written one is fetched again, never trusted.
+binary_attest() {
+  local file="${1:-}" repo="${2:-}" signer="${3:-}" rc=0 why=""
+  if [[ -z "${file}" || -z "${repo}" || -z "${signer}" ]]; then
+    echo "binary: binary_attest needs a file, a repo and a signer workflow, and was given '${file}' '${repo}' '${signer}', so nothing was verified or run" >&2
+    return 1
+  fi
+  binary_within "${BINARY_ATTEST_SECONDS}" gh attestation verify "${file}" --hostname github.com \
+    --repo "${repo}" --signer-workflow "github.com/${repo}/${signer}" </dev/null >/dev/null 2>&1 || rc=$?
+  [[ "${rc}" -ne 0 ]] || return 0
+  [[ "${rc}" -ne 142 ]] || why=" (no answer within ${BINARY_ATTEST_SECONDS} s)"
+  echo "binary: gh attestation verify failed for ${file}${why}, so its build attestation from ${repo}'s ${signer} is not proven and it was not run: check that gh is ${BINARY_GH_MIN} or newer, logged in (gh auth status) and online, then run the command again" >&2
+  return 1
+}
+
 # binary_stale <root> <binary> — true when a file the binary is built from is newer than <binary>: a .go
 # file under <root>/cmd or <root>/internal (each when it exists), or <root>/go.mod or go.sum. It looks
 # nowhere else under the root, whose .swarm/ can hold hundreds of MB. find's -newer and -print -quit
