@@ -122,11 +122,25 @@ awk -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { exit !(k ~ /^[0-9]*\.?[0-9]+$/ && k 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Where the newest version is published, and the plugin's name in Claude Code. SWARM_LATEST_URL is
-# overridable so the tests need no network.
+# Where the newest version is published. SWARM_LATEST_URL is overridable so the tests need no network.
 LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swarm-dev/main/.claude-plugin/plugin.json}"
+
+# plugin_id <plugin root> — set PLUGIN, the plugin's ID in Claude Code (<plugin>@<marketplace>), and
+# MARKETPLACE, the marketplace it was installed from, from <root>'s path. Claude Code installs a plugin
+# at <dir>/plugins/cache/<marketplace>/<plugin>/<version>, so swarm-dev@swarm-dev-pre sits at
+# plugins/cache/swarm-dev-pre/swarm-dev/<version>. Only whole path segments count: the two above
+# <marketplace> must be exactly plugins, then cache. Any other path (a git checkout, a test's tree)
+# leaves swarm-dev@swarm-dev and swarm-dev. It uses parameter expansion alone, as every call pays for it.
 PLUGIN=swarm-dev@swarm-dev
 MARKETPLACE=swarm-dev
+plugin_id() {
+  local up="${1%/*}" plugin market
+  plugin="${up##*/}"; up="${up%/*}"
+  market="${up##*/}"; up="${up%/*}"
+  [[ -n "${plugin}" && -n "${market}" && "${up}" == */plugins/cache ]] || return 0
+  PLUGIN="${plugin}@${market}"; MARKETPLACE="${market}"
+}
+plugin_id "${SWARM_HOME}"
 
 # plugin_version — the top-level "version" string of the plugin.json on stdin, as python3's json.load
 # reads it, in bash builtins alone: each process start counts in the speed job. It scans the text,
@@ -221,7 +235,8 @@ then restart Claude Code so the new version is loaded.
 EOF
 }
 
-# update_plugin — fetch the newest version. Claude Code loads it on its next start.
+# update_plugin — fetch the newest version of the plugin this copy is installed as (MARKETPLACE, then
+# PLUGIN: plugin_id). Claude Code loads it on its next start.
 update_plugin() {
   claude plugin marketplace update "${MARKETPLACE}"
   claude plugin update "${PLUGIN}"

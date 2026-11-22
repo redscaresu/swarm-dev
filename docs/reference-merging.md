@@ -1180,8 +1180,11 @@ that warning it updates nothing, and prints `refused: the release ships commits 
 read, so the plugin was not updated`, followed by what to run once they are checked. Otherwise it
 waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
 later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
-update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
-new version's `swarm.sh` is in the plugin cache, it moves the agents only with `--upgrade`. Without
+update <marketplace>` and `claude plugin update <plugin>@<marketplace>`, 5 minutes at most each.
+They name the marketplace and plugin ID of the swarm-dev copy that runs the merge, which it reads from where Claude Code installed that copy, `plugins/cache/<marketplace>/<plugin>/<version>`.
+So a stable install runs them with `swarm-dev` and `swarm-dev@swarm-dev`, and a prerelease install with `swarm-dev-pre` and `swarm-dev@swarm-dev-pre`.
+A copy anywhere else, such as a git checkout, uses `swarm-dev` and `swarm-dev@swarm-dev`.
+Once the new version's `swarm.sh` is in the plugin cache, it moves the agents only with `--upgrade`. Without
 it, on a terminal it asks `Move the running agents onto v<new> now? [y/N]` and moves them only on
 `y`. With no terminal (the lead runs merge in the background), or any other answer, it moves none
 and prints `upgrade not run: <why>`, naming `--upgrade` for next time and the `swarm.sh upgrade`

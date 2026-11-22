@@ -411,6 +411,18 @@ check "--release without --upgrade, no terminal: runs no upgrade" test ! -e "${R
 check "--release without --upgrade, no terminal: says so, naming --upgrade and each project's upgrade" said "upgrade not run: no terminal to confirm it: pass --upgrade to swarm.sh merge --release next time, or run SWARM_PROJECT=${P} ${NEW} upgrade, SWARM_PROJECT=${ROOT}/proj2 ${NEW} upgrade, SWARM_PROJECT=${ROOT}/proj3 ${NEW} upgrade"
 is "--release without --upgrade, no terminal: still updates the marketplace, then the plugin" "plugin marketplace update swarm-dev|plugin update swarm-dev@swarm-dev" "$(paste -sd'|' - < "${ROOT}/claude.log" 2>/dev/null)"
 check "--release without --upgrade, no terminal: still asks for the lead's restart in each project" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 (/exit, then claude --continue)"
+# The same release run from a no-.git copy installed as swarm-dev@swarm-dev-pre (plugin_id reads the ID
+# from its path): the update names that marketplace and ID, and the upgrade started is the one under
+# plugins/cache/swarm-dev-pre/swarm-dev/1.3.0, whose stub logs "pre" before each call, not the stable one.
+PRE="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev-pre/swarm-dev"
+mkdir -p "${PRE}/1.2.0" "${PRE}/1.3.0/bin"; cp -R "${REPO}/bin" "${REPO}/hooks" "${REPO}/.claude-plugin" "${PRE}/1.2.0/"
+# shellcheck disable=SC2016 # expanded when the stub runs
+printf '#!/bin/sh\necho "pre ${SWARM_PROJECT} $*" >> "%s"\necho "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" > "${PRE}/1.3.0/bin/swarm.sh"
+own_release; SWARM="${PRE}/1.2.0/bin/swarm.sh" merge --release --upgrade "${OWN}"
+is "--release from the swarm-dev-pre copy: exits 0" 0 "${rc}"
+is "--release from the swarm-dev-pre copy: updates marketplace swarm-dev-pre, then swarm-dev@swarm-dev-pre" "plugin marketplace update swarm-dev-pre|plugin update swarm-dev@swarm-dev-pre" "$(paste -sd'|' - < "${ROOT}/claude.log" 2>/dev/null)"
+is "--release from the swarm-dev-pre copy: the swarm-dev-pre 1.3.0 upgrade, once in each project with agents" "pre ${P} upgrade|pre ${ROOT}/proj2 upgrade|pre ${ROOT}/proj3 upgrade" "$(upgraded)"
+check "--release from the swarm-dev-pre copy: asks for the lead's restart in each project" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 (/exit, then claude --continue)"
 # on_tty <answer> <merge args>... — merge with stdin a terminal (a pty), typing <answer> once its question shows.
 cat > "${ROOT}/on_tty.py" <<'TTY_PY'
 import os, pty, select, sys, time
