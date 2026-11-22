@@ -181,6 +181,10 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   The refusal names the rule.
   A red head, a held PR or a moved head with more than clean merges of the base is still refused before `gh pr merge` runs, and an accepted head goes through these reads like any other.
   Off, `swarm.sh merge` never passes `--admin` and reads none of these
+- `merge_protected` (default `off`): `on`: under `merge = agent`, `swarm.sh merge` does not hold a reviewed story PR that changes a protected path (`.claude/`, `.github/`, `hooks/`, a root makefile, and in swarm-dev's own repo its four Go rule packages, `internal/layers/` and `.claude-plugin/`).
+  It prints `protected path: <path>, merged under merge_protected = on`, logs that line, and merges the PR as it does any other.
+  It lifts only that hold: the `costs: money` hold, the dropped-lines hold, the CI gate, the review gate and the guard hook's refusals stay, and a file list it cannot read still holds the PR ([reference-merging.md § Merging](reference-merging.md#merging)).
+  Under `merge = human` it changes nothing. A value other than `off` or `on` is refused, naming the key and its line
 - `review_verify` (default `ci`): what a story's review agent may run besides codex.
   `ci`: every round reads the diff and trusts CI for the tests, with no local test run and no mutation run.
   `full`: round 1 may also run the project's tests for the files the PR changes (as its `AGENTS.md` or Makefile selects them, never the whole suite) and check the builder's mutation proofs: each FAIL line in the PR body names a test the diff adds or changes, and a proof it runs again breaks the fix only in a copy of the worktree.

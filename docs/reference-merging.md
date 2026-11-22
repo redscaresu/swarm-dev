@@ -105,6 +105,10 @@ When it still cannot read them, it holds the PR and says why.
 A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands.
 `--board` PRs cannot change those paths; a `--release` PR changes `.claude-plugin/plugin.json`, and goes unheld because its route never runs this hold.
 Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story.
+With `merge_protected = on` in `.claude/swarm/config`, `swarm.sh merge` does not hold a story PR that changes a protected path.
+It prints `protected path: <path>, merged under merge_protected = on`, logs that line as a `merge` line, drops the item's `protected:` record and merges the PR as it does any reviewed story PR.
+The setting lifts only that hold. A file list it cannot read still holds the PR, and the `costs: money` hold, the dropped-lines hold, the CI gate, the review gate and the guard hook's refusals all stay.
+It ships `off`, and it changes nothing under `merge = human`, where an HLD's `merge` grant still does not cover a protected path.
 `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path.
 `status` and `wait --lead` read the record with no gh call.
 They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands.

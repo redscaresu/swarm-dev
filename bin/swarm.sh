@@ -325,6 +325,7 @@ CFG_fallback_reviewer="" # empty: a codex usage or rate limit, unreachable codex
 # shellcheck disable=SC2034 # lead: nothing reads it since dash was deleted; a config that sets it still loads
 CFG_lead=off            # kept so a config that sets it still loads
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
+CFG_merge_protected=off # on: under merge = agent, swarm.sh merge does not hold a reviewed story PR that changes a protected path; its other holds stay
 CFG_review_verify=ci    # full: a review agent's round 1 may run the selected tests and check mutation proofs; ci: every round trusts CI
 CFG_demote_kinds=""      # empty: off; else finding kinds, comma-separated, that rounds before the round cap send only as a regression or a now-false line
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
@@ -332,7 +333,7 @@ CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: a
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
 CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
 CFG_usage_warn_percent="" # empty: off; else a percent, 1 to 100: wait --lead warns once a usage week when the usage estimate reaches it
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify demote_kinds lead_epics commit_trailers agent_env usage_warn_percent"
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin merge_protected review_verify demote_kinds lead_epics commit_trailers agent_env usage_warn_percent"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
@@ -390,8 +391,8 @@ load_config() {
         [[ "${value}" == off || "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: goal must be off or a positive whole number of turns, not '${value}'" ;;
       lead)
         [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
-      merge_admin)
-        [[ "${value}" == off || "${value}" == on ]] || die "${where}: merge_admin must be off or on, not '${value}'" ;;
+      merge_admin|merge_protected)
+        [[ "${value}" == off || "${value}" == on ]] || die "${where}: ${key} must be off or on, not '${value}'" ;;
       review_verify)
         [[ "${value}" == ci || "${value}" == full ]] || die "${where}: review_verify must be ci or full, not '${value}'" ;;
       demote_kinds)

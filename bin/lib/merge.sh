@@ -423,7 +423,10 @@ merge_hold() {
 # hold=protected. --board changes only board paths, never a protected path. --release changes
 # .claude-plugin/plugin.json, a protected path in this plugin's own repo, and goes unheld only because
 # its route never calls this. With merge = human it does not run: merge_grant, later in merge_pr,
-# refuses such a PR (pr_hld puts it under no HLD).
+# refuses such a PR (pr_hld puts it under no HLD). With merge_protected = on, a PR that changes a
+# protected path is not held: it prints the path and the setting, logs that line as a merge line with no
+# hold= field and drops the record, and merge_pr goes on to its other holds. A list it could not read
+# still holds the PR.
 protected_hold() {
   local why
   if [[ $1 -ne 0 ]]; then
@@ -432,6 +435,13 @@ protected_hold() {
   fi
   why="$(cut -d' ' -f2- <<< "$2" | protected_paths "${repo}" any-case)"
   why="${why%%$'\n'*}"
+  # shellcheck disable=SC2154 # assigned in another file
+  if [[ -n "${why}" && "${CFG_merge_protected}" == on ]]; then
+    protected_note
+    echo "protected path: ${why}, merged under merge_protected = on"
+    record_event merge "${MERGE_TARGET}" "protected path: ${why}, merged under merge_protected = on"
+    return 0
+  fi
   protected_note "${why}"
   [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges$(own_unknown "${repo}" "${why}"); the user merges it" hold=protected
 }
@@ -462,7 +472,7 @@ protected_note() {
 # (pinned_files), as the grant's are, so a push after the pin cannot hide an epic, and only where a
 # check reads them: protected_hold under merge = agent, and the guard when the board is in the
 # project's repo, lead_epics is off and the PR changes a file. With merge = agent a story PR that
-# changes a protected path, or whose files cannot be read, is the user's (protected_hold): after the
+# changes a protected path (unless merge_protected = on), or whose files cannot be read, is the user's (protected_hold): after the
 # story lookup, so a PR no story in review lists is refused as such, and after the head's CI check, so
 # a red head costs no compare read; before the guard, so its hold is the line said. A story PR in
 # another repo changes that repo's epics/, not the board's (story_elsewhere, asked only of a PR with a
@@ -1176,7 +1186,7 @@ short_shas() {
 # and merges that head, the head for every check below), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
-# passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
+# passed, its files at the pinned head change no protected path, unless merge_protected = on (protected_hold: .claude/, .github/,
 # hooks/ or a root Makefile, and in this plugin's own repo internal/guard/, internal/merge/,
 # internal/release/, internal/agentenv/, internal/layers/ or .claude-plugin/, a renamed file's old path
 # too), which only
