@@ -1,24 +1,28 @@
 import re, subprocess, sys
 from collections import Counter
 
-# dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...] — the base lines a PR's
+# dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...] — the base lines a PR's
 # own merge commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
 # <base>..<head>`, oldest first, and with merge SHAs given scans only those (full SHAs, matched
 # exactly). Each merge must have two parents, one an ancestor of <base> (the base side) and one not
 # (the PR side); the order of the two does not matter. A merge with neither parent on <base> whose
-# second parent is a --merged SHA (the caller's word that it is on the branch of a PR merged into
-# <base>, full SHAs matched exactly) is a stacked build's merge of its parent's branch once that parent
-# merged: its second parent is its base side, the parent's branch standing for the base, and every rule
-# below holds as for a merge of the base, the base's own reads (gone, owing) included. So a line the
-# parent added that this merge dropped prints only once `git merge-base <base> <head>` has it, which is
-# once the build has merged <base> since the parent's squash: until then the PR's merge into <base>
-# cannot delete it, as a clean merge keeps <base>'s copy and a conflict needs a merge of <base>, which
-# is scanned as any other. Its first parent can hold commits of <base> that the branch lacks (a `git
-# merge-base --all` of the first parent and <base> that is not on the second parent), as when the build
-# started on another parent's branch, cut from a newer <base>, or merged <base> itself. A line of theirs
-# the merge dropped is not in the second parent's F, and in the first parent's F a count cannot tell it
-# from a line of the build's own, so such a merge is scanned only when it is git's own merge of the two
-# (automatic: an empty remerge diff, so it dropped nothing); resolved or edited by hand, it is unchecked.
+# second parent is a --merged <sha>:<squash> (the caller's word that <sha> is on the branch of a PR merged
+# into <base> as commit <squash>, full SHAs matched exactly; one per such PR, as stacked PRs share commits)
+# is a stacked build's merge of its parent's branch once that parent merged. Its second parent is its base
+# side, and each <squash> must be on <base>, else it is unchecked. A line of the merge's F counts as the
+# base's when the F of one of its <squash>es, or the F of a commit of
+# `git merge-base --all` of the first parent and <base> (the base commits the build itself holds), has it:
+# main squash-merges, so the branch's own commits never reach <base>, and the build can hold commits of
+# <base> that the branch lacks (it started on another parent's branch, cut from a newer <base>, or
+# merged <base> itself). How many copies a merge keeps is still read from the merge's own two parents
+# and their merge base, and every rule below holds as for a merge of the base, the base's own reads
+# (gone, owing) included. So a line the parent added that this merge dropped prints only once `git
+# merge-base <base> <head>` has it, which is once the build has merged <base> since the parent's squash:
+# until then the PR's merge into <base> cannot delete it, as a clean merge keeps <base>'s copy and a
+# conflict needs a merge of <base>, which is scanned as any other. The first parent's part of a conflict
+# is read too, as it can hold the base's lines. Where a line dropped there has copies the build's own
+# commits added (the first parent's copies beyond the most its merge base with the second parent, or a
+# base commit it holds, has), a count cannot tell whose copy went, and the merge is unchecked.
 # Otherwise it scans
 # nothing: an octopus is not remerged this way, and a merge with neither parent on <base> and no
 # --merged second parent (a stacked build's merge of a parent branch whose PR has not merged) is
@@ -116,17 +120,10 @@ def ancestor(rev, of):
         stop("cannot tell whether %s is on %s: %s" % (rev[:7], of, err))
     return rc == 0
 
-def automatic(m):
-    """whether merge m's tree is the one git's own merge of its parents makes: its remerge diff is empty, with no
-    conflict resolved by hand and no edit"""
-    rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
-                       "--no-show-signature", "--ignore-submodules=none", "--end-of-options", m)
-    if rc != 0:
-        stop("git show --remerge-diff failed on merge %s: %s" % (m[:7], err))
-    return not out.strip()
-
 def sides(m, base):
-    """(PR side, base side, the base side's section) of merge m, or stop saying why it cannot be checked"""
+    """(PR side, base side, the base side's section, the commits whose files say what the base holds, the base
+    commits the PR side holds) of merge m, or stop saying why it cannot be checked. The last is empty but for
+    a merge of a merged parent's branch, whose PR side's conflict sections are then read too (scan)."""
     rc, out, err = git("rev-list", "--parents", "-n", "1", "--end-of-options", m)
     if rc != 0:
         stop("cannot read the parents of merge %s: %s" % (m[:7], err))
@@ -134,20 +131,24 @@ def sides(m, base):
     if len(parents) != 2:
         stop("merge %s has %d parents: an octopus merge is not remerged, so it is not checked" % (m[:7], len(parents)))
     on = [p for p in parents if ancestor(p, base)]
-    if not on and parents[1] in MERGED:   # a merge of a merged parent PR's branch, which stands for the base
+    if not on and parents[1] in MERGED:   # a merge of a merged parent PR's branch, its squash on the base
+        squashes = MERGED[parents[1]]
+        for squash in squashes:
+            if not ancestor(squash, base):
+                stop("merge %s is unchecked: %s, the squash of its second parent's PR, is not on %s"
+                     % (m[:7], squash[:7], base))
         rc, out, err = git("merge-base", "--all", parents[0], base)
         if rc not in (0, 1):
             stop("cannot find the commits of %s that merge %s's first parent holds: %s" % (base, m[:7], err))
-        if any(not ancestor(b, parents[1]) for b in out.decode().split()) and not automatic(m):
-            stop("merge %s is unchecked: its first parent holds commits of %s that the merged parent's branch"
-                 " lacks, and it is not git's own merge of the two" % (m[:7], base))
-        return parents[0], parents[1], SECOND
+        held = out.decode().split()
+        return parents[0], parents[1], SECOND, squashes + held, held
     if not on:
         stop("merge %s is unchecked: neither parent is on %s, so it is not a merge of %s"
              " (a stacked build's merge of its parent branch?)" % (m[:7], base, base))
     if len(on) == 2:
         stop("merge %s is unchecked: both parents are on %s, so neither is the PR's side" % (m[:7], base))
-    return (parents[1], parents[0], FIRST) if on[0] == parents[0] else (parents[0], parents[1], SECOND)
+    pr, side, ours = (parents[1], parents[0], FIRST) if on[0] == parents[0] else (parents[0], parents[1], SECOND)
+    return pr, side, ours, [side], []
 
 def unquote(path):
     """a path as git's diff header writes it, its C-style quotes and escapes taken off"""
@@ -217,9 +218,9 @@ def owed(base, side, root):
         return max(base, side)
     return base + side - root   # with L in the merge base, a new copy on each side can be two additions
 
-def scan(m, pr, base_side, ours):
+def scan(m, pr, base_side, ours, holds, held):
     """(head key, copies the head owes, copies it holds, the head file's spare lines, `<sha7> <file>: <text>`)
-    per base line merge m's resolution dropped (owing)"""
+    per base line merge m's resolution dropped (owing); holds and held are sides'"""
     rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
                        "--src-prefix=a/", "--dst-prefix=b/", "--end-of-options", m)
     if rc != 0:
@@ -307,10 +308,24 @@ def scan(m, pr, base_side, ours):
 
     short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
     counts = {}  # (file, text): its name in the merge, the merge's copies of text, those the PR side had removed
+    mosts = {}   # (revs, file, its name in m): the most copies of each line its file holds at any of revs
+    def most(revs, path, after):
+        """the most copies of each line that the file holds at any of revs (copies), read once per file; None
+        where none of them has the file"""
+        if len(revs) == 1:
+            return copies(revs[0], path, after)
+        if (tuple(revs), path, after) not in mosts:
+            got, top = [c for c in (copies(rev, path, after) for rev in revs) if c is not None], Counter()
+            for c in got:
+                top |= c   # a Counter union keeps each line's larger count
+            mosts[tuple(revs), path, after] = top if got else None
+        return mosts[tuple(revs), path, after]
+
+    sections = (OUTSIDE, ours, FIRST) if held else (OUTSIDE, ours)
     for path, after, section, text in removed(out):
-        if not text.strip() or section not in (OUTSIDE, ours) or (OWN_GONE and OWN in (path, after)):
+        if not text.strip() or section not in sections or (OWN_GONE and OWN in (path, after)):
             continue
-        base = copies(base_side, path, after)
+        base = most(holds, path, after)
         if base is None:
             if section == ours:   # the base's part of a conflict, so the base side has this file
                 stop("merge %s is unchecked: %s, in a conflict, is not on its base side under that name or"
@@ -319,9 +334,18 @@ def scan(m, pr, base_side, ours):
         side, root = copies(pr, path, after) or Counter(), copies(mb, path, after) or Counter()
         kept = (read(m, after) or Counter()) if after is not None else Counter()
         if (path, text) not in short:
-            short[path, text] = (owed(base[text], side[text], root[text]) - kept[text]
+            # the merge's own sides say how many copies a merge of them keeps
+            two = (copies(base_side, path, after) or Counter()) if held else base
+            short[path, text] = (owed(two[text], side[text], root[text]) - kept[text]
                                  if base[text] and not gone(path, after, text) else 0)
             counts[path, text] = after, kept[text], max(0, root[text] - side[text])
+            # In the PR side's own part of a conflict, a copy its own commits added (beyond the most its merge
+            # base with the base side, or a base commit it holds, has) cannot be told from the base's.
+            if short[path, text] > 0 and held and section == FIRST \
+                    and side[text] > max(root[text], (most(held, path, after) or Counter())[text]):
+                stop("merge %s is unchecked: %s: %s, dropped from its first parent's part of a conflict, has"
+                     " copies the build's own commits added, so a count cannot tell whose copy it dropped"
+                     % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
         if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
             short[path, text] -= 1
             found.append((path, text, "%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS])))
@@ -372,11 +396,11 @@ def extended(left, found):
             pool[head] -= 1
     return lines
 
-USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"
+USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"
 if len(sys.argv) < 4:
     stop(USAGE)
 REPO, BASE, HEAD = sys.argv[1:4]
-MERGED, wanted, rest = set(), set(), iter(sys.argv[4:])   # MERGED: second parents on a merged PR's branch
+MERGED, wanted, rest = {}, set(), iter(sys.argv[4:])   # MERGED: second parent on merged PRs' branches -> their squashes
 OWN = None   # --own: the PR's own story file, as bytes, which removed() yields
 for arg in rest:
     if arg == "--own":
@@ -385,10 +409,10 @@ for arg in rest:
             stop(USAGE)
         OWN = own.encode()
     elif arg == "--merged":
-        sha = next(rest, None)
-        if sha is None:
+        pair = (next(rest, None) or "").lower().split(":")
+        if len(pair) != 2 or not all(pair):
             stop(USAGE)
-        MERGED.add(sha.lower())
+        MERGED.setdefault(pair[0], []).append(pair[1])
     else:
         wanted.add(arg.lower())
 rc, out, err = git("rev-list", "--first-parent", "--merges", "--reverse", "--end-of-options", BASE + ".." + HEAD, "--")
