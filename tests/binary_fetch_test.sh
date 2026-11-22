@@ -4,9 +4,9 @@
 # <copy>/swarm and exports SWARMDEV_BIN naming it (binary_ensure and binary_fetch in bin/lib/binary.sh).
 # Each case runs a no-.git copy's swarm.sh from a project, with the stubs of tests/binary_fetch_stubs.sh
 # first on PATH, logging wrappers for sha256sum, shasum and git, and go a stub that logs and fails.
-#   The first call: gh logs the release download (github.com, this version's tag, this platform's asset
-#     and SHA256SUMS, into <copy>/.fetch-<pid>), then the attestation of that file with release.yml as
-#     signer. <copy>/swarm is executable and cmp-equal to the fake release, config's output follows, no
+#   The first call: gh logs --version, then the release download (github.com, this version's tag, this
+#     platform's asset and SHA256SUMS, into <copy>/.fetch-<pid>), then the attestation of that file with
+#     release.yml as signer, and no other call. <copy>/swarm is executable and cmp-equal to the fake release, config's output follows, no
 #     .fetch-* folder is left, and git, which find_project runs, sees SWARMDEV_BIN=<copy>/swarm.
 #   A second call starts no gh, uname, shasum or sha256sum, and leaves <copy>/swarm's inode and mtime.
 #   _wrapper-fixture fetches, then prints its two arguments and the frame's project.
@@ -66,7 +66,8 @@ fetch_release "${F}" "${ASSET}" "${SUMS}" || exit 1
 RELEASE="${F}/release/${ASSET}"
 LOGS="${ROOT}/logs"; TOOLS="${ROOT}/tools"; mkdir -p "${LOGS}" "${TOOLS}"
 # The sum programs and git: a wrapper that logs each start, then runs the real one. git's line is the
-# SWARMDEV_BIN it sees. go: logs and fails, as an installed copy never builds here.
+# SWARMDEV_BIN it sees. go: logs and fails, as no case here builds: each download works, or fails a
+# check, which never builds.
 for t in sha256sum shasum; do
   p="$(command -v "${t}")" || continue
   printf '#!/bin/sh\necho "%s $*" >> "%s/sum"\nexec "%s" "$@"\n' "${t}" "${LOGS}" "${p}" > "${TOOLS}/${t}"
@@ -142,8 +143,9 @@ fetch_dir() {
   d="$(sed -n 's/^.* release download .* --dir \(.*\)$/\1/p' <<< "$1" | head -1)"
   [[ "${d##*/.fetch-}" =~ ^[0-9]+$ && "${d}" == */.fetch-* ]] && echo "${d}"
 }
-# want_calls <dir> [signer] — the two gh lines a good fetch into <dir> logs.
+# want_calls <dir> [signer] — the three gh lines a good fetch into <dir> logs.
 want_calls() {
+  printf 'GH_HOST=%s --version\n' "${HOST}"
   printf 'GH_HOST=%s release download v%s --repo github.com/%s --pattern %s --pattern %s --dir %s\n' \
     "${HOST}" "${VERSION}" "${FETCH_REPO}" "${ASSET}" "${SUMS}" "$1"
   printf 'GH_HOST=%s attestation verify %s/%s --hostname github.com --repo %s --signer-workflow %s' \
@@ -166,7 +168,7 @@ sw "${C1}" -- config
 calls="$(log gh)"; dir="$(fetch_dir "${calls}")" || dir=""
 check "first call: exits 0 with config's output, nothing on stderr" "0|${config}|" "${rc}|${out}|${err}"
 check "first call: the download went into <copy>/.fetch-<pid>" yes "$([[ -n "${dir}" && "${dir%/*}" == "${C1}" ]] && echo yes || echo "no: ${calls}")"
-check "first call: gh logged the download, then the attestation of that file with release.yml as signer" \
+check "first call: gh logged --version, the download, then the attestation of that file with release.yml as signer" \
   "$(want_calls "${dir}")" "${calls}"
 check "first call: <copy>/swarm is the release, executable" "executable, same" "$(installed "${C1}")"
 check "first call: no .fetch-* folder is left" "" "$(temps "${C1}")"
