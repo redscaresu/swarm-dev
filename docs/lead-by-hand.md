@@ -1,6 +1,6 @@
 # What the lead still does by hand
 
-These are the steps a lead still takes by hand as of v0.31.0. Each one is a gap in swarm-dev with an
+These are the steps a lead still takes by hand as of v0.32.0. Each one is a gap in swarm-dev with an
 open issue. Read this list once a session. When one of these symptoms shows, do the step, then log it:
 
 ```bash
@@ -18,3 +18,17 @@ should get shorter.
 **Symptom.** A conductor reports that `swarm.sh merge` was refused by auto mode.
 **Step.** Run the same merge from the lead's pane.
 **Issue.** [#699](https://github.com/redscaresu/swarm-dev/issues/699).
+
+## Rolling back the prerelease
+
+**Symptom.** A port released to prerelease stalls the swarm.
+**Step.**
+1. Revert or fix the port on main first. The next release moves prerelease forward past the rollback.
+2. Move prerelease back to the tag commit of the last good release. Use your force-push: the admin role may do it, and `github.token` may not.
+   Find the commit with `git rev-parse v<good>^{commit}`, then run `gh api -X PATCH repos/redscaresu/swarm-dev/git/refs/heads/prerelease -f sha=<commit> -F force=true`.
+3. In each session that follows prerelease, run `claude plugin marketplace update swarm-dev-pre` and `claude plugin update swarm-dev@swarm-dev-pre`, then restart the session.
+   The update rewrites the install path and the restart loads it. No uninstall or cache clear is needed. The release-install-proof run showed the older plugin.json and hooks come back this way.
+4. Check that stable and prerelease point at their tags (L2 in the release-ci epic). Everyone shares one gh login, so the ruleset cannot tell a stray push from yours.
+5. Do not re-run the release run of the version you rolled back from, in either form ("Re-run all jobs" or "Re-run failed jobs"). A rerun finishes that release and moves prerelease forward again.
+
+**Issue.** [#1116](https://github.com/redscaresu/swarm-dev/issues/1116).
