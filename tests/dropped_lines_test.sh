@@ -271,28 +271,57 @@ parent_merged() {
   on "${d}" child; merge "${d}" main >/dev/null; echo "${d}"
 }
 
+# pair <repo> [<squash>] — `<pr's SHA>:<squash's SHA>`, a --merged naming pr's branch merged as <squash>
+# (main by default, the parent's squash when main has nothing after it)
+pair() { echo "$(git -C "$1" rev-parse pr):$(git -C "$1" rev-parse "${2:-main}")"; }
+
 R="$(parent_merged parentmerged)"; M="$(git -C "${R}" rev-parse child^1)"
 check "a merge of a merged parent's branch, its second parent --merged, no line lost: nothing, exit 0" \
-  "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+  "exit 0" "$(scan "${R}" main child --merged "$(pair "${R}")")"
 check "the same merge with no --merged: still unchecked, with today's reason" \
   "merge ${M:0:7} is unchecked: neither parent is on main, so it is not a merge of main (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
   "$(scan "${R}" main child)"
 check "the same merge with --merged naming another commit of the parent's branch: still unchecked" \
   "merge ${M:0:7} is unchecked: neither parent is on main, so it is not a merge of main (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
-  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr^)")"
-check "a --merged with no SHA after it: the usage line, exit 2" \
-  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
-  "$(scan "${R}" main child --merged)"
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr^):$(git -C "${R}" rev-parse main)")"
+check "the same merge with --merged naming a squash that is not on main: unchecked, naming the squash" \
+  "merge ${M:0:7} is unchecked: $(git -C "${R}" rev-parse child^1^1 | cut -c1-7), the squash of its second parent's PR, is not on main"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(pair "${R}" child^1^1)")"
+for bad in "" "$(git -C "${R}" rev-parse pr)" "$(git -C "${R}" rev-parse pr):"; do
+  check "a --merged of '${bad:0:7}${bad:40}', not <sha>:<squash>: the usage line, exit 2" \
+    "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
+    "$(scan "${R}" main child --merged ${bad:+"${bad}"})"
+done
 # The merge of pr drops six, which main and pr's branch both still hold, and child's clean merge of main
 # keeps it out.
 R="$(lines three-pr | sed 's/^ten$/ten-pr/' | grep -vx six | parent_merged parentdrop -)"; M="$(git -C "${R}" rev-parse child^1)"
 check "a merge of a merged parent's branch that drops a line main and that branch still hold: it prints, exit 1" \
-  "${M:0:7} f: six"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+  "${M:0:7} f: six"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(pair "${R}")")"
+
+# Stacked PRs share commits, so gh can list two merged PRs that hold the merge's second parent. pr adds
+# g, child (stacked on pr) replaces g2 with g2-kid and pr with g2-pr, and child's merge of pr keeps
+# g2-kid, dropping g2-pr from pr's part of the conflict; pr then squash-merges (SQ). Main's first commit,
+# which has no g, stands in for another PR's squash: named alone, the merge is unchecked, and named first
+# with SQ after it, g2-pr prints, as a line counts when any of the squashes has it.
+R="$(new_repo twosquash)"; INIT="$(git -C "${R}" rev-parse main)"
+on "${R}" pr; printf '%s\n' g1 g2 g3 | put "${R}" g
+git -C "${R}" checkout -q -b child pr; printf '%s\n' g1 g2-kid g3 | put "${R}" g
+on "${R}" pr; printf '%s\n' g1 g2-pr g3 | put "${R}" g
+on "${R}" child; git -C "${R}" merge -q --no-ff --no-commit pr >/dev/null 2>&1 || true
+printf '%s\n' g1 g2-kid g3 > "${R}/g"; git -C "${R}" add -A; git -C "${R}" commit -q --no-edit; M="$(git -C "${R}" rev-parse HEAD)"
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+on "${R}" child
+check "a merge of a parent's branch with --merged naming only a squash that lacks the file: unchecked, exit 2" \
+  "merge ${M:0:7} is unchecked: g, in a conflict, is not on its base side under that name or a rename git finds"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr):${INIT}")"
+check "the same with a second --merged, the parent's own squash: the line it dropped prints, exit 1" \
+  "${M:0:7} g: g2-pr"$'\n'"exit 1" \
+  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr):${INIT}" --merged "$(pair "${R}")")"
 
 # child can hold a commit of main that pr's branch lacks, as a build does that started on another parent's
 # branch or merged main itself (#879's and #909's merge): main appends main-added and child merges main
-# before pr replaces ten with ten-pr. A line of that commit the merge of pr dropped would not be in pr's
-# file, so that merge is scanned only when it is git's own merge of the two, as this one is.
+# before pr replaces ten with ten-pr. A line of that commit the merge of pr dropped is not in pr's file,
+# so it is read from the commit of main child holds; this merge is git's own and drops none.
 R="$(new_repo aheadown)"
 on "${R}" pr; lines three-pr | put "${R}" f
 git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
@@ -303,11 +332,12 @@ on "${R}" child; merge "${R}" pr >/dev/null
 on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
 on "${R}" child; merge "${R}" main >/dev/null
 check "a merge of a merged parent's branch, its first parent ahead on main, that is git's own merge: nothing, exit 0" \
-  "exit 0" "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
-# The same resolved by hand is unchecked, never clean. main adds a second } at the top, which child merges
-# and pr's branch lacks; pr then removes the } it had, and child's merge of pr drops main's new copy as
-# well. pr squash-merges, main adds a third } after five, and child's clean merge of main holds that newest
-# copy alone, so main's second copy is missing and no count of pr's file or child's can show it.
+  "exit 0" "$(scan "${R}" main child --merged "$(pair "${R}")")"
+# The same resolved by hand. main adds a second } at the top, which child merges and pr's branch lacks;
+# pr then removes the } it had, and child's merge of pr drops main's new copy as well. pr squash-merges,
+# main adds a third } after five, and child's clean merge of main holds that newest copy alone, so main's
+# second copy is missing. pr's file has no }, but the commit of main child holds has two, and the head
+# holds one of the two main has now: it prints.
 R="$(new_repo aheadhand)"
 on "${R}" pr; lines three-pr | put "${R}" f
 git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
@@ -318,9 +348,41 @@ on "${R}" child; M="$(lines three-pr | grep -vx '}' | merge "${R}" pr -)"
 on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
 printf '%s\n' '}' one two three-pr four five '}' "${BASE0[@]:5:6}" eleven | put "${R}" f
 on "${R}" child; merge "${R}" main >/dev/null
-check "a merge of a merged parent's branch, its first parent ahead on main, resolved by hand and dropping a line of main: unchecked, exit 2" \
-  "merge ${M:0:7} is unchecked: its first parent holds commits of main that the merged parent's branch lacks, and it is not git's own merge of the two"$'\n'"exit 2" \
-  "$(scan "${R}" main child --merged "$(git -C "${R}" rev-parse pr)")"
+check "a merge of a merged parent's branch, its first parent ahead on main, resolved by hand and dropping a line of main: it prints, exit 1" \
+  "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(pair "${R}" main^)")"
+
+# pr squash-merges before child merges main, as when a build merges main after its parent merged and
+# then the parent's branch: main then appends main-added, which child merges, and child's merge of pr,
+# resolved by hand, drops it. The squash lacks main-added; the commit of main child holds has it.
+R="$(new_repo aheadsquash)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${R}" f
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+SQ="$(git -C "${R}" rev-parse HEAD)"
+{ printf '%s\n' "${BASE0[@]}" | sed 's/^three$/three-pr/; s/^ten$/ten-pr/'; echo main-added; } | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+M="$(lines three-pr | sed 's/^ten$/ten-pr/' | merge "${R}" pr -)"
+check "a merge of a merged parent's branch, the squash older than the main child holds, dropping main's newer line: it prints, exit 1" \
+  "${M:0:7} f: main-added"$'\n'"exit 1" "$(scan "${R}" main child --merged "$(pair "${R}" "${SQ}")")"
+# In child's part of a conflict, a copy of } that child's own commit added, which the resolution drops. The
+# base has its own }, and a count cannot tell child's copy from a base copy child merged, so the merge is
+# unchecked rather than clean or a drop.
+R="$(new_repo aheadmine)"
+on "${R}" pr; lines three-pr | put "${R}" f
+git -C "${R}" checkout -q -b child pr; echo c1 | put "${R}" c
+on "${R}" main; printf '%s\n' "${BASE0[@]}" main-added | put "${R}" f
+on "${R}" child; merge "${R}" main >/dev/null
+printf '%s\n' one two three-pr "${BASE0[@]:3:6}" '}' "${BASE0[@]:10}" main-added | put "${R}" f
+on "${R}" pr; lines three-pr | sed 's/^ten$/ten-pr/' | put "${R}" f
+on "${R}" child; M="$(printf '%s\n' one two three-pr "${BASE0[@]:3:6}" ten-pr "${BASE0[@]:10}" main-added | merge "${R}" pr -)"
+on "${R}" main; git -C "${R}" merge -q --squash pr >/dev/null; git -C "${R}" commit -qm 'the parent (#1)'
+on "${R}" child; merge "${R}" main >/dev/null
+check "a merge of a merged parent's branch dropping, from child's part of a conflict, a } child added: unchecked, exit 2" \
+  "merge ${M:0:7} is unchecked: f: }, dropped from its first parent's part of a conflict, has copies the build's own commits added, so a count cannot tell whose copy it dropped"$'\n'"exit 2" \
+  "$(scan "${R}" main child --merged "$(pair "${R}")")"
+check "the same merge's remerge diff drops that } from child's part of the conflict (the case's own premise)" \
+  "-}" "$(git -C "${R}" show --remerge-diff --format= "${M}" | grep -x -- '-}' | head -1)"
 
 # squashed_parent <name> — new_repo <name> with pr as a stacked build's parent: pr's merge of main keeps
 # three-pr and three-main, dropping main-added on purpose; child, stacked on pr, adds c; then pr
@@ -545,7 +607,7 @@ M="$(git -C "${R}" rev-parse HEAD)"
 check "own story file kept by the head, a base line of it dropped: it prints with --own, exit 1" \
   "${M:0:7} board/stories/s.md: fix: true"$'\n'"exit 1" "$(scan "${R}" main pr --own board/stories/s.md)"
 check "an --own with no path after it: the usage line, exit 2" \
-  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>]... [<merge sha>...]"$'\n'"exit 2" \
+  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
   "$(scan "${R}" main pr --own)"
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
@@ -681,6 +743,42 @@ rm -f "${ROOT}/pulls.json"
 check "dropped-lines: the same, gh failing on that list: exit 2 naming the merge" \
   "swarm: dropped-lines: gh cannot list the PRs that hold ${PAR:0:7}, merge ${PM:0:7}'s second parent: gh: Not Found (HTTP 404)"$'\n'"exit 2" \
   "$(dl "${KID}")"
+
+# A stacked build that merged main before it merged its parent's branch, by hand, as fetch-ensure did
+# (#1126), in W on t. par2 replaces t2 with t2-par; kid2, stacked on par2, adds k2; main appends t-main,
+# which kid2 merges and par2 lacks; par2 appends t-par, so kid2's merge of par2 conflicts, t-main on
+# kid2's side and t-par on par2's. The keep resolution holds both lines (PMK), the drop one t-par alone
+# (PMD), dropping main's line from kid2's side of the conflict. par2 then merges main, keeping both, and
+# squash-merges into main (SQ2), and gh lists #6, which holds each merge's second parent, as merged with
+# SQ2.
+on "${W}" main; printf '%s\n' t1 t2 t3 | put "${W}" t
+git -C "${W}" checkout -q -b par2 main; printf '%s\n' t1 t2-par t3 | put "${W}" t
+git -C "${W}" checkout -q -b kid2 par2; echo k2 | put "${W}" k2
+on "${W}" main; printf '%s\n' t1 t2 t3 t-main | put "${W}" t
+on "${W}" kid2; merge "${W}" main >/dev/null
+on "${W}" par2; printf '%s\n' t1 t2-par t3 t-par | put "${W}" t
+on "${W}" kid2; git -C "${W}" branch kid2-drop
+git -C "${W}" merge -q --no-ff --no-commit par2 >/dev/null 2>&1 || true
+printf '%s\n' t1 t2-par t3 t-main t-par > "${W}/t"; git -C "${W}" add -A; git -C "${W}" commit -q --no-edit
+PMK="$(git -C "${W}" rev-parse HEAD)"
+on "${W}" kid2-drop; git -C "${W}" merge -q --no-ff --no-commit par2 >/dev/null 2>&1 || true
+printf '%s\n' t1 t2-par t3 t-par > "${W}/t"; git -C "${W}" add -A; git -C "${W}" commit -q --no-edit
+PMD="$(git -C "${W}" rev-parse HEAD)"
+on "${W}" par2; git -C "${W}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+printf '%s\n' t1 t2-par t3 t-main t-par > "${W}/t"; git -C "${W}" add -A; git -C "${W}" commit -q --no-edit
+on "${W}" main; git -C "${W}" merge -q --squash par2 >/dev/null; git -C "${W}" commit -qm 'the parent (#6)'
+SQ2="$(git -C "${W}" rev-parse HEAD)"; git -C "${W}" push -q "${O}" main
+pulls '"2026-11-22T00:00:00Z"' "${SQ2}"
+pull "${PMK}"
+check "dropped-lines: kid ahead on main, its hand-resolved merge of a merged parent keeps every base line: exit 0" \
+  "exit 0" "$(dl "${PMK}")"
+pull "${PMD}"
+check "dropped-lines: kid ahead on main, its hand-resolved merge of a merged parent drops main's line: it prints, exit 1" \
+  "${PMD:0:7} t: t-main"$'\n'"exit 1" "$(dl "${PMD}")"
+pulls null "${SQ2}"
+check "dropped-lines: the same, the parent's PR still open: today's reason, exit 2" \
+  "merge ${PMD:0:7} is unchecked: neither parent is on ${SQ2}, so it is not a merge of ${SQ2} (a stacked build's merge of its parent branch?)"$'\n'"exit 2" \
+  "$(dl "${PMD}")"
 
 # --story <slug>: P's board is docs/ (the default), in P's own repo. On W, main gains docs/stories/s.md,
 # story branch own (off main) deletes it, main adds `fix: true` to it, and own's merge of main keeps the

@@ -274,15 +274,19 @@ look the same. A stacked build keeps its parent's merges in its history after th
 merge lands on the base, so a line one of those merges dropped on purpose stops counting once the
 squash has taken it off the base.
 Once the parent's PR has merged, the build's own merge of the parent's branch is checked against
-that branch, the way a merge of the base is checked against the base. A line it dropped that the
-parent's branch had prints while the base still has it.
+that PR's squash commit on the base, the way a merge of the base is checked against the base.
+The base squash-merges, so the parent's own commits never reach it, and its squash commit stands for them.
+A line the merge dropped counts when the squash commit's file has it, or the file of a base commit the build's side already holds, and prints while the base still has it.
 A line the parent added counts from the build's first merge of the base after the parent's squash: before that, the PR's merge base with the base has no copy of it, so the PR's merge cannot delete it.
 The build's side of that merge can hold commits of the base that the parent's branch lacks: it started on another parent's branch, cut from a newer base, or it merged the base itself.
-A line of those commits that the merge dropped would not be in the parent's branch's file, so such a merge is checked only when it is git's own merge of the two, with no conflict resolved by hand and no edit.
-Resolved or edited by hand, it cannot be checked, and the PR is held as for any merge the scan cannot read.
-`dropped-lines` asks gh which PR holds
-the merge's second parent, and treats that commit as the parent's branch when the PR has merged and
-its merge commit is on the base. Until the parent's PR merges, the merge cannot be checked. The check
+Such a merge is checked whether git made it or the builder resolved it by hand.
+The build's side of a conflict in it is read too, since it can hold the base's lines.
+When the build's own commits added copies of a line dropped there, a count cannot tell whose copy went, and the merge is unchecked.
+Before this check, a merge resolved by hand whose build side held newer base commits could not be checked even after the parent merged, as with fetch-ensure's merge of fetch-download on [#1126](https://github.com/redscaresu/swarm-dev/pull/1126).
+`dropped-lines` asks gh which PRs hold the merge's second parent.
+It takes the merge commit (`merge_commit_sha`) of each one that has merged, with that commit on the base, as a squash.
+Stacked PRs share commits, so gh can list more than one, and a line counts when any of those squashes has it.
+Until the parent's PR merges, the merge cannot be checked. The check
 used to refuse such a merge even after the parent merged, which stopped the review of four story PRs
 that had merged their parent's branch while stacked
 ([#879](https://github.com/redscaresu/swarm-dev/pull/879),
@@ -1295,7 +1299,7 @@ It skips only the merges that `swarm.sh merge` recorded as `base-merged` in even
 Any other merge is scanned, a GitHub web-editor merge included.
 For a merge with neither parent on the fetched `<base>`, it asks gh which PRs hold the merge's second parent (`repos/<owner/repo>/commits/<sha>/pulls`).
 When one of them has merged and its merge commit is on the fetched `<base>`, the merge is a stacked build's merge of its parent's branch: it is scanned with that branch in the base's place, and a line it dropped counts only while the base still has it.
-Where that merge's first parent holds a commit of `<base>` that the parent's branch lacks, the merge is scanned only when its `git show --remerge-diff` is empty: otherwise it exits 2 naming the merge.
+A dropped line counts as the base's when one of those merge commits (the parents' squashes) has it, or a commit of `<base>` that the merge's first parent holds has it, whether git made the merge or a builder resolved it by hand.
 When gh cannot list those PRs, it exits 2 naming the merge.
 Each dropped line prints as `<sha7> <file>: <text>`.
 It exits 0 when nothing was dropped, 1 when it printed a line, and 2 when it cannot check: bad arguments, another origin, a head that moved or a stale fetch (naming both SHAs), git below 2.36, or a merge it cannot scan (an octopus, or one with neither parent on the base whose second parent is on no merged PR's branch).

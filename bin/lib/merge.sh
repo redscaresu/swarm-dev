@@ -878,13 +878,13 @@ base_accepted_from() {
 # to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
 # GitHub's web editor).
 # With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it asks
-# merged_parent about each merge left, passes dropped_lines.py each second parent it names as
-# `--merged <sha>`, so a stacked build's merge of a merged parent's branch is scanned against that
-# branch, and prints dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
-# `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
+# merged_parent about each merge left, passes dropped_lines.py each second parent and squash it names as
+# `--merged <sha>:<squash>`, so a stacked build's merge of a merged parent's branch is scanned against
+# the squashes of the PRs that hold that branch, and prints dropped_lines.py's lines and exits with its
+# code: 0 none, 1 lines dropped (only with a `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
-  local story="" repo n head base url src shas out tip merges m p ver rc=0 keep=() args=() own=()
+  local story="" repo n head base url src shas out tip merges m p sha ver rc=0 keep=() args=() own=()
   local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
   local usage="dropped-lines: usage: swarm.sh dropped-lines [--story <slug>] <owner/repo> <n> <40-character head SHA> <base>"
   if [[ "${1:-}" == --story ]]; then
@@ -918,7 +918,7 @@ dropped_lines() {
   args=("${keep[@]}")
   for m in "${keep[@]}"; do
     p="$(merged_parent "${repo}" "${m}")" || die "dropped-lines: ${p}"
-    [[ -z "${p}" ]] || args+=(--merged "${p}")
+    for sha in ${p}; do args+=(--merged "${sha}"); done   # <second parent>:<squash>, one per merged PR
   done
   rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" ${own[@]+"${own[@]}"} "${args[@]}")" || rc=$?
   case ${rc} in
@@ -932,10 +932,12 @@ dropped_lines() {
   esac
 }
 
-# merged_parent <owner/repo> <merge> — the second parent of <merge> when it is a stacked build's merge of a
-# parent's branch whose PR has merged (dropped_lines), read in the clone and against the base pr_fetch
-# fetched (DROPPED_DIR, DROPPED_TIP): <merge> has two parents, neither on the fetched base, and gh lists a
-# merged PR that holds the second parent whose merge commit (the parent's squash) is on the fetched base.
+# merged_parent <owner/repo> <merge> — `<second parent>:<squash>` lines when <merge> is a stacked build's
+# merge of a parent's branch whose PR has merged (dropped_lines), read in the clone and against the base
+# pr_fetch fetched (DROPPED_DIR, DROPPED_TIP): <merge> has two parents, neither on the fetched base, and gh
+# lists a merged PR that holds the second parent whose merge commit (merge_commit_sha, the parent's squash)
+# is on the fetched base. One line per such PR, as stacked PRs share commits; dropped_lines.py checks the
+# merge against those squashes.
 # Nothing for any other merge, which dropped_lines.py scans or refuses as before. gh's
 # commits/<sha>/pulls is GitHub's record of the PRs whose commits hold <sha>, a merged PR's commits too,
 # so no branch name or story is guessed at. When gh fails or does not answer within BASE_MOVED_WAIT, it
@@ -953,8 +955,9 @@ merged_parent() {
   if [[ ${rc} -ne 0 ]]; then echo "gh cannot list the PRs that hold ${ps[2]:0:7}, merge ${m:0:7}'s second parent: ${out##*$'\n'}"; return 1; fi
   for sha in ${out}; do
     [[ "${sha}" =~ ^[0-9a-f]{40}$ ]] || continue
-    if git -C "${src}" merge-base --is-ancestor "${sha}" "${tip}" 2>/dev/null; then echo "${ps[2]}"; return 0; fi
+    if git -C "${src}" merge-base --is-ancestor "${sha}" "${tip}" 2>/dev/null; then echo "${ps[2]}:${sha}"; fi
   done
+  return 0
 }
 
 # pr_fetch <who> <owner/repo> <n> <head> <base> — fetch PR <n>'s head and <base> for a read of its
