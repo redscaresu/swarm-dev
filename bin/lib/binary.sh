@@ -45,6 +45,41 @@ binary_find() {
   printf '%s\n' "${built}"
 }
 
+# BINARY_GH_MIN: the oldest gh whose `gh attestation verify` takes every flag binary_attest passes, as
+# X.Y.Z to compare with the `gh version X.Y.Z` line of `gh --version`. Two releases set it:
+#   v2.51.0 added the signer flag. Its release note (https://github.com/cli/cli/releases/tag/v2.51.0):
+#     "Add `signer-repo` and `signer-workflow` flags to `gh attestation verify`"
+#     (https://github.com/cli/cli/pull/9137).
+#   v2.57.0 added --hostname to the command. Its release note
+#     (https://github.com/cli/cli/releases/tag/v2.57.0): "Added tenancy aware attestation commands"
+#     (https://github.com/cli/cli/pull/9542), whose diff adds the flag to `gh attestation verify`. gh
+#     2.51.0 to 2.56.0 have no --hostname on it, so they refuse the call.
+# Before gh 2.102.0, --signer-workflow matched only the start of the signing certificate's identity
+# (https://github.com/cli/cli/security/advisories/GHSA-wjmr-j3rp-mh2g), and before 2.97.0 a . in it
+# matched any character (https://github.com/cli/cli/security/advisories/GHSA-mm27-mwq9-fr5g). Both
+# advisories say --repo is not affected, so on such a gh the attestation still comes from <repo>, and
+# only which of its workflows signed is checked less strictly.
+BINARY_GH_MIN=2.57.0
+
+# binary_attest <file> <repo> <signer> — return 0 when gh verifies <file>'s build attestation: built in
+# <repo> (<owner>/<name>) on github.com, and signed by its workflow at <signer>, a path in <repo> such as
+# .github/workflows/release.yml. gh comes from PATH and needs BINARY_GH_MIN or newer. It prints none of
+# gh's output. Any failure, an empty argument included, prints one line on stderr saying what to do and
+# returns 1; there is no fallback, so the caller never runs <file>. An empty <signer> stops before gh:
+# an older gh would read github.com/<repo>/ as a prefix that every workflow in <repo> matches.
+binary_attest() {
+  local file="${1:-}" repo="${2:-}" signer="${3:-}"
+  if [[ -z "${file}" || -z "${repo}" || -z "${signer}" ]]; then
+    echo "binary: binary_attest needs a file, a repo and a signer workflow, and was given '${file}' '${repo}' '${signer}', so nothing was verified or run" >&2
+    return 1
+  fi
+  if ! gh attestation verify "${file}" --hostname github.com --repo "${repo}" \
+      --signer-workflow "github.com/${repo}/${signer}" </dev/null >/dev/null 2>&1; then
+    echo "binary: gh attestation verify failed for ${file}, so its build attestation from ${repo}'s ${signer} is not proven and it was not run: check that gh is ${BINARY_GH_MIN} or newer, logged in (gh auth status) and online, then run the command again" >&2
+    return 1
+  fi
+}
+
 # binary_stale <root> <binary> — true when a file the binary is built from is newer than <binary>: a .go
 # file under <root>/cmd or <root>/internal (each when it exists), or <root>/go.mod or go.sum. It looks
 # nowhere else under the root, whose .swarm/ can hold hundreds of MB. find's -newer and -print -quit
