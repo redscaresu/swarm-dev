@@ -25,7 +25,8 @@ FIX_MAIN_LOG_SECONDS=600  # how long fix_main waits for the failed runs to finis
 FIX_MAIN_REPO=.         # the repo: of a fix-main story fix_main writes outside a merge (main_red_run), . for the project's own
 BASE_HEAD_WAIT=30       # how long reconcile's read of a red base's head commit may take (green_mains)
 ANCESTRY_WAIT=30        # how long fix_main's read of which repo the project's clone is may take (fix_ancestry)
-RELEASE_WAIT=600        # how long merge --release waits for the release's tag and GitHub release (SWARM_RELEASE_WAIT)
+RELEASE_WAIT=600        # how long merge --release waits for the release's tag, GitHub release, files and RELEASE_BRANCH (SWARM_RELEASE_WAIT)
+RELEASE_BRANCH=prerelease  # the branch release.yml moves to a release's tagged commit last (its REF); stable is never checked, as no workflow moves it
 PLUGIN_UPDATE_WAIT=300  # how long each claude plugin update a release runs may take (within)
 HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may take
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
@@ -2691,25 +2692,33 @@ wait_pr() {
 # release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> <upgrade> — after
 # merge --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set
 # (the merge commit is on the base release_check read: release_parent): once release_confirmed, update
-# the marketplace and the plugin. Then, once release_move says yes (<upgrade> set by --upgrade, or a y
+# the marketplace and the plugin, else warn, naming what RELEASE_UNMET says is unmet. Then, once release_move says yes (<upgrade> set by --upgrade, or a y
 # on a terminal), start the new version's swarm.sh upgrade (detached; bounded by UPGRADE_START_WAIT;
 # with release_path's PATH, so the agents it restarts find the new swarm.sh) in each of
 # agent_projects; else start none and print `upgrade not run: <why>` with the command for each. Last,
 # ask the user to restart the lead session in this project and each of those: the update is global,
 # and Claude Code loads a plugin's hooks only at startup. A step that fails warns, naming what to run
 # by hand; an upgrade that fails, times out or finds another upgrade running there (it starts nothing
-# then and still exits 0) warns and moves on to the next project. The release is done either way.
+# then and still exits 0) warns and moves on to the next project. None of these changes merge's exit code.
 # Each claude, gh and herdr call is bounded (within).
 release_upgrade() {
-  local own new d hint out restart="${PROJECT_DIR}" rc path dirs why cmds=""
+  local own new d hint out restart="${PROJECT_DIR}" rc path dirs why cmds="" at
   own="$(plugin_repo)" || { echo "the plugin's plugin.json names no GitHub repository, so it is not updated"; return 0; }
   [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]] || { echo "$1 is not this plugin's repo (${own}), so the plugin is not updated"; return 0; }
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
   hint="run swarm.sh update, then ${new} upgrade in each project with agents"
   [[ $4 -eq ${MAIN_CI_OK} ]] || { echo "warning: CI on the base is not green, so the plugin was not updated: once v$3 is published, ${hint}"; return 0; }
   [[ -n "$6" ]] || { echo "refused: the release ships commits no release check read, so the plugin was not updated and no agent was moved: once they are checked, ${hint}"; return 0; }
-  release_confirmed "$1" "$2" "$3" "$5" \
-    || { echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}"; return 0; }
+  if ! release_confirmed "$1" "$2" "$3" "$5"; then
+    case "${RELEASE_UNMET}" in
+      list\ *) echo "warning: scripts/build.sh --list cannot name the files v$3's release must hold (${RELEASE_UNMET#list }), so the plugin was not updated: once you have checked that each is uploaded, ${hint}" ;;
+      files\ *) echo "warning: v$3's GitHub release has no uploaded ${RELEASE_UNMET#files }, so the plugin was not updated: once each is uploaded, ${hint}" ;;
+      branch\ *) at="${RELEASE_UNMET#branch }"
+        echo "warning: ${RELEASE_BRANCH} is at ${at% *}, not at v$3's tag commit ${at##* }, so the plugin was not updated: once release.yml has moved it there, ${hint}" ;;
+      *) echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}" ;;
+    esac
+    return 0
+  fi
   if ! { within "${PLUGIN_UPDATE_WAIT}" claude plugin marketplace update "${MARKETPLACE}" \
       && within "${PLUGIN_UPDATE_WAIT}" claude plugin update "${PLUGIN}"; } </dev/null; then
     echo "warning: updating the plugin to $3 failed, so no agent was moved: ${hint}"; return 0
@@ -2782,26 +2791,74 @@ plugin_own() {
   own="$(plugin_repo)" && [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]
 }
 
-# release_confirmed <owner/repo> <merge commit> <version> <base> — the tag v<version> is on <merge
-# commit>, or on a later commit of <base> (a later push's release run can tag first: release.yml runs
-# one at a time), and its GitHub release is published, waiting up to RELEASE_WAIT seconds for the
-# release workflow, which a green main need not have waited for. Each read gets the time left, at
-# least RELEASE_READ_FLOOR; a tag's commit is judged once (release_on_base), until the tag moves.
+# release_confirmed <owner/repo> <merge commit> <version> <base> — the release v<version> is done: its
+# tag is on <merge commit>, or on a later commit of <base> (a later push's release run can tag first:
+# release.yml runs one at a time); its GitHub release is published and lists each file release_files
+# names, by exact name, in state uploaded; and RELEASE_BRANCH is at the tag's commit. Equal, not ahead:
+# a later release run that moved it on means an update would install that later version. It waits up
+# to RELEASE_WAIT seconds for the release workflow, which a green main need not have waited for and
+# which moves RELEASE_BRANCH last. Each read gets the time left, at least RELEASE_READ_FLOOR; a tag's
+# commit is judged once (release_on_base), until the tag moves; a poll reads on only while what it has
+# read holds. On failure RELEASE_UNMET says what the last poll found unmet, for release_upgrade:
+#   list <why>                   release_files failed, so it failed at once, with no gh read
+#   files <name>, <name>...      the release lacks these files, or has not uploaded them
+#   branch <sha7> <tag sha7>     RELEASE_BRANCH is not at the tag; <sha7> is `a commit gh cannot read`
+#                                on a failed or malformed read
+#   tag                          no tag on the base, or a release that is a draft or cannot be read
 release_confirmed() {
-  local end=$((SECONDS + ${SWARM_RELEASE_WAIT:-${RELEASE_WAIT}})) tag seen="" good="" v
+  local end tag seen="" good="" v files rel ref
+  RELEASE_UNMET=tag
+  if ! files="$(release_files)"; then RELEASE_UNMET="list ${files}"; return 1; fi
+  end=$((SECONDS + ${SWARM_RELEASE_WAIT:-${RELEASE_WAIT}}))
   while :; do
+    RELEASE_UNMET=tag
     tag="$(within "$(release_left "${end}")" gh api "repos/$1/git/ref/tags/v$3" 2>/dev/null | json "d['object']['sha']" 2>/dev/null)" || tag=""
     if [[ "${tag}" =~ ^[0-9a-f]{40}$ && "${tag}" != "${seen}" ]]; then
       v="$(release_on_base "$1" "$2" "${tag}" "$4" "${end}")"
       [[ -z "${v}" ]] || { seen="${tag}"; good="${v}"; }
     fi
-    if [[ -n "${tag}" && "${tag}" == "${seen}" && "${good}" == yes \
-      && "$(within "$(release_left "${end}")" gh api "repos/$1/releases/tags/v$3" 2>/dev/null | json "d['draft']" 2>/dev/null)" == False ]]; then
-      return 0
+    if [[ -n "${tag}" && "${tag}" == "${seen}" && "${good}" == yes ]]; then
+      # The draft flag, then each of <files> with no asset of exactly its name in state uploaded.
+      rel="$(within "$(release_left "${end}")" gh api "repos/$1/releases/tags/v$3" 2>/dev/null \
+        | RELEASE_FILES="${files}" json "' '.join([str(d['draft'])] + [n for n in e['RELEASE_FILES'].split() if n not in [a.get('name') for a in d.get('assets') or [] if a.get('state') == 'uploaded']])" 2>/dev/null)" || rel=""
+      if [[ "${rel}" == False ]]; then
+        ref="$(within "$(release_left "${end}")" gh api "repos/$1/git/ref/heads/${RELEASE_BRANCH}" 2>/dev/null | json "d['object']['sha']" 2>/dev/null)" || ref=""
+        [[ "${ref}" =~ ^[0-9a-f]{40}$ && "${ref}" == "${tag}" ]] && return 0
+        if [[ "${ref}" =~ ^[0-9a-f]{40}$ ]]; then ref="${ref:0:7}"; else ref="a commit gh cannot read"; fi
+        RELEASE_UNMET="branch ${ref} ${tag:0:7}"
+      elif [[ "${rel}" == "False "* ]]; then
+        rel="${rel#False }"; RELEASE_UNMET="files ${rel// /, }"
+      fi
     fi
     ((SECONDS < end)) || return 1
     sleep "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}"
   done
+}
+
+# release_files — the names of the files each release of this copy holds, space-separated, from
+# `scripts/build.sh --list` under SWARM_HOME, the release contract: each asset line's name (its third
+# field) and the sha256 checksums line's (its second), in --list's order. These are binary_download's
+# rules (bin/lib/binary.sh), kept apart from its download: --list runs, it has exactly one sha256
+# checksums line and at least one asset line, and every name matches BINARY_NAME_RE. Else it prints
+# why, naming build.sh, and fails. It reads no network.
+release_files() {
+  local build="${SWARM_HOME}/scripts/build.sh" list kind f2 f3 names="" n_asset=0 n_sums=0 bad=""
+  [[ -f "${build}" ]] || { echo "${build} is missing"; return 1; }
+  list="$("${BASH}" "${build}" --list 2>/dev/null)" || { echo "${build} --list failed"; return 1; }
+  while IFS=$'\t' read -r kind f2 f3 _; do
+    case "${kind}" in
+      asset) n_asset=$((n_asset + 1)); names+="${names:+ }${f3}"
+        [[ "${f3}" =~ ${BINARY_NAME_RE} ]] || bad="'${f3}'" ;;   # loose-match: ok BINARY_NAME_RE is a fixed regex
+      checksums) [[ "${f3}" == sha256 ]] || continue
+        n_sums=$((n_sums + 1)); names+="${names:+ }${f2}"
+        [[ "${f2}" =~ ${BINARY_NAME_RE} ]] || bad="'${f2}'" ;;   # loose-match: ok BINARY_NAME_RE is a fixed regex
+    esac
+  done <<< "${list}"
+  if [[ "${n_sums}" -ne 1 ]]; then echo "${build} --list has no one sha256 checksums line"; return 1
+  elif [[ "${n_asset}" -eq 0 ]]; then echo "${build} --list has no asset line"; return 1
+  elif [[ -n "${bad}" ]]; then echo "${build} --list names ${bad}, which is not a plain file name"; return 1
+  fi
+  echo "${names}"
 }
 
 # release_left <end> — the seconds a release read may take: those left before <end>, at least RELEASE_READ_FLOOR.

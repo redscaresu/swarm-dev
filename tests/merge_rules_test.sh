@@ -375,9 +375,31 @@ printf '#!/bin/sh\necho "${SWARM_PROJECT} $*" >> "%s"\ncase ":${PATH}:" in *":%s
 [ ! -e "${SWARM_PROJECT}/upgrade.hang" ] || sleep 5
 [ ! -e "${SWARM_PROJECT}/upgrade.busy" ] || { echo "swarm.sh upgrade already runs here (pid 9, log x); this one started nothing"; exit 0; }
 echo "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" "${HOME_DIR}" "${HOME_DIR}" "${HOME_DIR}" "${HOME_DIR}" "${ROOT}/upgrade.log" > "${NEW}"
+# The release's files, as the release copy's v0.31.8 lists them (gh api
+# repos/redscaresu/swarm-dev-release-spike/releases/tags/v0.31.8, read 2026-11-22).
+FIVE="SHA256SUMS swarm-darwin-amd64 swarm-darwin-arm64 swarm-linux-amd64 swarm-linux-arm64"
+# released [<name>:<state>...] — ${FX}/release a published release in the shape that read gave,
+# {"assets":[{"name","state"}...],"draft":false}: these assets, else the five, each uploaded.
+released() {
+  local a l=""
+  [[ $# -gt 0 ]] || for a in ${FIVE}; do set -- "$@" "${a}:uploaded"; done
+  for a in "$@"; do l+="${l:+,}{\"name\":\"${a%%:*}\",\"state\":\"${a#*:}\"}"; done
+  echo "{\"assets\":[${l}],\"draft\":false}" > "${FX}/release"
+}
+# released_but <file> [<name>:<state>...] — released with the five but <file>, each uploaded, then these.
+released_but() {
+  local a l=()
+  for a in ${FIVE}; do [[ "${a}" == "$1" ]] || l+=("${a}:uploaded"); done
+  shift; released "${l[@]}" "$@"
+}
+# preref <sha> — RELEASE_BRANCH's ref at <sha>, in the shape the copy's read gave (gh api
+# repos/redscaresu/swarm-dev-release-spike/git/ref/heads/prerelease, read 2026-11-22).
+preref() {
+  printf '{"ref":"refs/heads/prerelease","node_id":"REF_x","url":"https://api.github.com/repos/o/r/git/refs/heads/prerelease","object":{"sha":"%s","type":"commit","url":"https://api.github.com/repos/o/r/git/commits/%s"}}' "$1" "$1" > "${FX}/preref"
+}
 own_release() {
   release_pr; rm -f "${ROOT}/claude.log" "${ROOT}/upgrade.log"; echo "{\"nameWithOwner\":\"${OWN_REPO}\"}" > "${FX}/origin"
-  printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; echo '{"draft":false}' > "${FX}/release"; echo '{"status":"behind"}' > "${FX}/compare.main"
+  printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; released; preref "${M}"; echo '{"status":"behind"}' > "${FX}/compare.main"
 }
 upgraded() { paste -sd'|' - < "${ROOT}/upgrade.log" 2>/dev/null; }
 cp "${ROOT}/agents" "${ROOT}/agents.keep"
@@ -415,7 +437,7 @@ check "--release without --upgrade, no terminal: still asks for the lead's resta
 # from its path): the update names that marketplace and ID, and the upgrade started is the one under
 # plugins/cache/swarm-dev-pre/swarm-dev/1.3.0, whose stub logs "pre" before each call, not the stable one.
 PRE="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev-pre/swarm-dev"
-mkdir -p "${PRE}/1.2.0" "${PRE}/1.3.0/bin"; cp -R "${REPO}/bin" "${REPO}/hooks" "${REPO}/.claude-plugin" "${PRE}/1.2.0/"
+mkdir -p "${PRE}/1.2.0" "${PRE}/1.3.0/bin"; cp -R "${REPO}/bin" "${REPO}/hooks" "${REPO}/.claude-plugin" "${REPO}/scripts" "${PRE}/1.2.0/"
 # shellcheck disable=SC2016 # expanded when the stub runs
 printf '#!/bin/sh\necho "pre ${SWARM_PROJECT} $*" >> "%s"\necho "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" > "${PRE}/1.3.0/bin/swarm.sh"
 own_release; SWARM="${PRE}/1.2.0/bin/swarm.sh" merge --release --upgrade "${OWN}"
@@ -488,10 +510,76 @@ own_release; mv "${NEW}" "${NEW}.away"; merge --release "${OWN}"; mv "${NEW}.awa
 is "--release whose update left no new swarm.sh: exits 0" 0 "${rc}"
 check "--release whose update left no new swarm.sh: warns" said "warning: the plugin update left no ${NEW}, so no agent was moved"
 check "--release whose update left no new swarm.sh: no restart line" bash -c "! grep -q Restart '${ROOT}/out'"
-own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; merge --release "${OWN}"
+own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; preref "${H2}"; merge --release "${OWN}"
 check "--release whose tag is on a later commit: updates the plugin" grep -q "plugin update" "${ROOT}/claude.log"
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"status":"ahead"}' > "${FX}/compare.main"; merge --release "${OWN}"
 check "--release whose tag is on a branch cut after the merge: warns, and no plugin update" bash -c "grep -q 'no tag v1.3.0 on the base at or after aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
+# A release counts done only once its GitHub release lists every file scripts/build.sh --list names,
+# by exact name and uploaded, and prerelease is at the tag's commit. Else merge exits 0 with a warning
+# naming what is unmet and the hint, and updates nothing.
+HINT="run swarm.sh update, then ${NEW} upgrade in each project with agents"
+not_updated() { [ ! -e "${ROOT}/claude.log" ] && [ ! -e "${ROOT}/upgrade.log" ]; }
+for f in ${FIVE}; do
+  own_release; released_but "${f}"; merge --release "${OWN}"
+  is "--release whose release lacks ${f}: exits 0" 0 "${rc}"
+  check "--release whose release lacks ${f}: no plugin update, no upgrade" not_updated
+  check "--release whose release lacks ${f}: warns, naming it and the hint" said "warning: v1.3.0's GitHub release has no uploaded ${f}, so the plugin was not updated: once each is uploaded, ${HINT}"
+  own_release; released_but "${f}" "${f}:open"; merge --release "${OWN}"
+  is "--release whose ${f} is open, not uploaded: exits 0" 0 "${rc}"
+  check "--release whose ${f} is open, not uploaded: no plugin update, no upgrade" not_updated
+  check "--release whose ${f} is open, not uploaded: warns, naming it and the hint" said "warning: v1.3.0's GitHub release has no uploaded ${f}, so the plugin was not updated: once each is uploaded, ${HINT}"
+done
+own_release; released_but swarm-linux-amd64 swarm-linux-amd64.bak:uploaded; merge --release "${OWN}"
+check "--release with swarm-linux-amd64.bak and no swarm-linux-amd64: no plugin update, no upgrade" not_updated
+check "--release with swarm-linux-amd64.bak and no swarm-linux-amd64: warns that swarm-linux-amd64 is missing" said "warning: v1.3.0's GitHub release has no uploaded swarm-linux-amd64, so the plugin was not updated"
+# On the real scripts/build.sh, a release with no assets lacks all five, in --list's order: the parse
+# takes each name from the field the real --list puts it in.
+own_release; echo '{"assets":[],"draft":false}' > "${FX}/release"; merge --release "${OWN}"
+check "--release whose release has no assets: warns, naming the five from the real --list" said "warning: v1.3.0's GitHub release has no uploaded swarm-darwin-arm64, swarm-darwin-amd64, swarm-linux-arm64, swarm-linux-amd64, SHA256SUMS, so the plugin was not updated: once each is uploaded, ${HINT}"
+# The copy's real v0.31.8 state: the five uploaded, prerelease at v0.31.7's tag commit.
+own_release; preref 097c6ca7ed0f8b4e5f091046fd916fc19fc33bb6; merge --release "${OWN}"
+is "--release with prerelease at another commit (the copy's v0.31.8): exits 0" 0 "${rc}"
+check "--release with prerelease at another commit (the copy's v0.31.8): no plugin update, no upgrade" not_updated
+check "--release with prerelease at another commit (the copy's v0.31.8): warns, naming prerelease, both commits and the hint" said "warning: prerelease is at 097c6ca, not at v1.3.0's tag commit aaaaaaa, so the plugin was not updated: once release.yml has moved it there, ${HINT}"
+# Tag on a later commit H2, prerelease at the merge commit: the stub's compare default said yes to H2.
+own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; merge --release "${OWN}"
+check "--release with the tag on ${H2:0:7} and prerelease at ${M:0:7}: no plugin update, no upgrade" not_updated
+check "--release with the tag on ${H2:0:7} and prerelease at ${M:0:7}: warns, naming prerelease" said "warning: prerelease is at aaaaaaa, not at v1.3.0's tag commit 2222222, so the plugin was not updated"
+# A prerelease read that fails, even with a partial answer naming the tag's commit; a 404; and a sha
+# that is not 40 hex, here the tag commit's first 7: each counts as not at the tag.
+for how in fail 404 short; do
+  own_release
+  case "${how}" in
+    fail) mv "${FX}/preref" "${FX}/preref.fail" ;;
+    404) rm "${FX}/preref" ;;
+    short) echo '{"ref":"refs/heads/prerelease","object":{"sha":"aaaaaaa","type":"commit"}}' > "${FX}/preref" ;;
+  esac
+  merge --release "${OWN}"
+  is "--release whose prerelease read is ${how}: exits 0" 0 "${rc}"
+  check "--release whose prerelease read is ${how}: no plugin update, no upgrade" not_updated
+  check "--release whose prerelease read is ${how}: warns, naming prerelease and the hint" said "warning: prerelease is at a commit gh cannot read, not at v1.3.0's tag commit aaaaaaa, so the plugin was not updated: once release.yml has moved it there, ${HINT}"
+done
+# A copy (no .git) whose scripts/build.sh is missing, whose --list prints no asset line, or whose --list
+# exits 1: refused at once, with no wait and no tag or release read, the warning naming --list.
+COPY="${ROOT}/copy"; mkdir -p "${COPY}"; cp -R "${REPO}/bin" "${REPO}/hooks" "${REPO}/.claude-plugin" "${REPO}/scripts" "${COPY}/"
+for how in missing no-asset exit-1; do
+  case "${how}" in
+    missing) rm -f "${COPY}/scripts/build.sh"; why="${COPY}/scripts/build.sh is missing" ;;
+    no-asset) printf '#!/usr/bin/env bash\nprintf "checksums\\tSHA256SUMS\\tsha256\\nsigner\\t.github/workflows/release.yml\\n"\n' > "${COPY}/scripts/build.sh"
+              why="${COPY}/scripts/build.sh --list has no asset line" ;;
+    exit-1) printf '#!/usr/bin/env bash\nexit 1\n' > "${COPY}/scripts/build.sh"; why="${COPY}/scripts/build.sh --list failed" ;;
+  esac
+  own_release; SWARM="${COPY}/bin/swarm.sh" merge SWARM_RELEASE_WAIT=2 --release "${OWN}"
+  is "--release from a copy whose build.sh is ${how}: exits 0" 0 "${rc}"
+  check "--release from a copy whose build.sh is ${how}: no plugin update, no upgrade" not_updated
+  check "--release from a copy whose build.sh is ${how}: warns, naming --list, why and the hint" said "warning: scripts/build.sh --list cannot name the files v1.3.0's release must hold (${why}), so the plugin was not updated: once you have checked that each is uploaded, ${HINT}"
+  is "--release from a copy whose build.sh is ${how}: no tag or release read" "0|0" "$(grep -c 'git/ref/tags/v1.3.0' "${ROOT}/gh.log")|$(grep -c 'releases/tags/v1.3.0' "${ROOT}/gh.log")"
+done
+# The files arrive on a later poll: the first read lacks SHA256SUMS, the next has all five. The wait is
+# long enough for a slow machine's first poll: merge returns on the second, so a pass takes no longer.
+own_release; released_but SHA256SUMS; mv "${FX}/release" "${FX}/release.1"; released; merge SWARM_RELEASE_WAIT=30 --release "${OWN}"
+is "--release whose files arrive on a later poll: updates the marketplace, then the plugin" "plugin marketplace update swarm-dev|plugin update swarm-dev@swarm-dev" "$(paste -sd'|' - < "${ROOT}/claude.log" 2>/dev/null)"
+check "--release whose files arrive on a later poll: read the release more than once" bash -c "[ \$(grep -c 'releases/tags/v1.3.0' '${ROOT}/gh.log') -gt 1 ]"
 own_release; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge SWARM_MERGE_CI_SECONDS=0.5 --release "${OWN}"
 check "--release whose base CI is not green: warns that the plugin was not updated, naming the new version's upgrade" said "warning: CI on the base is not green, so the plugin was not updated: once v1.3.0 is published, run swarm.sh update, then ${NEW} upgrade"
 check "--release whose base CI is not green: no plugin update" test ! -e "${ROOT}/claude.log"
