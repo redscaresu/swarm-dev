@@ -1080,6 +1080,11 @@ goes on with no pane, as it does for a pane closed by hand.
 ## Releases
 
 No story PR bumps `.claude-plugin/plugin.json`.
+
+Every install follows the `stable` ref, which `.claude-plugin/marketplace.json` names.
+The release workflow moves only `prerelease`.
+`stable` moves only at a stage's end, when the lead moves it after the user clears the stage's exit epic, so a fix reaches other machines then.
+An install from the `swarm-dev-pre` marketplace, on the `pre-marketplace` branch, follows `prerelease`.
 A release is due once the project has `.claude-plugin/plugin.json`, the tag `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/` and retro files `retros/*.md`, so a commit of only a retro file makes no release due).
 `next` reads local refs for this, since reconcile has just pulled.
 With no stage (see below), `next` then checks each change since the tag against one `gh pr list` of the merged PRs.
