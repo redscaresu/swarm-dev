@@ -237,6 +237,14 @@ It is not a required check, but `swarm.sh merge` waits for it like every other p
 A port epic adds each command it ports to `tests/speed_list.txt`, one fixture name to a line.
 Each name needs a fixture `fx_<name>` in a `tests/diff_fixtures_<area>.sh` file, or the run is red.
 
+`tests/diff_run.sh` is the differential run: it runs each fixture against two trees and compares what the two runs did.
+A fixture is an `fx_<name>` function in a `tests/diff_fixtures_<area>.sh` file, and the run loads every such file.
+The `diff-run` job (`.github/workflows/diff-run.yml`) runs `tests/diff_run.sh --base <base> <head>` on each PR, and runs the merge fixtures ten times, head against head.
+`--base` applies only the allow-list entry of the head's own story, `scripts/allow/stage-<n>/<slug>.md` for branch `story/<slug>`.
+So a port PR passes only with no difference, and a PR that changes output on purpose adds its story's entry in the same PR, naming each difference by its exact lines.
+`scripts/allow/README.md` gives the entry format, and `--draft` prints the hunks to start from.
+The job has no push trigger, so main's CI after a merge does not wait for it.
+
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
