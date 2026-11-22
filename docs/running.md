@@ -152,6 +152,46 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 Settings live in `.claude/swarm/config`; [reference-models.md § Settings](reference-models.md#settings)
 lists them all.
 
+## First run
+
+An installed copy of swarm-dev has no `swarm` binary until its first `swarm.sh` call fetches one.
+Every call does this except `swarm.sh version` and `swarm.sh update`, inside a project or not.
+Each version fetches its own binary once:
+
+1. `gh release download` fetches the release's binary for this machine, and its `SHA256SUMS`, into a new `.fetch-<pid>` folder in the plugin folder.
+2. swarm.sh checks the binary's SHA-256 against its line in `SHA256SUMS`.
+3. `gh attestation verify` checks that swarm-dev's release workflow built it.
+4. swarm.sh moves the binary to `swarm` in the plugin folder, then removes the `.fetch-<pid>` folder.
+
+Later calls find `swarm` there and check nothing again.
+The fetch runs the real `gh`, past swarm-dev's gh-shim, and needs gh 2.57.0 or newer, logged in.
+A git checkout of swarm-dev never fetches: it builds the binary from its own tree.
+With `SWARMDEV_BIN` set, swarm.sh runs that file and fetches nothing.
+
+When the fetch fails, the call stops with one line that starts `binary:`, and the command does not run:
+
+- `swarm-dev publishes no binary for <os>/<arch>`: build one with `go build ./cmd/swarm` and set `SWARMDEV_BIN` to its path.
+- `gh is not on PATH`: install the GitHub CLI and run `gh auth login`.
+- `gh release download ... failed`: the line quotes gh. Fix what it says (no network, or no login), then run the command again.
+- `gh attestation verify failed`, with `(no answer within 60 s)` when gh did not answer: check that gh is 2.57.0 or newer, logged in and online.
+- `the SHA-256 of ... does not match`: the file is not the one the release lists, so it was not installed. Run the command again, and report it if it fails the same way.
+- `has no line naming`, `names ... on <n> lines`, `left no`, or `holds <n> of the asset files`: the release is not laid out as swarm-dev expects. Run the command again, and report it if it fails the same way.
+- `could not take the SHA-256`: install `sha256sum` or `shasum`.
+- `cannot tell which release files are this copy's binary`, `cannot read this copy's version`, or a line about `--list`: the plugin folder is broken. Reinstall swarm-dev.
+- `could not make` or `could not move`: the plugin folder is not writable.
+- `is a folder`: something left a folder named `swarm` in the plugin folder. Remove it.
+
+A fetch stopped by Ctrl-C or a TERM removes its `.fetch-<pid>` folder.
+A KILL leaves the folder with the downloaded files in it, none of them executable.
+No call runs them, the next call fetches again, and you can delete the folder.
+Two calls at once each fetch into a folder of their own, then move a checked binary into place, so both run a whole binary.
+
+## Offline
+
+With no network, an installed copy's first call stops with the `gh release download` line, and the command does not run.
+Once the binary is there, a call needs no network to find it.
+`swarm.sh version` and `swarm.sh update` never need the binary, so they still run.
+
 ## Updating
 
 When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin.

@@ -103,9 +103,12 @@ run() {
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
 agent_env() { local l; a=(); while IFS= read -r l; do a+=("${l}"); done < "${ROOT}/agent-env-$1"; }
 # as_agent <agent> <args>... — swarm.sh run as <agent> would run it: in its recorded environment
-# alone, plus the test's stand-in shell, from the project.
+# alone, plus the test's stand-in shell, from the project. The recorded environment has no SWARMDEV_BIN
+# (checked below), so in a copy of the tree with no .git, where swarm.sh would fetch its binary
+# (binary_ensure), make test's goes in, as tests/diff_run.sh passes it.
 as_agent() {
   local a; agent_env "$1"; shift
+  [[ -e "${SWARM%/bin/swarm.sh}/.git" || -z "${SWARMDEV_BIN+x}" ]] || a+=("SWARMDEV_BIN=${SWARMDEV_BIN}")
   (cd "${p}" && env -i "${a[@]}" SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 var() { sed -n "s/^$2=//p" "${ROOT}/agent-env-$1"; }   # <agent> <name> — its value in the agent's environment

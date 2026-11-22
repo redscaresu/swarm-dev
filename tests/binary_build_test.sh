@@ -8,8 +8,10 @@
 # mtime as they were, and so does a newer file under .swarm/ or docs/ alone. SWARMDEV_BIN set runs the
 # file it names and builds nothing. A main.go that does not compile exits non-zero with Go's error, prints
 # no word and leaves the old binary as it was. With no go on PATH the call exits 1 in one line and bash's
-# config does not run. A copy with no .git tries no build and stops with binary_find's line. Two calls
-# started together on a missing binary both print the word, and git status is empty after.
+# config does not run. A copy with no .git tries no build: it is an installed copy, whose swarm.sh fetches
+# the binary first (binary_ensure), and its copy has no scripts/build.sh, so the call stops with
+# binary_download's line. Two calls started together on a missing binary both print the word, and git
+# status is empty after.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -169,12 +171,13 @@ check "no go: says it in one line" \
 check "no go: bash's config did not run" "" "${out}"
 check "no go: no binary built" none "$(stamp "${B}")"
 
-# A copy with no .git: no build is tried, and the call stops with binary_find's line.
+# A copy with no .git: no build is tried. The fetch goes first, and stops with binary_download's line, as
+# the copy has no scripts/build.sh to name the release's files.
 N="${ROOT}/plain"; cp -R "${C}" "${N}"; rm -rf "${N}/.git"
 sw "${N}" "${FAILSTUBS}:${PATH}"
 check "no .git: exits 1" 1 "${rc}"
-check "no .git: binary_find's line" \
-  "swarm: binary: no swarm binary: SWARMDEV_BIN is unset and ${N} is not a git checkout" "${err}"
+check "no .git: binary_download's line" \
+  "binary: cannot tell which release files are this copy's binary: ${N}/scripts/build.sh is missing: reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)" "${err}"
 check "no .git: the go stub logged no call" 0 "$(builds failgo)"
 
 # Two calls started together on a missing binary: both print the word, and git status stays empty.

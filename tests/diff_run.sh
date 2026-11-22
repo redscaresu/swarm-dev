@@ -46,7 +46,8 @@
 #             in either. A fixture that rightly makes no call names none.
 #
 # The command runs under env -i with only PATH, HOME, LANG, LC_ALL, TERM, USER, LOGNAME,
-# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), TMPDIR=ROOT/tmp and
+# SWARM_SLEEP_SCALE and SWARM_FORBID_PROJECT passed on (the ones set), SWARMDEV_BIN too when it is set
+# and the tree has no .git (PASS_BIN), TMPDIR=ROOT/tmp and
 # CLAUDE_CONFIG_DIR=ROOT/claude-config, then FX_ENV, then the ones FX_ENV cannot override: PATH with
 # the shims first (before FX_ENV's PATH when it sets one), GH_CONFIG_DIR an empty directory,
 # HERDR_BIN_PATH, DIFF_RUN_MARK (the run's marker), and BASH_ENV and DIFF_RUN_STARTS (the bash start
@@ -168,6 +169,10 @@ STAGE="" ONLY="" DRAFT=""
 BASE="" BRANCHES=()
 STREAMS="stdout stderr exit files calls:fg"
 PASS_ENV="HOME LANG LC_ALL TERM USER LOGNAME SWARM_SLEEP_SCALE SWARM_FORBID_PROJECT"
+# PASS_BIN: passed on too, for a tree with no .git: make test's binary, where that tree's swarm.sh would
+# otherwise fetch one (binary_ensure in bin/lib/binary.sh). A git checkout's tree, as the diff-run job
+# runs, builds its own from its tree, so it gets none.
+PASS_BIN=SWARMDEV_BIN
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() { sed -n '6,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -784,6 +789,7 @@ run_one() {
   base_path="${PATH}"
   for v in ${FX_ENV[@]+"${FX_ENV[@]}"}; do [[ "${v}" != PATH=* ]] || base_path="${v#PATH=}"; done
   for v in ${PASS_ENV}; do [[ -z "${!v+x}" ]] || envs+=("${v}=${!v}"); done
+  [[ -e "${tree}/.git" || -z "${!PASS_BIN+x}" ]] || envs+=("${PASS_BIN}=${!PASS_BIN}")
   envs+=("TMPDIR=${root}/tmp" "CLAUDE_CONFIG_DIR=${root}/claude-config" "CLAUDE_PLUGIN_ROOT=${tree}" ${FX_ENV[@]+"${FX_ENV[@]}"}
     "PATH=${meta}/shims:${base_path}" "GH_CONFIG_DIR=${meta}/gh-config" "HERDR_BIN_PATH=${meta}/shims/herdr"
     "DIFF_RUN_MARK=${dir}:" "BASH_ENV=${meta}/bash-env" "DIFF_RUN_STARTS=${meta}/starts")

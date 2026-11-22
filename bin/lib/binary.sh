@@ -1,10 +1,16 @@
 # shellcheck shell=bash
 # binary.sh — find the swarm binary a command runs, run it, and download a release's binary. A hook
-# sources it on its own, and bin/swarm.sh with its other libs: it needs no other bin/lib file, sets no
+# sources it on its own, and bin/swarm.sh before its version case, not with its other libs: it needs no other bin/lib file, sets no
 # shell option and starts no process when sourced, and binary_find and is_ported start none either.
 # binary_path and binary_run are swarm.sh's alone. Only binary_build builds, and only binary_path calls
 # it, in a git checkout. Only binary_download downloads: with gh, into a folder its caller gives, and it
 # checks the file against the release's checksum file. It never writes <root>/swarm.
+# binary_gh_path and binary_present start no process either. binary_fetch and binary_ensure are
+# swarm.sh's alone too: binary_ensure reads the version with swarm.sh's plugin_version. Only binary_fetch
+# writes that file, in an installed copy: it calls binary_download into a folder of its own, checks the
+# build attestation with binary_attest, then renames the file over <root>/swarm. binary_ensure, which
+# swarm.sh runs on every call but version and update, calls it when that file is missing, so the checks
+# run once, at download.
 
 # BINARY_BUILD_PATH: where a git checkout of the plugin keeps the binary built from its tree, relative to
 # the plugin root. It is the file `go build ./cmd/swarm` writes at the root, which .gitignore already
@@ -270,6 +276,163 @@ binary_run() {
     done
     exec "${bin}" "$@"
   )
+}
+
+# BINARY_FETCH_TMP: the prefix of the folder binary_fetch downloads into, in the plugin root; the PID of
+# the swarm.sh that runs it follows it, so two calls never share one. The folder is on the root's own
+# filesystem, so the last step is a rename over <root>/BINARY_BUILD_PATH, and a call started meanwhile
+# never runs half a file.
+BINARY_FETCH_TMP=.fetch-
+# BINARY_REINSTALL: what a stop line of binary_fetch or binary_ensure says to do about a broken copy.
+BINARY_REINSTALL="reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)"
+
+# binary_gh_path — PATH with every empty entry and every folder whose name ends /gh-shim taken out, as
+# bin/gh-shim/gh skips them when it looks for the real gh, so the download runs no version's shim and
+# gh-calls.tsv does not log it. The other folders keep their order. Builtins only, no fork.
+binary_gh_path() {
+  local rest="${PATH}:" d out=""
+  while [[ -n "${rest}" ]]; do
+    d="${rest%%:*}"; rest="${rest#*:}"
+    [[ -n "${d}" && "${d%/}" != */gh-shim ]] || continue
+    out="${out:+${out}:}${d}"
+  done
+  printf '%s\n' "${out}"
+}
+
+# binary_present <root> — true when <root>/BINARY_BUILD_PATH is an executable file, the binary an
+# earlier call fetched. Builtins only, no fork: swarm.sh asks it on every call in an installed copy.
+binary_present() { [[ -f "${1%/}/${BINARY_BUILD_PATH}" && -x "${1%/}/${BINARY_BUILD_PATH}" ]]; }
+
+# binary_fetch_stop <pid> — send TERM to <pid> and to every process under it, the deepest first, as one
+# ps listing shows them. binary_fetch's traps call it: gh runs inside a $( ) of binary_download, and the
+# subshell's own trap would wait for gh to end before it ran. It runs only on a signal.
+binary_fetch_stop() {
+  local tree=" $1 " order=("$1") list p pp grew=1 i
+  list="$(ps -A -o pid= -o ppid= 2>/dev/null)" || list=""
+  while [[ ${grew} == 1 ]]; do
+    grew=0
+    while read -r p pp; do
+      [[ "${tree}" == *" ${pp} "* && "${tree}" != *" ${p} "* ]] || continue   # loose-match: ok whole-number pids, each between spaces
+      tree+="${p} "; order+=("${p}"); grew=1
+    done <<< "${list}"
+  done
+  for ((i = ${#order[@]} - 1; i >= 0; i--)); do kill -TERM "${order[i]}" 2>/dev/null || true; done
+}
+
+# binary_fetch_steps <root> <version> <dir> — binary_fetch's steps, in its subshell, with the PATH it
+# gives: mkdir <dir>; binary_download into it; binary_attest on the asset, with binary_repo and the
+# signer line of `scripts/build.sh --list`; chmod +x; mv -f over <root>/BINARY_BUILD_PATH. The asset is
+# the one asset name of --list that is a file in <dir>. Returns 0, or prints one `binary: ` line on
+# stderr and returns binary_download's code for its failures, else 1. It never removes <dir>: the
+# subshell's EXIT trap does.
+binary_fetch_steps() {
+  local root="$1" version="$2" dir="$3" build="$1/scripts/build.sh" target="$1/${BINARY_BUILD_PATH}"
+  local list kind f2 f3 asset="" n_asset=0 signer="" n_signer=0 repo
+  # -p: the folder is this call's alone, by its PID, and is no lock. One a KILLed call left under the
+  # same PID goes first.
+  rm -rf "${dir}" 2>/dev/null
+  if ! mkdir -p "${dir}" 2>/dev/null; then
+    echo "binary: could not make ${dir} to download swarm-dev's binary into: check that ${root} is writable, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+  binary_download "${root}" "${version}" "${dir}" || return
+  if ! list="$("${BASH}" "${build}" --list 2>/dev/null)"; then
+    echo "binary: ${build} --list failed after the download, so the binary's signer is not known and it was not installed: ${BINARY_REINSTALL}" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r kind f2 f3 _; do
+    case "${kind}" in
+      asset) [[ "${f3}" =~ ${BINARY_NAME_RE} && -f "${dir}/${f3}" ]] || continue   # loose-match: ok BINARY_NAME_RE is a fixed regex
+        asset="${dir}/${f3}"; n_asset=$((n_asset + 1)) ;;
+      signer) signer="${f2}"; n_signer=$((n_signer + 1)) ;;
+    esac
+  done <<< "${list}"
+  if [[ "${n_signer}" -ne 1 || -z "${signer}" ]]; then
+    echo "binary: ${build} --list has no one signer line, so the binary's build attestation cannot be checked and it was not installed: ${BINARY_REINSTALL}" >&2
+    return 1
+  fi
+  repo="$(binary_repo)"
+  if [[ "${n_asset}" -ne 1 ]]; then
+    echo "binary: ${dir} holds ${n_asset} of the asset files ${build} --list names, where the download leaves one, so none was installed: run it again, and if it fails the same way report it at https://github.com/${repo}/issues" >&2
+    return 1
+  fi
+  binary_attest "${asset}" "${repo}" "${signer}" || return 1
+  if ! chmod +x "${asset}" 2>/dev/null; then
+    echo "binary: could not make ${asset} executable: check that ${root} is writable, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+  if [[ -d "${target}" ]]; then
+    echo "binary: ${target} is a folder, so the checked binary cannot be installed there: remove it and run the command again" >&2
+    return 1
+  fi
+  if ! mv -f "${asset}" "${target}" 2>/dev/null; then
+    echo "binary: could not move the checked binary to ${target}: check that ${root} is writable, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+}
+
+# binary_fetch <root> <version> — download release v<version>'s binary for this platform, check it, and
+# install it as <root>/BINARY_BUILD_PATH. It returns 0, or prints one `binary: ` line on stderr and
+# returns binary_fetch_steps' code.
+#   The steps (binary_fetch_steps) run in a background subshell, with PATH from binary_gh_path and the
+#     subshell's own EXIT, INT, TERM and HUP trap, which removes their folder, <dir>:
+#     <root>/BINARY_FETCH_TMP<pid>.
+#   While they run, binary_fetch traps INT, TERM and HUP in the caller's shell: the trap sends TERM to
+#     the subshell and every process under it (binary_fetch_stop), so gh ends at once. Then the caller's
+#     own traps go back as they were, and the signal is sent again, to the caller's shell, which ends as
+#     it would have without the fetch.
+#   A KILL leaves <dir>, holding a file that is not executable yet: no call runs it, and the next call
+#   fetches again. Two calls at once each use a folder of their own, then rename, so both end with one
+#   whole binary and need no lock.
+binary_fetch() {
+  local root="${1%/}" version="${2:-}" dir saved pid="" sig="" cut=0 rc=0 code
+  dir="${root}/${BINARY_FETCH_TMP}$$"
+  saved="$(trap -p INT TERM HUP)"
+  trap 'sig=INT; cut=1; [[ -z "${pid}" ]] || binary_fetch_stop "${pid}"' INT
+  trap 'sig=TERM; cut=1; [[ -z "${pid}" ]] || binary_fetch_stop "${pid}"' TERM
+  trap 'sig=HUP; cut=1; [[ -z "${pid}" ]] || binary_fetch_stop "${pid}"' HUP
+  (
+    trap 'rm -rf "${dir}" 2>/dev/null' EXIT
+    trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+    PATH="$(binary_gh_path)" binary_fetch_steps "${root}" "${version}" "${dir}"
+  ) &
+  pid=$!
+  [[ -z "${sig}" ]] || binary_fetch_stop "${pid}"   # a signal before $! was known
+  wait "${pid}" || rc=$?
+  # A trapped signal cuts the wait short (over 128): wait again, for the subshell's own code.
+  while [[ ${cut} == 1 && ${rc} -gt 128 ]]; do cut=0; rc=0; wait "${pid}" || rc=$?; done
+  trap - INT TERM HUP
+  eval "${saved}"
+  [[ -n "${sig}" ]] || return "${rc}"
+  case "${sig}" in INT) code=130 ;; TERM) code=143 ;; *) code=129 ;; esac
+  kill -s "${sig}" "$$"
+  return "${code}"   # the caller's own trap took the signal and went on
+}
+
+# binary_ensure <root> — make sure the plugin copy at <root> has its binary, and export SWARMDEV_BIN
+# naming it, so a ported command, and a helper entry that a command's bash calls, finds it. swarm.sh
+# runs it on every call but version and update, before it looks for a project.
+#   SWARMDEV_BIN set, even empty: nothing; binary_find runs that file.
+#   <root>/.git there (a git checkout): nothing; binary_path builds from the tree for a ported command.
+#   Otherwise (an installed copy): binary_present, else binary_fetch for the version in
+#     <root>/.claude-plugin/plugin.json. Then SWARMDEV_BIN=<root>/BINARY_BUILD_PATH, exported.
+# With the binary present it starts no process. On failure it exports nothing, leaves binary_fetch's one
+# line on stderr (or its own, when the version cannot be read) and returns binary_fetch's code (else 1).
+# It never dies, so its caller can go on.
+binary_ensure() {
+  local root="${1%/}" version
+  [[ -z "${SWARMDEV_BIN+set}" ]] || return 0
+  if [[ -z "${root}" ]]; then echo "binary: binary_ensure was given no plugin root" >&2; return 1; fi
+  [[ ! -e "${root}/.git" ]] || return 0
+  if ! binary_present "${root}"; then
+    version="$(plugin_version 2>/dev/null < "${root}/.claude-plugin/plugin.json")" || version=""
+    if [[ -z "${version}" ]]; then
+      echo "binary: cannot read this copy's version from ${root}/.claude-plugin/plugin.json, so it cannot tell which release's binary to download: ${BINARY_REINSTALL}" >&2
+      return 1
+    fi
+    binary_fetch "${root}" "${version}" || return
+  fi
+  export SWARMDEV_BIN="${root}/${BINARY_BUILD_PATH}"
 }
 
 # binary_repo — the GitHub repository whose releases hold the swarm binaries, as <owner>/<repo>.
