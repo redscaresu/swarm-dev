@@ -126,3 +126,10 @@ The lead ran these on the throwaway copy, each install in a throwaway CLAUDE_CON
 - **Rollback:** swarm-dev@swarm-dev-pre, from the copy's pre-marketplace branch, installed version B: 0.31.3, commit 051371a6, with a marker line in hooks/lead-stop.sh. The admin role force-pushed prerelease back to A (v0.31.2, cfe2a200). `marketplace update` and `plugin update` then moved the install to 0.31.2 at cfe2a200, and the marker was gone from the active hook. No uninstall or cache clear was needed: the update rewrites the install path, which a restart loads.
 - **Binary half:** proved in release-client's real-release check, as the user agreed.
 - **Rollback entry's issue:** https://github.com/redscaresu/swarm-dev/issues/1116
+
+## release-marketplace results (2026-11-22)
+
+- #1118 set main's marketplace.json plugin source to `{"source": "url", "url": "https://github.com/redscaresu/swarm-dev.git", "ref": "stable"}` and added the stable and prerelease paragraph to docs/reference-merging.md § Releases. plugin-validate was green on it. The user merged it as ab1af7ec.
+- A fresh install from redscaresu/swarm-dev, in a throwaway CLAUDE_CONFIG_DIR (`claude plugin marketplace add redscaresu/swarm-dev`, then `claude plugin install swarm-dev@swarm-dev`), installed 0.31.3 at 06b35a67, which is stable's version and commit.
+- The lead's own install is 0.31.3 at 06b35a67, stable's version. An update moves an install only on a version change (release-install-proof), so it keeps its version. The lead did not run an update on its real install, because agents run from it.
+- stable and prerelease both still name v0.31.3 (06b35a67).
