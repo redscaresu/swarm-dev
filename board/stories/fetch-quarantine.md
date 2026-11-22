@@ -21,7 +21,10 @@ Tests: new tests/binary_quarantine_test.sh sources binary.sh and adds its docs/p
 .github/workflows/macos.yml is the macOS job (job macos-tests, SUBSET at :33, comment list at :26-32); ci.yml has none. Add four files to SUBSET, each with one comment line: tests/binary_download_test.sh (the checksum under BSD shasum), tests/binary_source_test.sh (go.mod read with bash 3.2's builtins), tests/binary_fetch_test.sh (the composed fetch, traps and rename under bash 3.2) and tests/binary_quarantine_test.sh (a real mark). No new action and no pin change. The PR changes .github/, so swarm.sh merge holds it for the user: this is the epic's Your part. Do not merge it.
 Docs: docs/running.md's First run gains one list item for the quarantine line and what to do. Run the humanizer.
 
+Under (b), `binary_present` must tell a quarantined binary from an absent one: it returns a distinct status (or prints the refusal and exits) for a marked file, and `binary_ensure` stops the call on it instead of falling through to `binary_fetch`. Falling through would download over the marked file and run it (codex).
+
 **Done when:**
+- Under (b): a present binary carrying the mark stops the call with one line, and the gh stub logs no release download.
 - On macOS (the builder's machine), with the download marked by a real xattr -w com.apple.quarantine, `swarm.sh config` from an empty no-.git copy with bin/ported/config present: exit 1, exactly one stderr line naming the mark, empty stdout, no <copy>/swarm and no .fetch-* folder. On Linux that case says it is skipped.
 - With a uname stub reporting Darwin, binary_download: a BINARY_XATTR stub reporting the mark returns 1 with one line; one reporting none returns 0; BINARY_XATTR naming a missing file returns 1 with one line. With Linux, no xattr start is logged.
 - Only under (b): a present <copy>/swarm with a real mark makes `swarm.sh config` exit 1 with one line on macOS; unmarked, config runs. The PR body records, dated, the median of 20 runs of `swarm.sh usage` with the check.

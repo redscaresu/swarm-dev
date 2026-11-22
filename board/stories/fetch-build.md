@@ -19,7 +19,10 @@ binary_path keeps its checkout behaviour and lines: tests/binary_build_test.sh p
 A KILL mid-build leaves the swarm.build-<pid> file, which no call runs; .gitignore covers it in a checkout.
 Tests: new tests/binary_source_test.sh sources binary.sh and adds its docs/port/tests.tsv row. Use a no-.git copy whose cmd/swarm/main.go prints a word (as tests/binary_build_test.sh:42-64), real go behind a logging stub, and go stubs for the version cases. For the KILL, a go stub writes half a file to its -o path and then blocks; use in_new_group and stop_group (tests/test_helpers.sh).
 
+Read the installed Go's version with `GOTOOLCHAIN=local go env GOVERSION`, run outside the module (`cd` to a temp dir) or with that variable, so the probe never tries to download a newer toolchain: with the default `GOTOOLCHAIN=auto`, a probe inside a module that asks for a newer Go can itself try to fetch it, and it fails offline instead of naming the installed version (codex).
+
 **Done when:**
+- A case with a go stub that fails when GOTOOLCHAIN is not `local` passes: the version probe reports the stub's older version and the line names it and go.mod's, offline.
 - On a no-.git copy, binary_build returns 0, <copy>/swarm prints the word, and no swarm.build-* file is left.
 - No go on PATH: return 1 with one line naming go.mod's 1.27.1, and no <copy>/swarm. A copy with no cmd/swarm, and one with no go.mod: return 1 with one line each, and the go stub logs no build.
 - A go stub whose GOVERSION is go1.0.0 and whose build fails: one line naming go1.0.0, 1.27.1 and what to do, then the stub's error. One whose GOVERSION is go1.99.0 and whose build fails: today's line and the stub's error, not the older-Go line.

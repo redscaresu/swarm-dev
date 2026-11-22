@@ -29,7 +29,10 @@ Tests: new tests/binary_fetch_test.sh drives swarm.sh from outside, so it needs 
 Docs: README.md Requirements' GitHub CLI row (:53) names BINARY_GH_MIN. docs/running.md gets two sections before Updating (:155). First run: each installed version's first call downloads and checks its binary once; what each stop line means; what a killed fetch leaves. Offline: with no network the call stops in one line; version and update still run. docs/reference-logs.md's gh_calls paragraph (:470-482) gets one line: the calls that fetch the binary run the real gh past the shim and are not counted. Run the humanizer over that prose and the PR body.
 risk high: this is where the checks compose, and a wrong order publishes a file nothing checked.
 
+The fetch runs before `main` installs swarm.sh's own traps, so a TERM or INT sent to swarm.sh during the download does not reach traps set inside a `binary_fetch` subshell. Run the fetch in the same shell, or install a trap for the fetch's span that kills the gh child and removes the temp folder, and restore the previous trap after it (codex).
+
 **Done when:**
+- A case sends TERM to swarm.sh while the gh stub's download sleeps: within 5 s no gh child is left running and no temp folder is left in the plugin folder.
 - `swarm.sh config` from the copy: the gh stub logs release download (github.com repo, v<plugin.json version>, this platform's asset and SHA256SUMS), then attestation verify on a file in <copy>/.fetch-<pid>/ with the asset's name and release.yml as signer. Afterwards <copy>/swarm is executable and cmp-equal to the fake release, config's output follows, and no .fetch-* folder is left.
 - A copy whose scripts/build.sh --list names another signer: the attestation call carries it.
 - A stub on PATH that the command runs sees SWARMDEV_BIN=<copy>/swarm. With bin/ported/_wrapper-fixture in the copy, `swarm.sh _wrapper-fixture a 'b c'` fetches, then prints the fixture's two arguments and the frame's project, as tests/binary_dispatch_test.sh:225-227 checks.
