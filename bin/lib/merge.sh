@@ -1186,7 +1186,7 @@ short_shas() {
 # and merges that head, the head for every check below), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
-# passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
+# passed, its files at the pinned head change no protected path, unless merge_protected = on (protected_hold: .claude/, .github/,
 # hooks/ or a root Makefile, and in this plugin's own repo internal/guard/, internal/merge/,
 # internal/release/, internal/agentenv/, internal/layers/ or .claude-plugin/, a renamed file's old path
 # too), which only
