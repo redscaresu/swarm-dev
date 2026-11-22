@@ -1,13 +1,17 @@
 # shellcheck shell=bash
 # binary.sh — find the swarm binary a command runs, and run it. A hook sources it on its own, and
 # bin/swarm.sh with its other libs: it needs no other bin/lib file, sets no shell option and starts no
-# process when sourced, and binary_find and is_ported start none either. binary_run is swarm.sh's
-# alone. It never builds and never downloads.
+# process when sourced, and binary_find and is_ported start none either. binary_path and binary_run are
+# swarm.sh's alone. Only binary_path builds, and only in a git checkout; nothing here downloads.
 
 # BINARY_BUILD_PATH: where a git checkout of the plugin keeps the binary built from its tree, relative to
 # the plugin root. It is the file `go build ./cmd/swarm` writes at the root, which .gitignore already
 # ignores, and it is outside bin/, which several tests scan file by file.
 BINARY_BUILD_PATH=swarm
+# BINARY_BUILD_TMP: the suffix of the file binary_path builds into beside BINARY_BUILD_PATH, before its
+# rename; the caller's PID follows it. .gitignore ignores it too, so a build cut short leaves no
+# untracked file.
+BINARY_BUILD_TMP=.build-
 
 # binary_find <plugin root> — print the path of the binary to run and return 0, or print one line on
 # stderr saying why there is none and return 1. The caller passes the root: a hook its own, swarm.sh
@@ -41,6 +45,52 @@ binary_find() {
   printf '%s\n' "${built}"
 }
 
+# binary_stale <root> <binary> — true when a file the binary is built from is newer than <binary>: a .go
+# file under <root>/cmd or <root>/internal (each when it exists), or <root>/go.mod or go.sum. It looks
+# nowhere else under the root, whose .swarm/ can hold hundreds of MB. find's -newer and -print -quit
+# are BSD's and GNU's both.
+binary_stale() {
+  local root="$1" bin="$2" dirs=() d
+  [[ "${root}/go.mod" -nt "${bin}" || "${root}/go.sum" -nt "${bin}" ]] && return 0
+  for d in cmd internal; do [[ -d "${root}/${d}" ]] && dirs+=("${root}/${d}"); done
+  [[ ${#dirs[@]} -gt 0 ]] || return 1
+  [[ -n "$(find "${dirs[@]}" -type f -name '*.go' -newer "${bin}" -print -quit 2>/dev/null)" ]]
+}
+
+# binary_path <plugin root> — binary_find, and in a git checkout with SWARMDEV_BIN unset, the binary
+# built from the checkout's tree. It prints the path to run and returns 0, or prints why there is none
+# on stderr, its first line one line of its own, and returns 1.
+#   SWARMDEV_BIN set, or the root no git checkout: binary_find's answer, unchanged. It builds nothing.
+#   A git checkout: it builds ./cmd/swarm into <root>/BINARY_BUILD_PATH when there is no executable file
+#     there, or when binary_stale says the tree is newer. go builds into a file of its own beside it,
+#     which is then renamed over it, so a call started at the same time never runs half a file. With no
+#     go on PATH it stops in one line. A failed build stops with a line and Go's error, removes its own
+#     file and leaves the old binary as it was; the caller never runs the old one.
+# Only binary_run calls it, for a marked command, so no other command starts a find. A hook that
+# needs the binary uses binary_find, which never builds.
+binary_path() {
+  local root="${1:-}" built tmp out
+  if [[ -n "${SWARMDEV_BIN+set}" || -z "${root}" || ! -e "${root%/}/.git" ]]; then
+    binary_find "${root}"; return
+  fi
+  root="${root%/}"; built="${root}/${BINARY_BUILD_PATH}"
+  if [[ -f "${built}" && -x "${built}" ]] && ! binary_stale "${root}" "${built}"; then
+    printf '%s\n' "${built}"; return 0
+  fi
+  if ! command -v go >/dev/null 2>&1; then
+    echo "binary: ${root} is a git checkout, which builds the ported command's binary from its tree, and go is not on PATH: install Go, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+  tmp="${built}${BINARY_BUILD_TMP}$$"
+  if ! out="$(cd "${root}" && go build -o "${tmp}" ./cmd/swarm 2>&1)"; then
+    rm -f "${tmp}"
+    printf 'binary: go build ./cmd/swarm failed in %s, so the ported command did not run:\n%s\n' "${root}" "${out}" >&2
+    return 1
+  fi
+  mv -f "${tmp}" "${built}" || { rm -f "${tmp}"; echo "binary: could not move the build to ${built}" >&2; return 1; }
+  printf '%s\n' "${built}"
+}
+
 # PORTED_NAME_RE: the dispatch names a marker can send to the binary. It holds no / and no leading .,
 # so no name reaches a file outside bin/ported/ or a dotfile in it.
 PORTED_NAME_RE='^[a-z_][a-z0-9_-]*$'
@@ -50,8 +100,8 @@ PORTED_NAME_RE='^[a-z_][a-z0-9_-]*$'
 # every command, and a command with no marker must start no more processes than before.
 is_ported() { [[ "$1" =~ ${PORTED_NAME_RE} && -f "${SWARM_HOME}/bin/ported/$1" ]]; }   # loose-match: ok PORTED_NAME_RE is a fixed regex
 
-# binary_run <name> [args] — bin/swarm.sh's dispatch of a ported command: run the file binary_find
-# names (or die with its line) as `<binary> <name> [args]`, in a subshell, and return its exit
+# binary_run <name> [args] — bin/swarm.sh's dispatch of a ported command: run the file binary_path
+# names (or die with its line, and any Go error after it) as `<binary> <name> [args]`, in a subshell, and return its exit
 # code. stdin passes through. It hands over the frame (cmd/swarm/frame.go): SWARMDEV_HOME,
 # SWARMDEV_PROJECT, SWARMDEV_BOARD, and each CONFIG_KEYS key as SWARMDEV_CFG_<key> and SWARMDEV_SRC_<key>,
 # valued as `swarm.sh config` shows them (board_dir and repos_dir resolved). The die file and the fields
@@ -61,7 +111,7 @@ is_ported() { [[ "$1" =~ ${PORTED_NAME_RE} && -f "${SWARM_HOME}/bin/ported/$1" ]
 # needs die, CONFIG_KEYS and the settings.
 binary_run() {
   local bin die_file="" fields_file="" key v n
-  bin="$(binary_find "${SWARM_HOME}" 2>&1)" || die "${bin}"
+  bin="$(binary_path "${SWARM_HOME}" 2>&1)" || die "${bin}"
   # A bare name (SWARMDEV_BIN=swarm) is the file binary_find checked in the cwd, never a PATH lookup.
   [[ "${bin}" == */* ]] || bin="./${bin}"
   if [[ -n "${DIE_FILE}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]]; then

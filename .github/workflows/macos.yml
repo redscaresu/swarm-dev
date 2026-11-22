@@ -29,7 +29,7 @@ jobs:
       #   tests/env_allowlist_test.sh  the environment an agent starts with (AGENT_ENV in bin/lib/agents.sh)
       #   tests/binary_find_test.sh    binary_find (bin/lib/binary.sh), which finds the swarm binary
       #   tests/binary_dispatch_test.sh  dispatch's run of the binary for a ported command, and the frame it hands over
-      SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh tests/binary_find_test.sh tests/binary_dispatch_test.sh
+      SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh tests/binary_find_test.sh tests/binary_dispatch_test.sh tests/binary_build_test.sh
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
