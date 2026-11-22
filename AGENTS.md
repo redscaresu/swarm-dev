@@ -167,6 +167,7 @@ bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
 cmd/swarm/            the Go command, the wiring layer: the table of entries by name and the frame bash hands
                       over (frame.go); no command is ported yet, and wrapper-fixture is for the wrapper's tests
+                      bridge.go runs a form still in bash as `bash bin/swarm.sh _<name>`
 internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
                       the store's two methods for the frame's files and the store's types
 internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
@@ -249,6 +250,7 @@ Development rules for anyone, agent or person, working in this repository:
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
 - Go layers: a rules package (every package but `cmd/` and those under it, `internal/iface`, `internal/clock` and the four adapters under `internal/adapter/`) starts no process, touches no file, uses no network and imports no adapter.
   Only `internal/clock` reads the time.
+  Wiring imports no `os/exec` either, except `cmd/swarm/bridge.go`, which hands a form still in bash to `bin/swarm.sh` and goes with the last one.
   The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
   `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.

@@ -79,13 +79,33 @@ It sends a marked name to the binary through `binary_run` in `bin/lib/binary.sh`
 Only a name that matches `^[a-z_][a-z0-9_-]*$` can reach a marker, so `/`, `..` and dotfiles never do.
 `binary_run` hands the binary the frame `cmd/swarm/frame.go` reads, in `SWARMDEV_` variables.
 It sets each of them on every run, empty ones included, so a `swarm.sh` the binary runs never inherits its parent's die file.
-With no binary to run, the command stops with the line `binary_find` gives.
+`binary_run` takes the binary from `binary_path`.
+With `SWARMDEV_BIN` set, or in a copy with no `.git`, that is the file `binary_find` gives.
+When there is no such file, the command stops with `binary_find`'s line.
+In a git checkout with `SWARMDEV_BIN` unset, `binary_path` builds `./cmd/swarm` into `swarm` at the root when there is none there, or when a `.go` file under `cmd/` or `internal/`, or `go.mod` or `go.sum`, is newer than it.
+It builds into a file of its own beside `swarm` and renames it, so two calls at once never run half a file.
+With no go on PATH it stops in one line, and a failed build stops with Go's error and leaves the old binary unrun.
+`binary_find` itself never builds, so a hook that sources `bin/lib/binary.sh` and calls it starts no build.
+tests/binary_build_test.sh drives the build in a git checkout of a copy of the tree.
 `is_command` counts a marked name as a command, so `main` logs it as it logs a bash arm.
 A name with no marker runs its bash arm, and the check for its marker starts no process.
 tests/swarm_commands.sh reads each marker as a command name for doc_check, skill_test, port_names and events_test.
 `cmd/swarm`'s `TestTableMatchesMarkers` fails when the Go table and the markers name different commands.
 A fixture entry, such as `wrapper-fixture`, has no marker in the tree.
 tests/binary_dispatch_test.sh adds that marker in a copy of the tree to drive the wrapper.
+
+## Two forms
+
+No marker routes by flag.
+When a command's first port leaves one of its forms in bash, that form moves to a dispatch arm named `_<name>`.
+The Go runs it through `bridge` in `cmd/swarm/bridge.go`, as `bash <SWARMDEV_HOME>/bin/swarm.sh _<name> <args>`.
+It sets `SWARM_PROJECT` to the frame's project, so the nested `swarm.sh` finds the same project from any cwd.
+It passes `SWARM_GH_VIA` on as the binary got it, so the nested call logs its gh calls under the same via.
+stdin, stdout, stderr and the exit code pass through unchanged.
+`bridge.go` is the one file outside the four adapters that may import `os/exec`, and `internal/layers` names it.
+The reverse needs no bridge: bash runs a `_` entry of the binary as it runs its own `_` arms, `"${BASH}" "${SWARM_HOME}/bin/swarm.sh" _<name>`.
+`wrapper-fixture`'s first argument `name` or `board-rel` is its bash form, which runs `_name` or `_board-rel`.
+`_wrapper-fixture` is the `_` entry tests/binary_dispatch_test.sh runs from bash.
 
 ## The closed plumbing list
 
