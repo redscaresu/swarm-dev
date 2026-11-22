@@ -334,6 +334,7 @@ never `[[wikilinks]]`.
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 14 `test-shard` jobs do (`SHARD=i/N` runs one locally).
 `go-checks` (`.github/workflows/go.yml`) is required on `main` too: it runs gofmt, go vet, go test and the Go layer checks.
+`build-check` (`.github/workflows/build-check.yml`) is required on `main` too: on a PR that changes `.claude-plugin/plugin.json` it builds the four binaries and checks them against `scripts/build.sh --list`, and on every other PR it skips those steps and passes.
 `macos-tests` (`.github/workflows/macos.yml`) runs `go test ./...` and a small subset of the bash tests on macOS arm64, under macOS's bash 3.2.
 It is required on `main` too.
 Before a minor release that no done retro file covers, `swarm.sh next` prints `retro v<x.y.z>`, and the lead goes
