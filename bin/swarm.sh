@@ -224,11 +224,20 @@ update_plugin() {
   echo "Restart Claude Code to load the new version."
 }
 
+# The binary's lib comes first: binary_ensure, below, runs before a project is looked for. It starts no
+# process when sourced, so version and update pay nothing for it.
+# shellcheck source=bin/lib/binary.sh
+source "${SWARM_HOME}/bin/lib/binary.sh"
+
 # Neither needs a project: they run before one is looked for.
 case "${1:-}" in
   version) show_version; exit ;;
   update)  update_plugin; exit ;;
 esac
+
+# Every other call, inside a project or not, first makes sure an installed copy has its checked binary
+# (binary_ensure). When it cannot, its one line is the call's last: no command's bash runs.
+binary_ensure "${SWARM_HOME}" || exit 1
 
 # main_checkout <dir> — <dir> as it sits in its repo's main checkout, so a worktree resolves to the
 # same project as the checkout it came from. Fails when <dir> is not in a git repo.
@@ -618,8 +627,6 @@ cut_names() {
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
-# shellcheck source=bin/lib/binary.sh
-source "${SWARM_HOME}/bin/lib/binary.sh"
 # shellcheck source=bin/lib/agents.sh
 source "${SWARM_HOME}/bin/lib/agents.sh"
 # shellcheck source=bin/lib/reports.sh

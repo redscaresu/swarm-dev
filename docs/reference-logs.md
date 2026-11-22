@@ -471,7 +471,9 @@ no held line has no row. `--epic` does not narrow either table.
 The `gh_calls` section shows how the swarm spends GitHub's two hourly budgets (5000 GraphQL points
 and 5000 REST requests). swarm.sh puts `bin/gh-shim` first on its own PATH and on every agent's, a
 restored agent's too. The lead's own gh calls outside swarm.sh, and a person's, do not go through it
-and are not counted. The shim runs the real `gh` with the same arguments, stdin and exit code (an
+and are not counted.
+The calls that fetch an installed copy's binary on its first run go to the real `gh`, past the shim, so they are not counted either.
+The shim runs the real `gh` with the same arguments, stdin and exit code (an
 INT ends it and exits 130, as an interrupted gh would), then appends a line to the project's
 `.swarm/gh-calls.tsv`: the UTC time; the agent (its name, or `-` outside any agent); the via
 (`swarm.sh <command>` when swarm.sh made the call, a builder's `swarm.sh wait-pr` among them, else
