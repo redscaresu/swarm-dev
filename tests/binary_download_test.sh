@@ -72,14 +72,19 @@ call() {
     "${HOST}" "${VERSION}" "${FETCH_REPO}" "$1" "$2" "$3"
 }
 
-# run_lib <path> <copy> <dir>: binary_download <copy> VERSION <dir> in a new bash with PATH <path> and
-# GH_HOST, from <copy>. Sets rc, out and err.
+# NOMARK: an xattr stub that lists no attribute. With uname reporting Darwin, binary_download checks the
+# asset for macOS's quarantine mark with BINARY_XATTR, which Linux does not have; tests/binary_quarantine_test.sh
+# tests that check.
+NOMARK="${ROOT}/xattr-nomark"; printf '#!/bin/sh\nexit 0\n' > "${NOMARK}"; chmod +x "${NOMARK}"
+
+# run_lib <path> <copy> <dir>: binary_download <copy> VERSION <dir> in a new bash with PATH <path>,
+# GH_HOST and BINARY_XATTR=NOMARK, from <copy>. Sets rc, out and err.
 run_lib() {
   rc=0
   # shellcheck disable=SC2016 # the inner bash expands its own arguments
   (cd "$2" || exit 1
-   env GH_HOST="${HOST}" PATH="$1" "${BASH}" -c 'source "$1" && binary_download "$2" "$3" "$4"' _ \
-     "${LIB}" "$2" "${VERSION}" "$3") > "${ROOT}/out" 2> "${ROOT}/err" || rc=$?
+   env GH_HOST="${HOST}" PATH="$1" "${BASH}" -c 'source "$1" && BINARY_XATTR="$5" && binary_download "$2" "$3" "$4"' _ \
+     "${LIB}" "$2" "${VERSION}" "$3" "${NOMARK}") > "${ROOT}/out" 2> "${ROOT}/err" || rc=$?
   out="$(cat "${ROOT}/out")"; err="$(cat "${ROOT}/err")"
 }
 # dl <name> <path> <copy>: run_lib into D, a new empty folder, and check it changed nothing in <copy>.

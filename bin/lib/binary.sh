@@ -2,7 +2,8 @@
 # binary.sh — find the swarm binary a command runs, run it, and fetch an installed copy's binary. A hook
 # sources it on its own, and bin/swarm.sh before its version case, not with its other libs: it needs no
 # other bin/lib file, sets no shell option and starts no process when sourced, and binary_find,
-# binary_gh_path, binary_present and is_ported start none either. binary_path, binary_run, binary_fetch
+# binary_gh_path and is_ported start none either, nor does binary_present on Linux (on macOS it starts
+# one xattr). binary_path, binary_run, binary_fetch
 # and binary_ensure are swarm.sh's alone: binary_ensure reads the version with swarm.sh's plugin_version.
 # Only binary_build builds: binary_path calls it in a git checkout, and binary_ensure in an installed copy
 # whose download cannot work. Only binary_download downloads: with gh, into a folder its caller gives, and
@@ -10,7 +11,10 @@
 # copy only binary_fetch and binary_build write it: binary_fetch calls binary_download into a folder of
 # its own, checks the build attestation with binary_attest, then renames the file over <root>/swarm.
 # binary_ensure, which swarm.sh runs on every call but update (version goes on when it fails), calls binary_fetch when that
-# file is missing, so the checks run once, at download. When the download cannot work here (a gh too
+# file is missing, so the checks run once, at download. The one exception is macOS's quarantine mark
+# (binary_quarantined): binary_download checks the download for it, and binary_present checks the
+# installed binary (BINARY_BUILD_PATH) for it on every call, as a mark can be added after the download.
+# When the download cannot work here (a gh too
 # old to check the attestation, or binary_fetch's BINARY_CANNOT), it builds from the source beside it
 # instead, and says so; a download that fails its checks stops the call.
 
@@ -302,9 +306,21 @@ binary_gh_path() {
   printf '%s\n' "${out}"
 }
 
-# binary_present <root> — true when <root>/BINARY_BUILD_PATH is an executable file, the binary an
-# earlier call fetched. Builtins only, no fork: swarm.sh asks it on every call in an installed copy.
-binary_present() { [[ -f "${1%/}/${BINARY_BUILD_PATH}" && -x "${1%/}/${BINARY_BUILD_PATH}" ]]; }
+# binary_present <root> — whether <root>/BINARY_BUILD_PATH, the binary an earlier call fetched, is there
+# to run. swarm.sh asks it on every call in an installed copy.
+#   0: it is an executable file, with no quarantine mark on macOS.
+#   1: there is no executable file there, and it prints nothing.
+#   2: on macOS, binary_quarantined refused it (the mark, or xattr missing or failing), with its one
+#     line on stderr. The caller stops: a fetch would download over a marked file the user should look at.
+# It tells macOS by $OSTYPE, a builtin, so on Linux it starts no process. On macOS it starts one,
+# BINARY_XATTR, on every call: a mark added after the download, by a plugin folder copied through a
+# browser or AirDrop, is caught only there.
+binary_present() {
+  local f="${1%/}/${BINARY_BUILD_PATH}" os=""
+  [[ -f "${f}" && -x "${f}" ]] || return 1
+  [[ "${OSTYPE}" != darwin* ]] || os=darwin
+  binary_quarantined "${f}" "${os}" "delete it and run the command again, which downloads and checks a new copy" || return 2
+}
 
 # binary_fetch_stop <pid> — send TERM to <pid> and to every process under it, the deepest first, as one
 # ps listing shows them. binary_fetch's traps call it: gh runs inside a $( ) of binary_download, and the
@@ -489,18 +505,22 @@ binary_copy_lists() {
 #     binary_fetch returns BINARY_CANNOT, and on nothing else: binary_fallback then builds from source.
 #     Any other code of binary_fetch's (a wrong checksum, a failed attestation, a broken copy) stops
 #     with binary_fetch's line, whether or not Go is installed.
-#   Then SWARMDEV_BIN=<root>/BINARY_BUILD_PATH, exported.
+#   Then SWARMDEV_BIN=<root>/BINARY_BUILD_PATH, exported. When binary_present refuses the file (its 2: a
+#     quarantine mark on macOS) it returns 1 and neither fetches nor builds, so the marked file is neither
+#     run nor written over.
 # binary_fetch's and binary_build's stderr go through a file of mktemp's in TMPDIR, which it removes; a
 # call killed meanwhile leaves it, and a build killed mid-way leaves binary_build's file too.
-# With the binary present it starts no process. On failure it exports nothing, leaves one `binary: `
+# With the binary present it starts no process on Linux, and one xattr on macOS (binary_present). On failure it exports nothing, leaves one `binary: `
 # line on stderr (a failed build's with Go's error after it) and returns binary_fetch's code, else 1.
 # It never dies, so its caller can go on.
 binary_ensure() {
-  local root="${1%/}" version why="" rc=0 tmp
+  local root="${1%/}" version why="" rc=0 tmp present=0
   [[ -z "${SWARMDEV_BIN+set}" ]] || return 0
   if [[ -z "${root}" ]]; then echo "binary: binary_ensure was given no plugin root" >&2; return 1; fi
   [[ ! -e "${root}/.git" ]] || return 0
-  if ! binary_present "${root}"; then
+  binary_present "${root}" || present=$?
+  [[ "${present}" -ne 2 ]] || return 1
+  if [[ "${present}" -ne 0 ]]; then
     version="$(plugin_version 2>/dev/null < "${root}/.claude-plugin/plugin.json")" || version=""
     if [[ -z "${version}" ]]; then
       echo "binary: cannot read this copy's version from ${root}/.claude-plugin/plugin.json, so it cannot tell which release's binary to download: ${BINARY_REINSTALL}" >&2
@@ -559,6 +579,9 @@ BINARY_SUM_RE='^([^ ]+) [ *](.*)$'
 #     gh's output, only its first non-empty stderr line is ever shown.
 #   The check: the one line of the checksum file whose name field is exactly the asset's name. No such
 #     line, two of them, or another sum fails.
+#   The mark: then binary_quarantined, with the os it mapped from uname -s, so on darwin a quarantine
+#     mark on the asset, or an xattr that is missing or fails, gives its line and returns 1, never
+#     BINARY_CANNOT.
 # It writes only inside <dir>, and runs no python3 or curl.
 binary_download() {
   local root="${1:-}" version="${2:-}" dir="${3:-}" build list s m os arch kind f2 f3 why=""
@@ -640,4 +663,42 @@ binary_download() {
   elif [[ "${got}" != "${want}" ]]; then
     echo "binary: the SHA-256 of v${version}'s ${asset} does not match its line in ${sums}: ${report}" >&2; return 1
   fi
+  binary_quarantined "${file}" "${os}" "it was not installed: ${report}" || return 1
+}
+
+# BINARY_XATTR: the xattr binary_quarantined runs on macOS, named by its absolute path and never looked
+# up on PATH, where any folder ahead of /usr/bin could answer for it. A test sets it after sourcing.
+BINARY_XATTR=/usr/bin/xattr
+# BINARY_QUARANTINE: the extended attribute macOS sets on a file that a browser, AirDrop or a mail app
+# wrote, which Gatekeeper checks before the file first runs.
+BINARY_QUARANTINE=com.apple.quarantine
+
+# binary_quarantined <file> <os> <fix> — return 0 when <file> carries no macOS quarantine mark. <os> is
+# the platform as binary_download maps uname -s: only on darwin does it look, by running
+# `BINARY_XATTR <file>`, which lists <file>'s extended attributes one name a line, the one process it
+# starts. On any other <os> it starts nothing and returns 0. On darwin it prints one `binary: ` line on
+# stderr and returns 1, with no fallback, so the caller neither installs nor runs <file>:
+#   a listed name is exactly BINARY_QUARANTINE: the line says <file> carries the mark, then <fix>, what
+#     the caller says to do;
+#   BINARY_XATTR is not an executable file, or it exits non-zero (it could not read <file>): the mark
+#     cannot be checked, so it fails closed.
+# It lists the names rather than asking for the one attribute (xattr -p), because -p exits 1 both when
+# the attribute is absent and when it cannot read the file, so a failed read would pass as no mark.
+binary_quarantined() {
+  local file="$1" os="$2" fix="$3" names name
+  [[ "${os}" == darwin ]] || return 0
+  if [[ ! -f "${BINARY_XATTR}" || ! -x "${BINARY_XATTR}" ]]; then
+    echo "binary: ${BINARY_XATTR} is not an executable file, so whether ${file} carries macOS's quarantine mark cannot be checked, and swarm.sh did not run it: check that macOS's xattr is at ${BINARY_XATTR}, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+  if ! names="$("${BINARY_XATTR}" "${file}" </dev/null 2>/dev/null)"; then
+    echo "binary: ${BINARY_XATTR} could not list the extended attributes of ${file}, so whether it carries macOS's quarantine mark cannot be checked, and swarm.sh did not run it: ${fix}" >&2
+    return 1
+  fi
+  while IFS= read -r name; do
+    [[ "${name}" != "${BINARY_QUARANTINE}" ]] && continue
+    echo "binary: ${file} carries macOS's quarantine mark (${BINARY_QUARANTINE}), so swarm.sh did not run it: ${fix}" >&2
+    return 1
+  done <<< "${names}"
+  return 0
 }
