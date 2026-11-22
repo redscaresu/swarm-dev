@@ -168,10 +168,12 @@ The fetch runs the real `gh`, past swarm-dev's gh-shim, and needs gh 2.57.0 or n
 A git checkout of swarm-dev never fetches: it builds the binary from its own tree.
 With `SWARMDEV_BIN` set, swarm.sh runs that file and fetches nothing.
 
-When the fetch fails, the call stops with one line that starts `binary:`, and the command does not run:
+When the download cannot work here (no binary for this platform, no gh, a gh older than 2.57.0, or a failed `gh release download`), a machine with Go builds the binary from source instead, as [Offline](#offline) says.
+Otherwise, or when that build fails too, the call stops with one line that starts `binary:`, and the command does not run:
 
 - `swarm-dev publishes no binary for <os>/<arch>`: build one with `go build ./cmd/swarm` and set `SWARMDEV_BIN` to its path.
 - `gh is not on PATH`: install the GitHub CLI and run `gh auth login`.
+- `gh <version> is older than 2.57.0`, or `gh --version's first line ... is not 'gh version X.Y.Z'`: upgrade gh. Nothing was downloaded.
 - `gh release download ... failed`: the line quotes gh. Fix what it says (no network, or no login), then run the command again.
 - `gh attestation verify failed`, with `(no answer within 60 s)` when gh did not answer: check that gh is 2.57.0 or newer, logged in and online.
 - `the SHA-256 of ... does not match`: the file is not the one the release lists, so it was not installed. Run the command again, and report it if it fails the same way.
@@ -189,7 +191,16 @@ Two calls at once each fetch into a folder of their own, then move a checked bin
 
 ## Offline
 
-With no network, an installed copy's first call stops with the `gh release download` line, and the command does not run.
+With no network, an installed copy's first call cannot download its binary.
+If Go is installed, it builds the binary from the source in the plugin folder instead, prints one line, `binary: built from source, as <why the download could not work>`, and the command runs.
+It builds the same way whenever the download cannot work here: no binary for this platform, no gh, a gh older than 2.57.0, or a failed `gh release download`.
+The build needs the Go version that the plugin's go.mod names, or newer.
+An older Go fetches that version itself, which needs the network.
+If Go is missing or the build fails, the call stops with one `binary:` line, then any error Go printed, and the command does not run.
+The line names why the download could not work, the Go version go.mod names, and why the build failed.
+A download that fails a check (a wrong SHA-256, or a failed attestation) never builds, whether or not Go is installed: the call stops with the check's line.
+A build that is stopped part way leaves no `swarm`.
+It can leave a `swarm.build-<pid>` file in the plugin folder, which no call runs; the next call builds again, and you can delete the file.
 Once the binary is there, a call needs no network to find it.
 `swarm.sh version` and `swarm.sh update` never need the binary, so they still run.
 
