@@ -8,7 +8,10 @@
 # read their own output form and print what they print with the cache off.
 # The watches run in rounds: a sleep stub on PATH logs each watch's nap (its scaled 60 s, NAP) to
 # ${FX}/naps and holds the k-th until ${FX}/allowed is above k, then sleeps it (or, with NAP_SKIP set,
-# returns at once), so the watches let go together poll together. gh is a stub that logs "<watcher> <args>" to gh.log for every call: the list
+# returns at once), so the watches let go together poll together. allow writes ${FX}/allowed by a rename:
+# written in place, a stub that read it between the truncate and the write saw it empty, and its `[`
+# error went to the watch's stderr, so a check that the watches said nothing failed.
+# gh is a stub that logs "<watcher> <args>" to gh.log for every call: the list
 # answers prlist.json; watch's filtered check-runs read is "1 1" (pending), or "1 0" with ${FX}/green;
 # ci_gate's pages answer one check run, completed now with ${FX}/green; with ${FX}/listfail the first
 # list read fails with HTTP 403. The rest answers wait-pr's reads, as tests/wait_pr_cache_test.sh's does.
@@ -29,7 +32,12 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; CACHE="${P}/.swarm/poll-cache"; SEEN="${P}/.swarm/state/watch-seen"
 A1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; A2=cccccccccccccccccccccccccccccccccccccccc
 B1=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-ON=0.05    # the sleep scale with the cache on: a 3 s poll, a max age of 2 s
+# The sleep scale with the cache on: a 12 s poll, a max age of 11 s. Two watches let go together share a
+# read only when the second takes it within the max age, and a waiter on the other's lock waits no longer,
+# so a slow runner (each gh stub call a few process starts) needs room; a poll stays a second over the max
+# age, so no poll takes the last poll's entry. At 0.05 (a 2 s max age) a busy machine read the list 5 times
+# in 3 polls.
+ON=0.2
 OFF=0.02   # with it off: a 1.2 s poll, a max age of 0
 # Epic e's stories a and b, built in the project, whose origin is o/svc.
 mkdir -p "${P}/.claude/swarm" "${P}/docs/epics" "${P}/docs/stories" "${ROOT}/bin"; : > "${P}/.claude/swarm/config"
@@ -86,6 +94,17 @@ chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/sleep"
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
+# allow <k> — let each watch's sleep stub past its <k-1>-th nap, by a rename, so no stub reads it half written.
+allow() { echo "$1" > "${FX}/allowed.tmp" && mv -f "${FX}/allowed.tmp" "${FX}/allowed"; }
+# said_nothing <watcher>... — true when no named watch printed anything; else prints what each said.
+said_nothing() {
+  local w rc=0
+  for w in "$@"; do
+    [[ -s "${ROOT}/out.${w}" ]] || continue
+    rc=1; sed "s/^/  watch ${w} said: /" "${ROOT}/out.${w}"
+  done
+  return "${rc}"
+}
 
 # prlist <sha of #1> — the open PRs: #1 story/a at <sha>, #2 story/b at B1.
 prlist() {
@@ -97,7 +116,7 @@ prlist() {
 # said opened, and each <seen line> in watch-seen; no nap let go.
 fresh() {
   rm -rf "${FX}" "${CACHE}" "${P}/.swarm/state"; mkdir -p "${FX}" "${P}/.swarm/state"; : > "${ROOT}/gh.log"
-  : > "${FX}/naps"; echo 1 > "${FX}/allowed"; echo "${A1}" > "${FX}/head"; prlist "${A1}"
+  : > "${FX}/naps"; allow 1; echo "${A1}" > "${FX}/head"; prlist "${A1}"
   printf 'opened o/svc#1\nopened o/svc#2\n' > "${SEEN}"
   [[ $# -eq 0 ]] || printf '%s\n' "$@" >> "${SEEN}"
 }
@@ -131,7 +150,7 @@ pair() {
   await 60 both_napped 1 || echo "warning: the watches did not finish their first poll in 60 s"
 }
 # round <n> — lets both watches poll until their <n>-th nap.
-round() { echo "$1" > "${FX}/allowed"; await 60 both_napped "$1" || echo "warning: the watches did not reach nap $1 in 60 s"; }
+round() { allow "$1"; await 60 both_napped "$1" || echo "warning: the watches did not reach nap $1 in 60 s"; }
 # stop_pair — ends both watches.
 stop_pair() { kill "${pa}" "${pb}" 2>/dev/null || true; wait "${pa}" "${pb}" 2>/dev/null || true; }
 # snap — the counts so far: the list, each first head's filtered check runs, each PR's mergeable reads.
@@ -157,7 +176,7 @@ is "cache on: watch_mergeable reads pulls/1 itself on every poll (a, b: polls a,
   "$(merge_reads 1 a) $(merge_reads 1 b)"
 check "cache on: the list's and the check runs' reads are kept" test -n "$(grep -l "pulls?state=open" "${CACHE}"/*.json 2>/dev/null)"
 check "cache on: no mergeable read is kept" test -z "$(grep -l '"repos/o/svc/pulls/[12]"' "${CACHE}"/*.json 2>/dev/null)"
-check "cache on: neither watch said anything" test ! -s "${ROOT}/out.a" -a ! -s "${ROOT}/out.b"
+check "cache on: neither watch said anything" said_nothing a b
 stop_pair
 
 fresh; pair "${OFF}"; before="$(snap)"
@@ -179,13 +198,13 @@ stop_pair
 # skipped once let go), while its first poll's entry for A1's check runs (pending) is still fresh: its
 # next poll reads A2's from GitHub (green) and says them finished. The list's entry is dropped, as it
 # would be past the max age, so that poll lists A2.
-fresh; echo 1 > "${FX}/allowed"; watch c 0.5 NAP_SKIP=1 --epic e; pc=${LAST}
+fresh; allow 1; watch c 0.5 NAP_SKIP=1 --epic e; pc=${LAST}
 c_napped() { [[ $(naps c) -ge 1 ]]; }
 await 60 c_napped || echo "warning: the watch did not finish its first poll in 60 s"
 is "moved head: the first poll reads A1's check runs from GitHub" 1 "$(runs_q "${A1}")"
 check "moved head: A1's pending check runs are kept" test -n "$(grep -l "commits/${A1}/check-runs" "${CACHE}"/*.json 2>/dev/null)"
 while IFS= read -r f; do rm -f "${f}"; done < <(grep -l 'pulls?state=open' "${CACHE}"/*.json 2>/dev/null || true)
-prlist "${A2}"; touch "${FX}/green"; echo 2 > "${FX}/allowed"
+prlist "${A2}"; touch "${FX}/green"; allow 2
 c_done() { ! kill -0 "${pc}" 2>/dev/null || [[ $(naps c) -ge 2 ]]; }
 await 60 c_done || echo "warning: the watch neither returned nor reached its second nap in 60 s"
 kill "${pc}" 2>/dev/null || true; wait "${pc}" 2>/dev/null || true
@@ -199,7 +218,7 @@ fresh "done ${A1}" "done ${B1}"; touch "${FX}/green"; pair "${ON}"
 before="$(ages)"
 round 2; round 3
 is "ci_gate age, cache on: one check-runs and one status read per head per poll between them" "2 2 2 2" "$(since ages "${before}")"
-check "ci_gate age, cache on: neither watch said anything" test ! -s "${ROOT}/out.a" -a ! -s "${ROOT}/out.b"
+check "ci_gate age, cache on: neither watch said anything" said_nothing a b
 stop_pair
 fresh "done ${A1}" "done ${B1}"; touch "${FX}/green"; pair "${OFF}"
 before="$(ages)"
@@ -221,20 +240,20 @@ waitpr() {
 }
 # watch1 <scale> — one watch --epic e as c until it returns; its output in ${ROOT}/out.c, its exit in rc.
 watch1() { watch c "$1" --epic e; rc=0; wait "${LAST}" || rc=$?; }
-fresh; touch "${FX}/green"; echo 9 > "${FX}/allowed"
+fresh; touch "${FX}/green"; allow 9
 watch1 "${OFF}"; off_c="${rc}|$(cat "${ROOT}/out.c")"
 waitpr 1; off_w="${rc}|$(cat "${ROOT}/out.w")"
 is "wait-pr and watch, cache off: watch says #1's checks finished" "0|o/svc #1 story/a checks finished on ${A1:0:7}" "${off_c}"
 check "wait-pr and watch, cache off: wait-pr ends green" grep -q '^green:' "${ROOT}/out.w"
 # The watch first: its filtered read is kept, and wait-pr then reads the raw pages from GitHub.
-fresh; touch "${FX}/green"; echo 9 > "${FX}/allowed"
+fresh; touch "${FX}/green"; allow 9
 watch1 0.5; on_c="${rc}|$(cat "${ROOT}/out.c")"; : > "${ROOT}/gh.log"
 waitpr 20
 is "watch then wait-pr, cache on: wait-pr prints what it prints with the cache off" "${off_w}" "${rc}|$(cat "${ROOT}/out.w")"
 is "watch then wait-pr, cache on: wait-pr read the raw check runs from GitHub" 1 "$(runs_p "${A1}" w)"
 is "watch then wait-pr, cache on: the watch printed what it prints with the cache off" "${off_c}" "${on_c}"
 # wait-pr first: its raw pages are kept, and the watch then reads its filtered line from GitHub.
-fresh; touch "${FX}/green"; echo 9 > "${FX}/allowed"
+fresh; touch "${FX}/green"; allow 9
 waitpr 20; : > "${ROOT}/gh.log"
 watch1 0.5
 is "wait-pr then watch, cache on: the watch prints what it prints with the cache off" "${off_c}" "${rc}|$(cat "${ROOT}/out.c")"
