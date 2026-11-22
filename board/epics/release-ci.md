@@ -112,3 +112,17 @@ The rulesets, as GitHub read them back:
 ```
 
 They match the spike's rulesets above. Main's ruleset 24181590 is unchanged.
+
+## release-install-proof results (2026-11-22)
+
+The lead ran these on the throwaway copy, each install in a throwaway CLAUDE_CONFIG_DIR, with Claude Code 2.1.330.
+
+- **Validator:** the copy's PR #2 set marketplace.json's plugin source to `{source: url, url: <copy>.git, ref: stable}`. Its plugin-validate job, the pinned 2.1.284, passed: https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/44955930947/job/137003929907. The user merged it.
+- **Install:** the copy's marketplace was added as users add one (`claude plugin marketplace add redscaresu/swarm-dev-release-spike`). `swarm-dev@swarm-dev` installed 0.31.3 from the copy's main (16332d9b), with bin/swarm.sh hashing to e1c17f83.
+- **The marketplace change:** after PR #2 merged, `marketplace update` and `plugin update` moved the install from 0.31.3 to 0.31.2, because the lead had set stable at v0.31.2, one version behind main. That is a downgrade, so the real stable must start at the version users already run (release-refs set it at v0.31.3).
+- **Same version, another commit:** with stable moved to another commit at the same version (3ed134ce, 0.31.3), the update printed "already at the latest version". The version, commit (06b35a67) and files stayed. The update moves only on a version change.
+- **prerelease forward:** prerelease moved to v0.31.3 while the install followed stable at 0.31.2. The update said "already at the latest version", and nothing moved.
+- **stable forward:** the positive control. stable moved to v0.31.3, and the update moved the install to 0.31.3 (06b35a67).
+- **Rollback:** swarm-dev@swarm-dev-pre, from the copy's pre-marketplace branch, installed version B: 0.31.3, commit 051371a6, with a marker line in hooks/lead-stop.sh. The admin role force-pushed prerelease back to A (v0.31.2, cfe2a200). `marketplace update` and `plugin update` then moved the install to 0.31.2 at cfe2a200, and the marker was gone from the active hook. No uninstall or cache clear was needed: the update rewrites the install path, which a restart loads.
+- **Binary half:** proved in release-client's real-release check, as the user agreed.
+- **Rollback entry's issue:** https://github.com/redscaresu/swarm-dev/issues/1116
