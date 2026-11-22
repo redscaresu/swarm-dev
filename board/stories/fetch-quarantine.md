@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: binary-fetch
-depends_on: [fetch-ensure, fetch-download, fetch-build, quarantine-present]
-needs: fetch-ensure (binary_present, the swarm.sh call path its call-level case runs, tests/binary_fetch_test.sh for the macOS job, docs/running.md's First run); fetch-download (binary_download, which this adds a step to, and tests/binary_download_test.sh for the macOS job); fetch-build (tests/binary_source_test.sh for the macOS job); quarantine-present (its You: step, which says whether (b) applies)
+depends_on: [fetch-ensure, fetch-download, fetch-build]
+needs: fetch-ensure (binary_present, the swarm.sh call path its call-level case runs, tests/binary_fetch_test.sh for the macOS job, docs/running.md's First run); fetch-download (binary_download, which this adds a step to, and tests/binary_download_test.sh for the macOS job); fetch-build (tests/binary_source_test.sh for the macOS job)
 touches: [bin/lib/binary.sh:binary_quarantined (new, at the file's end), bin/lib/binary.sh:binary_download (the quarantine step after the checksum), bin/lib/binary.sh:binary_present (only under (b)), tests/binary_quarantine_test.sh, docs/port/tests.tsv:tests/binary_quarantine_test.sh row, .github/workflows/macos.yml:SUBSET, docs/running.md:First run]
 estimate_lines: 140
 ---
@@ -16,7 +16,7 @@ binary_quarantined <file>, a new function at bin/lib/binary.sh's end. On Darwin 
 - BINARY_XATTR missing on Darwin: one line, return 1 (fail closed).
 - On Linux it starts nothing.
 binary_download calls it on the downloaded asset after the checksum, with the os it already read from uname -s, so it starts no new uname. It runs once, at download (the epic's (3)).
-Only if quarantine-present chose (b): binary_present also runs it on <root>/swarm on Darwin, told by $OSTYPE so Linux forks nothing. The PR records the per-call cost beside fetch-ensure's.
+quarantine-present chose (b), on 2026-11-22, so this applies: binary_present also runs it on <root>/swarm on Darwin, told by $OSTYPE so Linux forks nothing. The PR records the per-call cost beside fetch-ensure's.
 Tests: new tests/binary_quarantine_test.sh sources binary.sh and adds its docs/port/tests.tsv row. On macOS, a gh wrapper ahead of tests/binary_fetch_stubs.sh's stub runs the stub, then marks the downloaded file with a real `xattr -w com.apple.quarantine`. So this story leaves the stubs file alone, which fetch-fallback edits in this wave. On Linux, use a uname stub reporting Darwin, and set BINARY_XATTR after sourcing to a stub (marked, unmarked) or a missing path.
 .github/workflows/macos.yml is the macOS job (job macos-tests, SUBSET at :33, comment list at :26-32); ci.yml has none. Add four files to SUBSET, each with one comment line: tests/binary_download_test.sh (the checksum under BSD shasum), tests/binary_source_test.sh (go.mod read with bash 3.2's builtins), tests/binary_fetch_test.sh (the composed fetch, traps and rename under bash 3.2) and tests/binary_quarantine_test.sh (a real mark). No new action and no pin change. The PR changes .github/, so swarm.sh merge holds it for the user: this is the epic's Your part. Do not merge it.
 Docs: docs/running.md's First run gains one list item for the quarantine line and what to do. Run the humanizer.
