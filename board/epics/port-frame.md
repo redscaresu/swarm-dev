@@ -17,7 +17,7 @@ Stage 4 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - Any new command or setting
 
 **Constraints:**
-- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/events_tail_agents_test.sh, tests/events_tail_test.sh. Each keeps the assertion its go_check column names.
+- Go checks to build, from docs/port/tests.tsv (agreed by the user on 2026-11-20): tests/events_tail_agents_test.sh, tests/events_tail_test.sh, and from binary-wrapper (agreed by the user on 2026-11-22) tests/events_test.sh, the command half of tests/doc_check_test.sh, tests/port_names_test.sh and tests/skill_test.sh. Each keeps the assertion its go_check column names.
 - hooks/lead-session.sh goes here, with the bash that sources it (bin/lib/lifecycle.sh, lead_project and lead_rename's workspace label), not in port-hooks (codex).
 - Port rules P1 to P6 and P8. No stage: line.
 - This is the last seam between the two languages. The frame stayed bash, in one copy, while any command was bash (contradiction 15).

@@ -33,12 +33,12 @@ tests/codex_unavailable_test.sh	py	rewrite-from-outside		helpers-shared
 tests/command_names_test.sh	text	rewrite-from-outside	the bare /swarm scan also reads every Go file under cmd/ and internal/, so no message a user reads tells them to type /swarm	binary-wrapper
 tests/concurrency_check_test.sh	py	rewrite-from-outside		helpers-shared
 tests/conductor_close_test.sh	lib	rewrite-from-outside		port-close
-tests/config_test.sh	text,python3-stub	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms	binary-wrapper
+tests/config_test.sh	text,python3-stub	rewrite-from-outside	a Go test reads the setting list from the Go config package and fails a key with no parse case, as the test now does with CONFIG_KEYS and load_config's arms; moved to board-store, which ports load_config (agreed by the user on 2026-11-22)	board-store
 tests/cost_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/dataset_test.sh	py,python3-stub	rewrite-from-outside		helpers-reports
 tests/diff_allow_test.sh	text	rewrite-from-outside	retired-with: port-next	port-next
 tests/diff_run_test.sh	lib	rewrite-from-outside		helpers-shared
-tests/doc_check_test.sh	text	rewrite-from-outside	doc_check reads the command and setting names from the Go dispatch table and settings list as well as the bash, and fails when it finds none	binary-wrapper
+tests/doc_check_test.sh	text	rewrite-from-outside	doc_check reads the command and setting names from the Go dispatch table and settings list as well as the bash, and fails when it finds none; the settings half goes to board-store with the Go config package, the command half to port-frame with the Go dispatch table, and the bin/ported markers stand in for the table until then (agreed by the user on 2026-11-22)	board-store
 tests/dropped_lines_test.sh	py	rewrite-from-outside		helpers-dropped-lines
 tests/env_allowlist_test.sh	lib	rewrite-from-outside		port-status
 tests/epic_codex_test.sh	text	rewrite-from-outside	a Go test fails when anything but codex-review runs codex exec review, and when finding_rule's text drops a reason or reviewer it names	port-conduct
@@ -57,7 +57,7 @@ tests/events_tail_lead_test.sh	lib	rewrite-from-outside		port-reports
 tests/events_tail_merge_test.sh	lib	rewrite-from-outside		port-board-writers
 tests/events_tail_stall_test.sh	py	rewrite-from-outside		helpers-panes
 tests/events_tail_test.sh	text	rewrite-from-outside	retired-with: port-frame	port-frame
-tests/events_test.sh	lib,py,text	rewrite-from-outside	a Go test reads the read-only command set from the Go dispatch table and fails a name that is not a command	binary-wrapper
+tests/events_test.sh	lib,py,text	rewrite-from-outside	a Go test reads the read-only command set from the Go dispatch table and fails a name that is not a command; moved to port-frame, since READ_ONLY_COMMANDS stays in bash until then (agreed by the user on 2026-11-22)	port-frame
 tests/fail_lines_test.sh	text	rewrite-from-outside	a Go test reads the mutation rule from the Go brief and fails when it stops telling builders to paste each FAIL line	port-story
 tests/fallback_reviewer_test.sh	py	rewrite-from-outside		helpers-shared
 tests/features_test.sh	py	rewrite-from-outside		helpers-flow-reviews
@@ -103,7 +103,7 @@ tests/outcome_scan_test.sh	py,text	rewrite-from-outside	a Go check fails a reade
 tests/pane_prompt_test.sh	py	becomes-a-Go-test		helpers-panes
 tests/port_fields_test.sh	text	rewrite-from-outside	the same test finds the story and epic fields the Go code reads	port-inventory
 tests/port_locks_test.sh	text	rewrite-from-outside	the same test finds a lock the Go code takes	port-inventory
-tests/port_names_test.sh	text	rewrite-from-outside	the test reads command names from the ported commands' markers and the Go dispatch table as well as the bash arms	binary-wrapper
+tests/port_names_test.sh	text	rewrite-from-outside	the test reads command names from the ported commands' markers and the Go dispatch table as well as the bash arms; the Go-table read moves to port-frame, and the markers stand in for the table until then (agreed by the user on 2026-11-22)	port-frame
 tests/port_sites_test.sh	text	rewrite-from-outside	retired-with: helpers-panes	helpers-panes
 tests/port_swarm_names_test.sh	text	rewrite-from-outside	the same test finds a SWARM_ name the Go code reads	port-inventory
 tests/port_tests_list_test.sh	text	rewrite-from-outside	retired-with: bash-retired	bash-retired
@@ -127,7 +127,7 @@ tests/review_test.sh	lib,python3-stub	rewrite-from-outside		port-reports
 tests/review_yield_test.sh	py,text	rewrite-from-outside	a Go test shows flow's merged-without-codex block makes no gh call, in place of the cut copy of flow_reviewers.py	helpers-flow-reviews
 tests/roles_test.sh	text	rewrite-from-outside	a Go test fails a role in the Go role table that no command file's agent line and no Go start call passes	port-board-readers
 tests/select_tests_test.sh	text	rewrite-from-outside	retired-with: bash-retired	bash-retired
-tests/skill_test.sh	text	rewrite-from-outside	skill_test reads the command names from the Go dispatch table as well as the bash, and fails when it finds none	binary-wrapper
+tests/skill_test.sh	text	rewrite-from-outside	skill_test reads the command names from the Go dispatch table as well as the bash, and fails when it finds none; the Go-table read moves to port-frame, and the markers stand in for the table until then (agreed by the user on 2026-11-22)	port-frame
 tests/sleep_scale_test.sh	lib	rewrite-from-outside		port-board-readers
 tests/stacked_test.sh	lib	rewrite-from-outside		port-status
 tests/status_section_budget_test.sh	lib	rewrite-from-outside		port-status
