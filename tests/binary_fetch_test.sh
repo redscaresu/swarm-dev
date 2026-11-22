@@ -271,8 +271,11 @@ check "rendezvous: no .fetch-* folder is left" "" "$(temps "${C6}")"
 clear_logs
 
 # --- Two calls whose second mv onto <copy>/swarm is held. Both downloads meet first, as above, so both
-# calls are past binary_present before either can publish. Then the first mv passes and says so on
-# sync/moved; the second says its source on sync/held, then waits on sync/release.
+# calls are past binary_present before either can publish. The stub holds every mv onto <copy>/swarm: it
+# says its pid and source on sync/held, then waits on its own fifo, sync/mv-<pid>, until the test writes
+# go there; once its mv has run, it says its pid on sync/moved. The test sets the order, so no step races:
+# it lets one download go and releases that call's mv, and lets the other download go only once that mv
+# has gone through. The second mv is then held for as long as the test holds it.
 C7="${ROOT}/c7"; copy "${C7}"
 MVS="${ROOT}/mvs"; mkdir -p "${MVS}"
 cat > "${MVS}/mv" <<MV_STUB
@@ -281,29 +284,39 @@ src= last=
 for a in "\$@"; do src="\${last}"; last="\${a}"; done
 [ "\${last}" = "${C7}/swarm" ] || exec "${REAL_MV}" "\$@"
 echo "\$*" >> "${LOGS}/mv"
-if mkdir "${ROOT}/sync/mv-first" 2>/dev/null; then
-  "${REAL_MV}" "\$@"; r=\$?
-  echo moved > "${ROOT}/sync/moved"
-  exit "\${r}"
-fi
-echo "\${src}" > "${ROOT}/sync/held"
-read -r _ < "${ROOT}/sync/release"
-exec "${REAL_MV}" "\$@"
+mkfifo "${ROOT}/sync/mv-\$\$" || exit 1
+echo "\$\$ \${src}" > "${ROOT}/sync/held"
+g=
+read -r g < "${ROOT}/sync/mv-\$\$" || exit 1
+[ "\${g}" = go ] || exit 1
+"${REAL_MV}" "\$@" || exit \$?
+echo "\$\$" > "${ROOT}/sync/moved"
 MV_STUB
 chmod +x "${MVS}/mv"
-mkfifo "${ROOT}/sync/release"
 fifo moved 7; fifo held 8
+# hold_next — read the next held mv's "<pid> <source>" on sync/held (fd 8) within WAIT_S, into
+# hold_pid and hold_src; both are empty when none comes. release <pid> — let that held mv run.
+hold_next() { local l=""; read -r -t "${WAIT_S}" -u 8 l || l=""; hold_pid="${l%% *}"; hold_src="${l#* }"; [[ "${l}" == *" "* ]] || hold_src=""; }
+release() { printf 'go\n' > "${ROOT}/sync/mv-$1"; }
 for k in 1 2; do start "${C7}" "mv${k}" PATH="${MVS}:${RV}:${RUN_PATH}" -- config; eval "mv_pid${k}=${started_pid}"; done
-moved=no; held=""
+moved="" first="" held="" second=""
 wait_both
 check "held mv: both downloads arrived before either went on" 2 "${met}"
-let_go
 if [[ "${met}" -eq 2 ]]; then
-  read -r -t "${WAIT_S}" -u 7 _ && moved=yes
-  read -r -t "${WAIT_S}" -u 8 held || held=""
+  printf 'go\n' > "${ROOT}/sync/go-${arrived[0]}"
+  hold_next; first="${hold_pid}"
+  if [[ -n "${first}" ]]; then
+    release "${first}"
+    read -r -t "${WAIT_S}" -u 7 moved || moved=""
+  fi
 fi
-check "held mv: the first writer's mv went through" yes "${moved}"
-check "held mv: the second writer's mv is held" yes "$([[ -n "${held}" ]] && echo yes || echo no)"
+check "held mv: the first writer's mv went through" yes "$([[ -n "${first}" && "${moved}" == "${first}" ]] && echo yes || echo "no: held '${first}', moved '${moved}'")"
+check "held mv: <copy>/swarm is the first writer's release" "executable, same" "$(installed "${C7}")"
+if [[ -n "${moved}" ]]; then
+  printf 'go\n' > "${ROOT}/sync/go-${arrived[1]}"
+  hold_next; second="${hold_pid}"; held="${hold_src}"
+fi
+check "held mv: the second writer's mv is held" yes "$([[ -n "${second}" && "${second}" != "${first}" && -n "${held}" ]] && echo yes || echo no)"
 check "held mv: its source is in a .fetch-* folder of the copy" yes \
   "$([[ "${held}" == "${C7}/.fetch-"*"/${ASSET}" ]] && echo yes || echo "no: '${held}'")"
 check "held mv: its source is executable and the release" "executable, same" \
@@ -311,11 +324,11 @@ check "held mv: its source is executable and the release" "executable, same" \
 held_out="$(cd "${P}" && SWARMDEV_PROJECT="${P}" "${C7}/swarm" _wrapper-fixture held 2>&1)" || held_out="exit $?: ${held_out}"
 check "held mv: meanwhile <copy>/swarm runs _wrapper-fixture" "project = ${P}|arg = held" \
   "$(grep -E '^(project|arg) = ' <<< "${held_out}" | paste -sd '|' -)"
-[[ -z "${held}" ]] || printf 'go\n' > "${ROOT}/sync/release"
+if [[ -n "${second}" ]]; then release "${second}"; read -r -t "${WAIT_S}" -u 7 _ || true; fi   # its moved line
 exec 7>&- 8>&- 9>&-
 for k in 1 2; do
   p="mv_pid${k}"
-  [[ -n "${held}" && "${moved}" == yes ]] || stop_group "${!p}" "${ROOT}/groups" || true   # stuck without them
+  [[ -n "${second}" ]] || stop_group "${!p}" "${ROOT}/groups" || true   # stuck without them
   finish "${!p}" "mv${k}"
 done
 for k in 1 2; do
