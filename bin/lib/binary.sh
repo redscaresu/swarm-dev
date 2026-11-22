@@ -20,7 +20,9 @@ BINARY_BUILD_TMP=.build-
 #     error, never a fall-through to the build path.
 #   SWARMDEV_BIN unset, the root a git checkout (its .git a directory, or a worktree's file): the
 #     executable at <root>/BINARY_BUILD_PATH. It does not check whether that file is older than the tree.
-#   Otherwise (an installed copy has no .git): there is no binary.
+#   Otherwise (an installed copy has no .git): the executable at <root>/BINARY_BUILD_PATH, where an
+#     installed copy keeps its binary. With no executable file there, one line saying the root is not a
+#     git checkout.
 binary_find() {
   local root="${1:-}" built
   if [[ -n "${SWARMDEV_BIN+set}" ]]; then
@@ -36,6 +38,8 @@ binary_find() {
   fi
   root="${root%/}"
   if [[ ! -e "${root}/.git" ]]; then
+    built="${root}/${BINARY_BUILD_PATH}"
+    if [[ -f "${built}" && -x "${built}" ]]; then printf '%s\n' "${built}"; return 0; fi
     echo "binary: no swarm binary: SWARMDEV_BIN is unset and ${root} is not a git checkout" >&2; return 1
   fi
   built="${root}/${BINARY_BUILD_PATH}"

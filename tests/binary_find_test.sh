@@ -4,8 +4,9 @@
 # non-executable file, a directory or nothing, it prints one line naming SWARMDEV_BIN and the path,
 # returns 1 and looks nowhere else, though the root's build path holds a binary. Unset, in a git checkout
 # (a .git directory, or a worktree's .git file) with an executable at the build path, it prints that path.
-# With no file or a non-executable one there, and in a copy with no .git, it prints one line saying there
-# is no binary and returns 1. Each case runs in a new bash whose PATH holds only gh and go stubs that log
+# In a copy with no .git it prints an executable at the build path too, and SWARMDEV_BIN still wins over
+# it. With no file, a non-executable one or a folder there, in a checkout or a copy, it prints one line
+# saying there is no binary and returns 1. Each case runs in a new bash whose PATH holds only gh and go stubs that log
 # any call and exit 1, so a call to any program fails it; both logs stay empty. Sourcing the file prints
 # nothing and changes no shell option.
 set -euo pipefail
@@ -45,15 +46,18 @@ build() { # <root> [plain]: a binary at <root>'s build path, executable unless p
   printf '#!/bin/sh\necho built\n' > "$1/${BUILT}"
   if [[ "${2:-}" == plain ]]; then chmod -x "$1/${BUILT}"; else chmod +x "$1/${BUILT}"; fi
 }
-# A checkout with a .git directory, a worktree of it with a .git file, and a copy with no .git.
+# A checkout with a .git directory, a worktree of it with a .git file, and copies with no .git: one with
+# an executable build, one with a plain file, one with a folder and one with nothing there.
 CO="${ROOT}/checkout"; WT="${ROOT}/worktree"; COPY="${ROOT}/copy"
+COPYPLAIN="${ROOT}/copy-plain"; COPYDIR="${ROOT}/copy-dir"; COPYNONE="${ROOT}/copy-none"
 EMPTY="${ROOT}/empty"; PLAIN="${ROOT}/plain"
 for d in "${CO}" "${EMPTY}" "${PLAIN}"; do git init -q "${d}"; done
 git -C "${CO}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m init
 git -C "${CO}" worktree add -q "${WT}" 2>/dev/null
 check "the worktree's .git is a file" file "$([[ -f "${WT}/.git" ]] && echo file || echo not-a-file)"
-mkdir -p "${COPY}"
-build "${CO}"; build "${WT}"; build "${COPY}"; build "${PLAIN}" plain
+mkdir -p "${COPY}" "${COPYPLAIN}" "${COPYDIR}/${BUILT}" "${COPYNONE}"
+build "${CO}"; build "${WT}"; build "${COPY}"; build "${PLAIN}" plain; build "${COPYPLAIN}" plain
+chmod +x "${COPYDIR}/${BUILT}"   # a folder that passes -x, so only the -f check refuses it
 
 # find_in <root> [<SWARMDEV_BIN>]: source the lib and run binary_find <root> in a new bash with only the
 # stubs on PATH, SWARMDEV_BIN unset unless given. Sets out, err (its lines) and rc.
@@ -93,7 +97,9 @@ check "SWARMDEV_BIN executable: returns 0" 0 "${rc}"
 check "SWARMDEV_BIN executable: prints its path" "${ROOT}/bins/exec" "${out}"
 check "SWARMDEV_BIN executable: says nothing else" "" "${err}"
 find_in "${COPY}" "${ROOT}/bins/exec"
-check "SWARMDEV_BIN executable, root with no .git: prints its path" "${ROOT}/bins/exec" "${out}"
+check "SWARMDEV_BIN executable, root with no .git and a build: prints its path" "${ROOT}/bins/exec" "${out}"
+find_in "${COPY}" "${ROOT}/bins/missing"
+refused "SWARMDEV_BIN missing, root with no .git and a build" "${ROOT}/bins/missing"
 find_in "${CO}" "${ROOT}/bins/missing"; refused "SWARMDEV_BIN missing" "${ROOT}/bins/missing"
 find_in "${CO}" "${ROOT}/bins/plain"; refused "SWARMDEV_BIN not executable" "${ROOT}/bins/plain"
 find_in "${CO}" "${ROOT}/bins"; refused "SWARMDEV_BIN a directory" "${ROOT}/bins"
@@ -110,7 +116,13 @@ find_in "${WT}"
 check "unset, worktree with a build: prints the build path" "${WT}/${BUILT}" "${out}"
 find_in "${EMPTY}"; none "unset, checkout with no build"
 find_in "${PLAIN}"; none "unset, checkout whose build is not executable"
-find_in "${COPY}"; none "unset, a copy with no .git and a build"
+find_in "${COPY}"
+check "unset, a copy with no .git and a build: returns 0" 0 "${rc}"
+check "unset, a copy with no .git and a build: prints the build path" "${COPY}/${BUILT}" "${out}"
+check "unset, a copy with no .git and a build: says nothing else" "" "${err}"
+find_in "${COPYPLAIN}"; none "unset, a copy with no .git whose build is not executable"
+find_in "${COPYDIR}"; none "unset, a copy with no .git whose build path is a folder"
+find_in "${COPYNONE}"; none "unset, a copy with no .git and no build"
 find_in ""; none "unset, no root given"
 
 # Every case above ran with only the stubs on PATH.
