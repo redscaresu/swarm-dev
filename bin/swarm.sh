@@ -201,12 +201,16 @@ plugin_version() {
   printf '%s\n' "${ver}"
 }
 
-# show_version — the installed version; when a newer one is published, a warning and how to update.
-# A failed lookup (offline) is not an error: /swarm-dev:swarm must still run.
+# show_version — the installed version; then, in an installed copy with no binary, binary_ensure, which
+# fetches this version's binary or builds it from source; then, when a newer one is published, a warning
+# and how to update. Neither failure is an error, so /swarm-dev:swarm still runs: when binary_ensure
+# fails, what it printed stays on stderr (one `binary: ` line, then Go's error after a failed build) and
+# version goes on, and a failed lookup (offline) prints nothing.
 show_version() {
   local have latest
   have="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
   echo "swarm-dev ${have}"
+  binary_ensure "${SWARM_HOME}" || true
   latest="$(curl -fsSL --max-time 5 "${LATEST_URL}" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   python3 -c "import sys; v=lambda s: tuple(int(x) for x in s.split('.')); sys.exit(v(sys.argv[2]) <= v(sys.argv[1]))" \
     "${have}" "${latest}" || return 0
@@ -224,8 +228,8 @@ update_plugin() {
   echo "Restart Claude Code to load the new version."
 }
 
-# The binary's lib comes first: binary_ensure, below, runs before a project is looked for. It starts no
-# process when sourced, so version and update pay nothing for it.
+# The binary's lib comes first: binary_ensure, below and in show_version, runs before a project is looked
+# for. It starts no process when sourced, so update pays nothing for it.
 # shellcheck source=bin/lib/binary.sh
 source "${SWARM_HOME}/bin/lib/binary.sh"
 

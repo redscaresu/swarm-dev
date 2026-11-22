@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # binary_fetch_test.sh — an installed copy of the plugin (no .git) with no binary and SWARMDEV_BIN unset
-# fetches its binary on the first swarm.sh call but version and update, checks it, installs it as
+# fetches its binary on the first swarm.sh call but update, checks it, installs it as
 # <copy>/swarm and exports SWARMDEV_BIN naming it (binary_ensure and binary_fetch in bin/lib/binary.sh).
 # Each case runs a no-.git copy's swarm.sh from a project, with the stubs of tests/binary_fetch_stubs.sh
 # first on PATH, logging wrappers for sha256sum, shasum and git, and go a stub that logs and fails.

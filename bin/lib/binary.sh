@@ -9,7 +9,7 @@
 # it checks the file against the release's checksum file. It never writes <root>/swarm. In an installed
 # copy only binary_fetch and binary_build write it: binary_fetch calls binary_download into a folder of
 # its own, checks the build attestation with binary_attest, then renames the file over <root>/swarm.
-# binary_ensure, which swarm.sh runs on every call but version and update, calls binary_fetch when that
+# binary_ensure, which swarm.sh runs on every call but update (version goes on when it fails), calls binary_fetch when that
 # file is missing, so the checks run once, at download. When the download cannot work here (a gh too
 # old to check the attestation, or binary_fetch's BINARY_CANNOT), it builds from the source beside it
 # instead, and says so; a download that fails its checks stops the call.
@@ -479,7 +479,7 @@ binary_copy_lists() {
 
 # binary_ensure <root> — make sure the plugin copy at <root> has its binary, and export SWARMDEV_BIN
 # naming it, so a ported command, and a helper entry that a command's bash calls, finds it. swarm.sh
-# runs it on every call but version and update, before it looks for a project.
+# runs it on every call but update, before it looks for a project; version prints its line and goes on.
 #   SWARMDEV_BIN set, even empty: nothing; binary_find runs that file.
 #   <root>/.git there (a git checkout): nothing; binary_path builds from the tree for a ported command.
 #   Otherwise (an installed copy): binary_present, else, for the version in
