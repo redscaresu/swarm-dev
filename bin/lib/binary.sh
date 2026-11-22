@@ -1,8 +1,10 @@
 # shellcheck shell=bash
-# binary.sh — find the swarm binary a command runs, and run it. A hook sources it on its own, and
-# bin/swarm.sh with its other libs: it needs no other bin/lib file, sets no shell option and starts no
-# process when sourced, and binary_find and is_ported start none either. binary_path and binary_run are
-# swarm.sh's alone. Only binary_path builds, and only in a git checkout; nothing here downloads.
+# binary.sh — find the swarm binary a command runs, run it, and download a release's binary. A hook
+# sources it on its own, and bin/swarm.sh with its other libs: it needs no other bin/lib file, sets no
+# shell option and starts no process when sourced, and binary_find and is_ported start none either.
+# binary_path and binary_run are swarm.sh's alone. Only binary_path builds, and only in a git checkout.
+# Only binary_download downloads: with gh, into a folder its caller gives, and it checks the file
+# against the release's checksum file. It never writes <root>/swarm.
 
 # BINARY_BUILD_PATH: where a git checkout of the plugin keeps the binary built from its tree, relative to
 # the plugin root. It is the file `go build ./cmd/swarm` writes at the root, which .gitignore already
@@ -132,4 +134,117 @@ binary_run() {
     done
     exec "${bin}" "$@"
   )
+}
+
+# binary_repo — the GitHub repository whose releases hold the swarm binaries, as <owner>/<repo>.
+binary_repo() { printf '%s\n' redscaresu/swarm-dev; }
+
+# BINARY_CANNOT: binary_download's return code when the download cannot work here: this platform has no
+# release binary, gh is not on PATH, or gh release download failed (no network, no login, no such
+# release). Its caller builds from source on it and on nothing else. Every other failure returns 1: a
+# broken install, or a download that failed its check, which a build from source must not hide.
+BINARY_CANNOT=3
+# BINARY_NAME_RE: an asset or checksum file name binary_download takes from scripts/build.sh --list.
+# gh's --pattern is a glob, so a name with *, ? or [ could fetch more than one file, and a / could name
+# a file outside the folder.
+BINARY_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+# BINARY_SUM_RE: a checksum file's line in sha256sum's format: the hex sum, a space, then a space (text
+# mode) or a * (binary mode), then the file's name.
+BINARY_SUM_RE='^([^ ]+) [ *](.*)$'
+
+# binary_download <root> <version> <dir> — download release v<version>'s binary for this platform, and
+# its checksum file, from github.com/<binary_repo> into <dir>, an existing folder, and check the
+# binary's SHA-256. On success it prints nothing and returns 0, with both files in <dir>; it does not
+# make the binary executable or move it. On failure it prints one `binary: ` line on stderr that says
+# what failed and what to do, and returns BINARY_CANNOT or 1 (BINARY_CANNOT's comment says which). A
+# failed check can leave both files in <dir>, and the caller removes <dir>.
+#   The names: the asset line for this platform and the checksums line of `scripts/build.sh --list`
+#     under <root>, the release contract. No copy of them is kept here.
+#   The platform: uname -s and uname -m, as --list's <os>/<arch>: Darwin darwin, Linux linux, x86_64
+#     amd64, arm64 and aarch64 arm64. Any other value is looked up as it is.
+#   gh: from PATH, with the host named in --repo, so GH_HOST never sends the call to another host. Of
+#     gh's output, only its first non-empty stderr line is ever shown.
+#   The check: the one line of the checksum file whose name field is exactly the asset's name. No such
+#     line, two of them, or another sum fails.
+# It writes only inside <dir>, and runs no python3 or curl.
+binary_download() {
+  local root="${1:-}" version="${2:-}" dir="${3:-}" build list s m os arch kind f2 f3 why=""
+  local asset="" n_asset=0 n_all=0 sums="" n_sums=0 repo report err line file got want="" n=0 sum_cmd=()
+  local fix="reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)"
+  if [[ -z "${root}" || -z "${version}" || ! -d "${dir}" ]]; then
+    echo "binary: binary_download needs a plugin root, a version and an existing folder; it got '${root}' '${version}' '${dir}'" >&2
+    return 1
+  fi
+  root="${root%/}"; build="${root}/scripts/build.sh"
+  if [[ ! -f "${build}" ]]; then
+    why="${build} is missing"
+  elif ! list="$("${BASH}" "${build}" --list 2>/dev/null)"; then
+    why="${build} --list failed"
+  fi
+  if [[ -n "${why}" ]]; then
+    echo "binary: cannot tell which release files are this copy's binary: ${why}: ${fix}" >&2; return 1
+  fi
+  s="$(uname -s)"; m="$(uname -m)"
+  case "${s}" in Darwin) os=darwin ;; Linux) os=linux ;; *) os="${s}" ;; esac
+  case "${m}" in x86_64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;; *) arch="${m}" ;; esac
+  while IFS=$'\t' read -r kind f2 f3 _; do
+    case "${kind}" in
+      asset) n_all=$((n_all + 1))
+        [[ "${f2}" == "${os}/${arch}" ]] || continue
+        asset="${f3}"; n_asset=$((n_asset + 1)) ;;
+      checksums) [[ "${f3}" == sha256 ]] || continue
+        sums="${f2}"; n_sums=$((n_sums + 1)) ;;
+    esac
+  done <<< "${list}"
+  if [[ "${n_sums}" -ne 1 ]]; then why="${build} --list has no one sha256 checksums line"
+  elif [[ "${n_all}" -eq 0 ]]; then why="${build} --list has no asset line"
+  elif [[ "${n_asset}" -gt 1 ]]; then why="${build} --list has ${n_asset} asset lines for ${os}/${arch}"
+  elif ! [[ "${sums}" =~ ${BINARY_NAME_RE} ]]; then why="${build} --list names '${sums}', which is not a plain file name"   # loose-match: ok BINARY_NAME_RE is a fixed regex
+  elif [[ "${n_asset}" -eq 1 ]] && ! [[ "${asset}" =~ ${BINARY_NAME_RE} ]]; then   # loose-match: ok BINARY_NAME_RE is a fixed regex
+    why="${build} --list names '${asset}', which is not a plain file name"
+  fi
+  if [[ -n "${why}" ]]; then
+    echo "binary: cannot tell which release files are this copy's binary: ${why}: ${fix}" >&2; return 1
+  fi
+  if [[ "${n_asset}" -eq 0 ]]; then
+    echo "binary: swarm-dev publishes no binary for ${os}/${arch} (uname: ${s} ${m}): set SWARMDEV_BIN to a swarm binary built for it (go build ./cmd/swarm)" >&2
+    return "${BINARY_CANNOT}"
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "binary: gh is not on PATH, so swarm-dev cannot download its binary: install the GitHub CLI (https://cli.github.com) and run gh auth login, or set SWARMDEV_BIN to a swarm binary" >&2
+    return "${BINARY_CANNOT}"
+  fi
+  repo="$(binary_repo)"
+  report="run it again, and if it fails the same way report it at https://github.com/${repo}/issues"
+  if ! err="$(gh release download "v${version}" --repo "github.com/${repo}" --pattern "${asset}" --pattern "${sums}" \
+      --dir "${dir}" 2>&1 > /dev/null < /dev/null)"; then
+    while IFS= read -r line; do [[ "${line}" =~ [^[:space:]] ]] && break; line=""; done <<< "${err}"
+    echo "binary: gh release download v${version} --repo github.com/${repo} failed: '${line%$'\r'}': fix what gh says and run again, or set SWARMDEV_BIN to a swarm binary" >&2
+    return "${BINARY_CANNOT}"
+  fi
+  file="${dir}/${asset}"
+  if [[ ! -f "${file}" || ! -f "${dir}/${sums}" ]]; then
+    echo "binary: gh release download v${version} left no ${asset} and ${sums} in ${dir}: ${report}" >&2; return 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then sum_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then sum_cmd=(shasum -a 256); fi
+  got=""
+  [[ ${#sum_cmd[@]} -eq 0 ]] || got="$("${sum_cmd[@]}" "${file}" 2>/dev/null)" || got=""
+  got="${got%% *}"
+  if ! [[ "${got}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "binary: could not take the SHA-256 of ${file} (no sha256sum or shasum on PATH, or it failed), so the download cannot be checked: install coreutils, or set SWARMDEV_BIN to a swarm binary" >&2
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ${BINARY_SUM_RE} ]] || continue   # loose-match: ok BINARY_SUM_RE is a fixed regex
+    [[ "${BASH_REMATCH[2]}" == "${asset}" ]] || continue
+    n=$((n + 1)); want="${BASH_REMATCH[1]}"
+  done < "${dir}/${sums}"
+  if [[ "${n}" -eq 0 ]]; then
+    echo "binary: v${version}'s ${sums} has no line naming ${asset}, so the download cannot be checked: ${report}" >&2; return 1
+  elif [[ "${n}" -gt 1 ]]; then
+    echo "binary: v${version}'s ${sums} names ${asset} on ${n} lines, so the download cannot be checked: ${report}" >&2; return 1
+  elif [[ "${got}" != "${want}" ]]; then
+    echo "binary: the SHA-256 of v${version}'s ${asset} does not match its line in ${sums}: ${report}" >&2; return 1
+  fi
 }
