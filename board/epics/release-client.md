@@ -48,3 +48,5 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Shared rules cited above:**
 - P12: A story that changes a rule of the guard, merge, the release gates or the agents' environment while that rule is still bash is merged by the user, through a merge = human window as in ship-gates. A port that only swaps a call site in those files is not such a change.
+
+**release-ci's results:** the throwaway copy (redscaresu/swarm-dev-release-spike), its rulesets, and the spike, install and publish proofs are recorded in [board/epics/release-ci.md at 6db3c48e](https://github.com/redscaresu/swarm-dev/blob/6db3c48e202814122fd8b9eb2b801cffeff38eca/board/epics/release-ci.md), the last version before release-ci finished. The real-release check here uses that copy.
