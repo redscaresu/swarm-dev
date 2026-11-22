@@ -22,6 +22,7 @@ tests/bg_running_test.sh	lib	rewrite-from-outside		port-wait-pr
 tests/binary_dispatch_test.sh	text	rewrite-from-outside	retired-with: bash-retired	bash-retired
 tests/binary_download_test.sh	lib	rewrite-from-outside		bash-retired
 tests/binary_find_test.sh	lib	rewrite-from-outside		bash-retired
+tests/binary_source_test.sh	lib	rewrite-from-outside		bash-retired
 tests/board_only_test.sh	py	rewrite-from-outside		helpers-ci-gate
 tests/board_pr_kinds_test.sh	lib	rewrite-from-outside		port-board-pr
 tests/board_pr_test.sh	lib	rewrite-from-outside		port-board-pr
