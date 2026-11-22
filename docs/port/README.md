@@ -87,6 +87,19 @@ tests/swarm_commands.sh reads each marker as a command name for doc_check, skill
 A fixture entry, such as `wrapper-fixture`, has no marker in the tree.
 tests/binary_dispatch_test.sh adds that marker in a copy of the tree to drive the wrapper.
 
+## Two forms
+
+No marker routes by flag.
+When a command's first port leaves one of its forms in bash, that form moves to a dispatch arm named `_<name>`.
+The Go runs it through `bridge` in `cmd/swarm/bridge.go`, as `bash <SWARMDEV_HOME>/bin/swarm.sh _<name> <args>`.
+It sets `SWARM_PROJECT` to the frame's project, so the nested `swarm.sh` finds the same project from any cwd.
+It passes `SWARM_GH_VIA` on as the binary got it, so the nested call logs its gh calls under the same via.
+stdin, stdout, stderr and the exit code pass through unchanged.
+`bridge.go` is the one file outside the four adapters that may import `os/exec`, and `internal/layers` names it.
+The reverse needs no bridge: bash runs a `_` entry of the binary as it runs its own `_` arms, `"${BASH}" "${SWARM_HOME}/bin/swarm.sh" _<name>`.
+`wrapper-fixture`'s first argument `name` or `board-rel` is its bash form, which runs `_name` or `_board-rel`.
+`_wrapper-fixture` is the `_` entry tests/binary_dispatch_test.sh runs from bash.
+
 ## The closed plumbing list
 
 Five bash functions keep a bash copy beside their Go counterpart until their last bash caller goes.

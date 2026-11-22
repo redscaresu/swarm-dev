@@ -13,6 +13,12 @@
 # (a second copy whose READ_ONLY_COMMANDS names wrapper-fixture). SWARMDEV_BIN a bare name runs the file
 # of that name in the cwd, as binary_find checked it, not one found on PATH. With no binary to run, the
 # command dies with binary_find's line, which is its events.tsv outcome too. Both stub logs stay empty.
+# Two forms: wrapper-fixture's Go form gets exactly its arguments, and its bash forms (a first argument
+# name or board-rel) reach the _name and _board-rel arms through the bridge (cmd/swarm/bridge.go), from
+# a binary run in a cwd outside the project, and print and exit as those arms do run directly, usage
+# errors included. Bash runs the binary's _wrapper-fixture entry as it runs its own _ arms, with its
+# arguments, and with herdr's socket and a herdr stub present it labels no workspace, which
+# wrapper-fixture does.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -26,7 +32,9 @@ REAL_BIN="${SWARMDEV_BIN}"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [[ -d "${tmp}" ]] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'rm -rf "${ROOT}"' EXIT
+# A Unix socket path has a short limit (104 bytes on macOS), so herdr's stand-in socket gets a short dir.
+sock_dir="$(mktemp -d /tmp/swarm-bd.XXXXXX)" || { echo "mktemp -d failed" >&2; rm -rf "${ROOT}"; exit 1; }
+trap 'rm -rf "${ROOT}" "${sock_dir}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, as every test file
 
 fails=0
@@ -46,9 +54,11 @@ printf '#!/bin/sh\necho start >> "%s/wrap"\nexec "%s" "$@"\n' "${LOGS}" "${REAL_
 # The plugin copy, with no .git, and the fixture's marker. A file bin/ported/sub/wrapper-fixture and a
 # marker .hidden, which a name holding / or a leading . would reach were it not refused.
 T="${ROOT}/tree"; mkdir -p "${T}"
-cp -R "${REPO}/bin" "${REPO}/.claude-plugin" "${T}/"
+# hooks/ too: lead-session.sh's lead_project is what lets a command label the lead's workspace.
+cp -R "${REPO}/bin" "${REPO}/.claude-plugin" "${REPO}/hooks" "${T}/"
 mkdir -p "${T}/bin/ported/sub"
 : > "${T}/bin/ported/wrapper-fixture"; : > "${T}/bin/ported/sub/wrapper-fixture"; : > "${T}/bin/ported/.hidden"
+: > "${T}/bin/ported/_wrapper-fixture"
 check "the copy has no .git" no "$([[ -e "${T}/.git" ]] && echo yes || echo no)"
 # The same copy, but with wrapper-fixture read-only, so main runs it with no die file of its own.
 T2="${ROOT}/tree-ro"; cp -R "${T}" "${T2}"
@@ -69,7 +79,7 @@ sw() {
   rc=0
   (cd "${P}" || exit 1
    env -u HERDR_ENV -u SWARM_PROJECT PATH="${STUBS}:${PATH}" SWARMDEV_BIN="${WRAP}" ${envs[@]+"${envs[@]}"} \
-     bash "${tree}/bin/swarm.sh" "$@") < "${ROOT}/stdin" > "${ROOT}/out" 2> "${ROOT}/err" || rc=$?
+     "${BASH}" "${tree}/bin/swarm.sh" "$@") < "${ROOT}/stdin" > "${ROOT}/out" 2> "${ROOT}/err" || rc=$?
   out="$(cat "${ROOT}/out")"; err="$(cat "${ROOT}/err")"
 }
 # starts, events — how many starts the wrapper logged, and how many events.tsv lines; 0 when no file yet.
@@ -168,6 +178,59 @@ check "inherited, read-only: exits 3" 3 "${rc}"
 check "inherited, read-only: nothing logged" "${n}" "$(events)"
 check "inherited, read-only: the caller's die file is as it was" kept "$(cat "${ROOT}/die")"
 check "inherited, read-only: the caller's fields file is as it was" kept=1 "$(cat "${ROOT}/fields")"
+
+# Two forms. The Go form gets exactly its arguments, an empty last one too.
+sw "${T}" -- wrapper-fixture a 'b c' ''
+check "the Go form: exits 0" 0 "${rc}"
+check "the Go form: exactly its arguments, in order" "arg = a|arg = b c|arg = " "$(grep '^arg = ' <<< "${out}" | paste -sd '|' -)"
+# The bash forms run from a binary whose cwd is outside the project, so only the bridge's SWARM_PROJECT
+# finds it.
+AWAY="${ROOT}/away"; mkdir -p "${AWAY}"
+WRAP_AWAY="${ROOT}/wrap/swarm-away"
+printf '#!/bin/sh
+cd "%s" || exit 1
+exec "%s" "$@"
+' "${AWAY}" "${REAL_BIN}" > "${WRAP_AWAY}"; chmod +x "${WRAP_AWAY}"
+# bash_form <name> <label> [args] — run wrapper-fixture's <name> form through the bridge and the _<name>
+# arm directly with the same args, and check both print and exit alike.
+bash_form() {
+  local name="$1" label="$2" via_out via_err via_rc; shift 2
+  sw "${T}" "SWARMDEV_BIN=${WRAP_AWAY}" -- wrapper-fixture "${name}" "$@"
+  via_out="${out}"; via_err="${err}"; via_rc="${rc}"
+  sw "${T}" -- "_${name}" "$@"
+  check "the bash form ${label}: prints what _${name} prints" "${out}" "${via_out}"
+  check "the bash form ${label}: says what _${name} says on stderr" "${err}" "${via_err}"
+  check "the bash form ${label}: exits as _${name} does" "${rc}" "${via_rc}"
+}
+bash_form name "name 'Some Slug!'" 'Some Slug!'
+check "_name 'Some Slug!' run directly: the agent name, exit 0" "some-slug-|0" "${out}|${rc}"
+bash_form board-rel "board-rel x 'y z'" x 'y z'
+check "_board-rel run directly: the board's path from the project, exit 0" "board/|0" "${out}|${rc}"
+# Usage errors: the Go form's line and exit 2, and the bash arm's message and code, unchanged.
+sw "${T}" -- wrapper-fixture --fail
+check "the Go form's usage error: its line and exit 2" "swarm: wrapper-fixture: --fail takes a value|2" "${err}|${rc}"
+bash_form name "name with no slug"
+check "_name with no slug run directly: bash's message for \${1:?slug}, exit 1" "yes|1" \
+  "$([[ "${err}" == *"${T}/bin/swarm.sh: line "*": 1: slug" ]] && echo yes || echo "no: ${err}")|${rc}"
+
+# Bash runs the binary's _ entry as it runs its own _ arms. herdr's socket and a herdr stub that logs
+# each call are there, so a command that labels the lead's workspace calls herdr; _wrapper-fixture must not.
+SOCK="${sock_dir}/h.sock"
+python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "${SOCK}"
+printf '#!/bin/sh
+echo "$*" >> "%s/herdr"
+exit 1
+' "${LOGS}" > "${STUBS}/herdr"; chmod +x "${STUBS}/herdr"
+herdr_env=(HERDR_ENV=1 HERDR_WORKSPACE_ID=w1 HERDR_TAB_ID=w1:t0 "HERDR_SOCKET_PATH=${SOCK}")
+sw "${T}" "${herdr_env[@]}" -- _wrapper-fixture a 'b c'
+check "_wrapper-fixture: exits 0" 0 "${rc}"
+check "_wrapper-fixture: the binary got exactly its two arguments" "arg = a|arg = b c" "$(grep '^arg = ' <<< "${out}" | paste -sd '|' -)"
+check "_wrapper-fixture: no herdr call, so no workspace label" "" "$(cat "${LOGS}/herdr" 2>/dev/null || true)"
+# The positive control: wrapper-fixture, with no _, labels the workspace, which calls herdr.
+sw "${T}" "${herdr_env[@]}" -- wrapper-fixture c1
+check "the control: wrapper-fixture calls herdr to label the workspace" yes \
+  "$([[ -s "${LOGS}/herdr" ]] && echo yes || echo no)"
+rm -f "${STUBS}/herdr"
 
 # Every run above had only the stubs for gh and go.
 for s in gh go; do

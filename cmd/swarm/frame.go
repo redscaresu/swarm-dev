@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,16 +121,27 @@ type entry struct {
 // bin/ported/<name>, which sends bin/swarm.sh's dispatch to the binary.
 var entries = map[string]entry{
 	"wrapper-fixture": {needsFrame: true, fixture: true, run: wrapperFixture},
+	// The reverse of the bridge: bash runs a _ entry of the binary as it runs one of its own _ arms.
+	"_wrapper-fixture": {needsFrame: true, fixture: true, run: wrapperFixture},
 }
 
-// wrapperFixture is the wrapper's test entry. It prints the frame's project, board and home, each
-// argument, each line of stdin and each setting with its source, one per line in that order. Then,
-// told to by its arguments, it writes fields and fails:
+// fixtureBashForms are wrapper-fixture's forms still in bash: a first argument naming one hands the
+// rest to that read-only _ arm of bin/swarm.sh's dispatch through the bridge, as a port hands a form it
+// leaves in bash.
+var fixtureBashForms = []string{"name", "board-rel"}
+
+// wrapperFixture is the wrapper's test entry. With a first argument in fixtureBashForms it runs that
+// form in bash (bridge). Otherwise it is the Go form: it prints the frame's project, board and home,
+// each argument, each line of stdin and each setting with its source, one per line in that order.
+// Then, told to by its arguments, it writes fields and fails:
 //
 //	--field <key>=<value>   add the pair to the fields file (repeatable)
 //	--fail <code>           exit with code; with --line, fail as die() does
 //	--line <line>           the failure's line
 func wrapperFixture(c *call) int {
+	if len(c.args) > 0 && slices.Contains(fixtureBashForms, c.args[0]) {
+		return c.bridge(c.args[0], c.args[1:]...)
+	}
 	in, err := io.ReadAll(c.stdin)
 	if err != nil {
 		return c.die(1, "wrapper-fixture: reading stdin: "+err.Error())
