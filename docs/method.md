@@ -141,8 +141,7 @@ once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an e
 | `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference-models.md § Settings) |
 | `usage_warn_percent` | empty | a whole number from 1 to 100: `wait --lead` prints one `usage:` line the first time a usage week's estimate reaches it. It is only an estimate, from the session logs, and it counts Fable low until you give it a `/usage` reading; `/usage` is the only truth. A warning, never a gate. Empty is off (reference-models.md § Settings) |
 
-In swarm-dev's own repo, `merge = agent` also holds for you a story PR that changes `internal/guard/`, `internal/merge/`, `internal/release/`, `internal/agentenv/` or `.claude-plugin/` (reference-merging.md § Merging).
-It holds one that changes `internal/layers/` too: its Go checks keep those packages' rules inside them, so one PR cannot move a rule out and loosen the check that would catch it.
+In swarm-dev's own repo, `merge = agent` also holds for you a story PR that changes `internal/guard/`, `internal/merge/`, `internal/release/`, `internal/agentenv/`, `internal/layers/` (whose Go checks keep those four packages' rules inside them) or `.claude-plugin/` (reference-merging.md § Merging).
 The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`, else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a board in a notes vault works if every story names its `repo:`.
 When the board is not in the story's repo, the builder leaves the story file alone and the lead runs `swarm.sh finish <slug>` on merge.
 

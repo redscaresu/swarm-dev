@@ -94,6 +94,7 @@ tests/merge_guard_test.sh	py,python3-stub	rewrite-from-outside		helpers-shared
 tests/merge_lock_test.sh	lib	rewrite-from-outside		port-merge
 tests/merge_note_test.sh	lib	rewrite-from-outside		port-board-readers
 tests/merge_protected_hold_test.sh	lib	rewrite-from-outside		port-reconcile
+tests/merge_protected_setting_test.sh	lib	rewrite-from-outside		port-reconcile
 tests/merge_pull_forward_test.sh	lib	rewrite-from-outside		port-merge
 tests/merge_queue_test.sh	lib,py,text	rewrite-from-outside	a Go test of ci_gate's handling of the signals a merge sends it, in place of the test that runs a patched copy of ci_gate.py's source	helpers-ci-gate
 tests/merge_rules_test.sh	lib,py,python3-stub	rewrite-from-outside		helpers-shared
