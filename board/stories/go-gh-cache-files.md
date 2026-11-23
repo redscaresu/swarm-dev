@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-gh-cache
 depends_on: [shared-gh-cache-call, go-py-json, go-store-files]
 needs: shared-gh-cache-call: the user's You: step (1), which says whether this is a sixth module under the comparison test or a bridge. go-py-json: pyjson.Encode and pyjson.Decode. go-store-files: Store.ReadFile, MkdirAll and WriteAtomic.
 touches: [internal/ghcache/files.go, internal/ghcache/listing.go, internal/ghcache/compare_test.go, docs/port/swarm-names.tsv:SWARM_GH_CACHE row, docs/port/swarm-names.tsv:SWARM_GH_FRESH row]

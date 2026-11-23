@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-events
 depends_on: [go-touches-text, go-store-files, go-events-outcome, go-py-decode]
 needs: go-touches-text: touchesrows.FrontText and Pairs. go-store-files: Store.ReadFile and IsFile. go-events-outcome: eventsoutcome.Outcome. go-py-decode: pytext.DecodeReplace.
 touches: [internal/touchesrows/files.go, internal/touchesrows/files_compare_test.go]

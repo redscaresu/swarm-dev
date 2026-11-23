@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-report
 depends_on: [go-report-text, go-report-fixes]
 needs: go-report-text: report.PRKey, MergeTime and LocalDay. go-report-fixes: report.FixesPR.
 touches: [internal/report/rework.go, internal/report/rework_compare_test.go]

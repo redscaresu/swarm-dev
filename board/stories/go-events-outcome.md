@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-events
 depends_on: []
 touches: [internal/eventsoutcome/eventsoutcome.go, internal/eventsoutcome/compare_test.go]
 estimate_lines: 130

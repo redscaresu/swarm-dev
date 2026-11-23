@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-events
 depends_on: [go-events-outcome]
 needs: go-events-outcome: the internal/eventsoutcome package, the only one the check lets read the column raw.
 touches: [internal/eventsoutcome/scan_test.go, internal/eventsoutcome/testdata/scan]

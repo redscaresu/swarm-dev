@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-report
 depends_on: []
 touches: [internal/report/fixes.go, internal/report/fixes_compare_test.go]
 estimate_lines: 240

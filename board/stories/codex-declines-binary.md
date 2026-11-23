@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-sections
 depends_on: [go-report-text, go-store-files, go-py-decode, go-entries-per-file, shared-copies-list]
 needs: go-report-text: report.PRKey. go-store-files: Store.ReadFile. go-py-decode: pytext.DecodeReplace. go-entries-per-file: the register call. shared-copies-list: docs/port/copies.tsv's codex_story_prompt row, deleted here.
 touches: [internal/review/declines.go, internal/review/declines_test.go, cmd/swarm/declines.go, bin/ported/_declines, bin/swarm.sh:codex_story_prompt, docs/port/sites.tsv:codex_story_prompt row, docs/port/copies.tsv:codex_story_prompt row, docs/port/swarm-names.tsv:SWARM_LIB row, tests/diff_fixtures_codex.sh, tests/codex_test.sh:declines checks, tests/speed_list.txt:codex_declines line]

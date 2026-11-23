@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-report
 depends_on: [go-store-files, go-py-decode]
 needs: go-store-files: Store.ReadFile. go-py-decode: pytext.DecodeReplace.
 touches: [internal/report/findings.go, internal/report/findings_compare_test.go, docs/port/swarm-names.tsv:SWARM_FINDING_REVIEWERS row]

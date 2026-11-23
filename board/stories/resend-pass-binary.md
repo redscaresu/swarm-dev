@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-events
 depends_on: [go-resend-rows, shared-copies-list]
 needs: go-resend-rows: the _resend-rows entry and its marker. shared-copies-list: docs/port/copies.tsv's resend_pass row, deleted here.
 touches: [bin/lib/lifecycle.sh:resend_pass, docs/port/sites.tsv:resend_pass row, docs/port/copies.tsv:resend_pass row, docs/port/swarm-names.tsv:SWARM_PANES row, docs/port/swarm-names.tsv:SWARM_BACKLOG row, docs/port/swarm-names.tsv:SWARM_NAME_MAX row, docs/port/swarm-names.tsv:SWARM_BRIEFS row, tests/diff_fixtures_resend.sh, tests/events_tail_lead_test.sh:tell_resend, tests/lead_queue_wait_test.sh:resend_pass checks, tests/speed_list.txt:resend_delivery line]
