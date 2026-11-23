@@ -151,6 +151,7 @@ case "$1 $2" in
       */rules/branches/*) serve rules ;;
       */git/ref/tags/*) serve tagref ;;     # the release's tag
       */releases/tags/*) serve release ;;   # its GitHub release
+      */git/ref/heads/*) serve preref ;;   # the branch release.yml moves to the tag's commit (RELEASE_BRANCH)
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
       # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind.<head> when

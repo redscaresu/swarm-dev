@@ -1122,7 +1122,9 @@ stands in for the docs PR. For swarm-dev's own repo, the release PR body also li
 changes every project gets on upgrade and names the infrafactory build they were tried on, or says
 none. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
-exist. With `merge = human` it waits on your merge.
+exist.
+For swarm-dev's own repo, merge also checks that the release has its five files uploaded and that `prerelease` is at the tag's commit.
+With `merge = human` it waits on your merge.
 
 Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release is due, `next`
 reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
@@ -1182,8 +1184,11 @@ plugin's `plugin.json`; otherwise merge prints a line saying it skipped this ste
 agents onto it. After
 that warning it updates nothing, and prints `refused: the release ships commits no release check
 read, so the plugin was not updated`, followed by what to run once they are checked. Otherwise it
-waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
-later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
+waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the release to be done.
+A release counts done only when the tag `v<new>` is on the merge commit or a later commit of the base, its GitHub release is published, every file is uploaded and `prerelease` is at the tag's commit.
+The files are the five that `scripts/build.sh --list` names (the four binaries and `SHA256SUMS`), each matched by exact name and in state `uploaded`.
+release.yml moves `prerelease` last, so the branch must be exactly at the tag's commit: a branch past it means a later release has moved it on.
+Then it runs `claude plugin marketplace
 update <marketplace>` and `claude plugin update <plugin>@<marketplace>`, 5 minutes at most each.
 They name the marketplace and plugin ID of the swarm-dev copy that runs the merge, which it reads from where Claude Code installed that copy, `plugins/cache/<marketplace>/<plugin>/<version>`.
 So a stable install runs them with `swarm-dev` and `swarm-dev@swarm-dev`, and a prerelease install with `swarm-dev-pre` and `swarm-dev@swarm-dev-pre`.
@@ -1204,10 +1209,17 @@ then `claude --continue`) in this project and in every project it found. The upd
 a plugin's hooks only at startup, and until a lead restarts, the `swarm.sh` on its PATH is the old
 one. When CI on the base is not green, the release can't be confirmed or the update fails, it prints
 a warning naming the new version's `swarm.sh upgrade` to run once the plugin is updated, and
-upgrades nothing. An upgrade that fails, takes too long to start, or finds another upgrade already
+upgrades nothing.
+When the release can't be confirmed, the warning says what was missing:
+- `no tag v<new> on the base at or after <sha7> with a published GitHub release`: the tag is not on the base, or the release is still a draft or gh can't read it.
+- `v<new>'s GitHub release has no uploaded <file>, ...`: each file the release lacks, or has not finished uploading.
+- `prerelease is at <sha7>, not at v<new>'s tag commit <sha7>`: release.yml has not moved the branch yet, or a later release moved it on.
+  When gh can't read the branch, it names `a commit gh cannot read`.
+- `scripts/build.sh --list cannot name the files v<new>'s release must hold (<why>)`: the copy that runs merge has no `scripts/build.sh`, or its `--list` failed or broke the contract, so merge does not wait.
+
+An upgrade that fails, takes too long to start, or finds another upgrade already
 running in its project and starts nothing gets the same kind of warning, and merge moves on to the
-next project. The release still counts as done, and neither these warnings nor the refusal above
-changes merge's exit code.
+next project. Neither these warnings nor the refusal above changes merge's exit code.
 
 ### The build check
 
