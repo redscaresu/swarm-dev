@@ -49,6 +49,6 @@ should get shorter.
 **Symptom.** A PR branched before a check became required on `main` never gets a run of that check, so it cannot pass. The v0.32.0 retro found #557, an old Dependabot PR, stuck this way behind the three checks added after it was branched.
 **Step.**
 1. List the open PRs branched before the check was required: `gh pr list --state open`, then compare each branch's base commit with the commit that made the check required.
-2. Merge `origin/main` into each branch, or for a Dependabot PR comment `@dependabot recreate` on it, which rebuilds the branch on current `main` (#1161 replaced #557 this way). Never close it: Dependabot then skips that version. Each push restarts CI, so a run on the branch now includes the new check.
+2. Merge `origin/main` into each branch, or for a Dependabot PR comment `@dependabot recreate` on it, which rebuilds the branch on current `main`. Never close it: Dependabot then skips that version. (#557 got `@dependabot rebase`, then Dependabot closed it as updatable another way and opened the grouped update #1161.) Each push restarts CI, so a run on the branch now includes the new check.
 
-**Issue.** None filed. The [v0.32.0 retro](../board/retros/v0.32.0.md) names it.
+**Issue.** [#1176](https://github.com/redscaresu/swarm-dev/issues/1176).

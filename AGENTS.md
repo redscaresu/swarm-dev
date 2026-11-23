@@ -261,7 +261,9 @@ Development rules for anyone, agent or person, working in this repository:
   Wiring imports no `os/exec` either, except `cmd/swarm/bridge.go`, which hands a form still in bash to `bin/swarm.sh` and goes with the last one.
   The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
   A process start in the module is an `exec.Command` or `exec.CommandContext` call and nothing else: `os.StartProcess`, the `syscall` starts, an `exec.Cmd` literal and a dot import of `os`, `os/exec` or `syscall` fail the process-start check.
-  A start of `gh`, `herdr` or `curl`, or of a shell that runs a `-c` script, needs a deadline made where it starts, or the deadline check fails it.
+  A start of `gh`, `herdr` or `curl` needs a context from `context.WithTimeout` or `context.WithDeadline`, made in the function that starts it.
+  So does a start of a shell that runs a `-c` script, and of a wrapper such as `env`, `nohup`, `time`, `command`, `exec`, `nice` or `xargs`.
+  The program must be a string literal or a module constant, or the deadline check fails the start; a line that ends `// no-timeout: <reason>` passes, and one with no reason fails.
   The pattern of a regexp compile or match, or of a `path.Match`, `filepath.Match` or glob, is string literals, constants and `regexp.QuoteMeta` calls; a variable in one fails the variable-pattern check unless the line ends `// loose-match: ok <reason>`.
   `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
