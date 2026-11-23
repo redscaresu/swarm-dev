@@ -1,5 +1,5 @@
-// Package layers holds the Go checks that give each package of the module its layer, in its tests
-// only. Each package is one of:
+// Package layers holds the Go checks over the module's code, in its tests only, of which the layer
+// checks are one set. The layer checks give each package of the module its layer, one of:
 //
 //   - wiring: cmd/ and every package under it;
 //   - interfaces: internal/iface;
