@@ -4,7 +4,10 @@ name: Release
 # v<version> with the four binaries, their checksums and a build attestation, then move the prerelease
 # branch to the pushed commit. scripts/publish-release.sh plan decides the steps: a push with no bump
 # plans none, with no gh call, and publishes nothing. This file is the attestation signer that
-# scripts/build.sh --list names, so it keeps its path. docs/reference-merging.md § Publishing a release.
+# scripts/build.sh --list names, so it keeps its path. An installed copy takes a binary only when its
+# attestation ran from refs/heads/main (bin/lib/binary.sh's BINARY_SOURCE_REF) at the commit the
+# release's tag is at, so it keeps its push-to-main trigger too. docs/reference-merging.md
+# § Publishing a release.
 on:
   push:
     branches: [main]

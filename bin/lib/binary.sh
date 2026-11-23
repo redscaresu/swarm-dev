@@ -9,7 +9,8 @@
 # whose download cannot work. Only binary_download downloads: with gh, into a folder its caller gives, and
 # it checks the file against the release's checksum file. It never writes <root>/swarm. In an installed
 # copy only binary_fetch and binary_build write it: binary_fetch calls binary_download into a folder of
-# its own, checks the build attestation with binary_attest, then renames the file over <root>/swarm.
+# its own, checks the build attestation with binary_attest, at the commit of the release's tag, then
+# renames the file over <root>/swarm.
 # binary_ensure, which swarm.sh runs on every call but update (version goes on when it fails), calls binary_fetch when that
 # file is missing, so the checks run once, at download. The one exception is macOS's quarantine mark
 # (binary_quarantined): binary_download checks the download for it, and binary_present checks the
@@ -72,18 +73,38 @@ binary_find() {
 #     (https://github.com/cli/cli/releases/tag/v2.57.0): "Added tenancy aware attestation commands"
 #     (https://github.com/cli/cli/pull/9542), whose diff adds the flag to `gh attestation verify`. gh
 #     2.51.0 to 2.56.0 have no --hostname on it, so they refuse the call.
+#   v2.68.0 added --source-digest and --source-ref. Its release note
+#     (https://github.com/cli/cli/releases/tag/v2.68.0): "Add signer-digest, source-ref, and
+#     source-digest options for `gh attestation verify`" (https://github.com/cli/cli/pull/10308). gh
+#     2.67.0 has neither, so it refuses the call. 2.68.0's command also takes --format json and --jq.
 # Before gh 2.102.0, --signer-workflow matched only the start of the signing certificate's identity
 # (https://github.com/cli/cli/security/advisories/GHSA-wjmr-j3rp-mh2g), and before 2.97.0 a . in it
 # matched any character (https://github.com/cli/cli/security/advisories/GHSA-mm27-mwq9-fr5g). Both
 # advisories say --repo is not affected, so on such a gh the attestation still comes from <repo>, and
-# only which of its workflows signed is checked less strictly.
-BINARY_GH_MIN=2.57.0
+# only which of its workflows signed is checked less strictly. Before 2.102.0, --source-ref was also
+# compared without regard to case (https://github.com/cli/cli/security/advisories/GHSA-4mq3-hpgx-9cx8),
+# so a branch named MAIN passes as main there; --source-digest still pins the commit.
+BINARY_GH_MIN=2.68.0
 
-# BINARY_ATTEST_SECONDS: how long binary_attest lets `gh attestation verify` run before it KILLs it.
-# Nothing in gh bounds the call. Its HTTP client comes from go-gh, whose ClientOptions.Timeout says
-# "Default is no timeout" (cli/go-gh v2.16.1, the one gh 2.101.0 pins), and gh sets none. So on a
-# network that drops packets, the call can wait for ever, and the swarm.sh call behind it with it.
+# BINARY_ATTEST_SECONDS: how long binary_attest lets each of its gh calls run (the tag read and each
+# `gh attestation verify`) before binary_within stops it. Nothing in gh bounds a call. Its HTTP client
+# comes from go-gh, whose ClientOptions.Timeout says "Default is no timeout" (cli/go-gh v2.16.1, the one
+# gh 2.101.0 pins), and gh sets none. So on a network that drops packets, a call can wait for ever, and
+# the swarm.sh call behind it with it.
 BINARY_ATTEST_SECONDS=60
+
+# BINARY_SOURCE_REF: the git ref a release binary's build must have run from. release.yml runs on a push
+# to main, so its signing certificate's source ref is refs/heads/main, never the release's tag, which the
+# publish step makes later. --signer-workflow checks only the workflow's path, so without this ref a
+# release.yml edited on any branch could attest a binary at that branch's commit.
+BINARY_SOURCE_REF=refs/heads/main
+# BINARY_COMMIT_RE: a commit as GitHub's API and a signing certificate give it: 40 lowercase hex digits.
+BINARY_COMMIT_RE='^[0-9a-f]{40}$'
+# BINARY_TAG_JQ: what binary_tag_commit asks gh api for: the tag ref's object type, a space, its SHA.
+BINARY_TAG_JQ='.object.type + " " + .object.sha'
+# BINARY_ATTESTED_JQ: what binary_attested_at asks gh attestation verify --format json for: the source
+# commit of each attestation it verified, once each, one a line.
+BINARY_ATTESTED_JQ='[.[].verificationResult.signature.certificate.sourceRepositoryDigest] | unique | .[]'
 
 BINARY_WITHIN_GRACE=3   # seconds binary_within gives a TERMed group to end before it KILLs what is left
 
@@ -116,28 +137,95 @@ binary_within() {
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "${BINARY_WITHIN_GRACE}" "$@"
 }
 
-# binary_attest <file> <repo> <signer> — return 0 when gh verifies <file>'s build attestation: built in
-# <repo> (<owner>/<name>) on github.com, and signed by its workflow at <signer>, a path in <repo> such as
-# .github/workflows/release.yml. gh comes from PATH and needs BINARY_GH_MIN or newer. It prints none of
-# gh's output. Any failure prints one line on stderr saying what to do and returns 1: an empty argument,
-# gh's own failure, or no answer within BINARY_ATTEST_SECONDS, when binary_within stops gh. There is no
-# fallback, so the caller never runs <file>. An empty <signer> stops before gh: an older gh would read
-# github.com/<repo>/ as a prefix that every workflow in <repo> matches.
+# binary_tag_commit <version> — print the commit that release v<version>'s tag in binary_repo is at,
+# and return 0. It reads the tag with one call of the gh binary_download runs, pinned to github.com as
+# the download is, so GH_HOST cannot send it to another host:
+# `gh api --hostname github.com repos/<repo>/git/ref/tags/v<version> --jq BINARY_TAG_JQ`. That endpoint
+# answers only for the exact tag. binary_within stops gh after BINARY_ATTEST_SECONDS. The tag must point
+# at a commit, as release.yml's publish step makes it, not at an annotated tag object. Any failure prints
+# one `binary: ` line on stderr and returns 1. The line quotes none of gh's output: on an HTTP error, gh
+# api writes the response body to stdout and its own line to stderr, so a failed read says the exit code
+# and the gh api command that shows why.
+binary_tag_commit() {
+  local version="$1" repo got rc=0 line="" what endpoint
+  repo="$(binary_repo)"
+  what="v${version}'s tag at github.com/${repo}"
+  endpoint="repos/${repo}/git/ref/tags/v${version}"
+  got="$(binary_within "${BINARY_ATTEST_SECONDS}" gh api --hostname github.com "${endpoint}" \
+    --jq "${BINARY_TAG_JQ}" </dev/null 2>/dev/null)" || rc=$?
+  if [[ "${rc}" -eq 0 && "${got}" == "commit "* && "${got#commit }" =~ ${BINARY_COMMIT_RE} ]]; then   # loose-match: ok BINARY_COMMIT_RE is a fixed regex
+    printf '%s\n' "${got#commit }"; return 0
+  fi
+  while IFS= read -r line; do [[ "${line}" =~ [^[:space:]] ]] && break; line=""; done <<< "${got}"
+  line="${line%$'\r'}"
+  if [[ "${rc}" -eq 142 ]]; then
+    echo "binary: gh api gave no answer within ${BINARY_ATTEST_SECONDS} s for ${what}, so the commit the binary must be built at is not known and it was not run: check that gh is logged in (gh auth status) and online, then run the command again" >&2
+  elif [[ "${rc}" -ne 0 ]]; then
+    echo "binary: gh api could not read ${what} (exit ${rc}), so the commit the binary must be built at is not known and it was not run: run gh api --hostname github.com ${endpoint} to see why, fix it and run the command again" >&2
+  else
+    echo "binary: ${what} reads '${line}', not 'commit <sha>', so the commit the binary must be built at is not known and it was not run: report it at https://github.com/${repo}/issues" >&2
+  fi
+  return 1
+}
+
+# binary_attested_at <file> <signer> <commit> — print the commits <file>'s build attestations are at,
+# comma-separated, and return 0, when gh verifies them as binary_attest does but with no commit asked
+# for, and every one is at a commit other than <commit>. Else print nothing and return 1: gh failed or
+# was stopped, or listed none, <commit>, or a line that is not a commit. binary_attest calls it only
+# after its own check failed, to name the commit in its line, so nothing it prints makes a binary pass.
+binary_attested_at() {
+  local file="$1" signer="$2" commit="$3" repo got line at=""
+  repo="$(binary_repo)"
+  got="$(binary_within "${BINARY_ATTEST_SECONDS}" gh attestation verify "${file}" --hostname github.com \
+    --repo "${repo}" --signer-workflow "github.com/${repo}/${signer}" --source-ref "${BINARY_SOURCE_REF}" \
+    --format json --jq "${BINARY_ATTESTED_JQ}" </dev/null 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "${line}" =~ ${BINARY_COMMIT_RE} && "${line}" != "${commit}" ]] || return 1   # loose-match: ok BINARY_COMMIT_RE is a fixed regex
+    at+="${at:+, }${line}"
+  done <<< "${got}"
+  printf '%s\n' "${at}"
+}
+
+# binary_attest <file> <signer> <version> — return 0 when gh verifies <file>'s build attestation as
+# release v<version>'s: built in binary_repo on github.com, signed by its workflow at <signer> (a path
+# in the repo such as .github/workflows/release.yml), run from BINARY_SOURCE_REF, and at the commit
+# v<version>'s tag is at (binary_tag_commit). The commit binds the file to this release: without it, any
+# release's signed binary passes as any other's, so whoever can upload to a release can roll an install
+# back to an older binary. gh comes from PATH and needs BINARY_GH_MIN or newer. It prints none of gh's
+# output. Any failure prints one line on stderr saying what to do and returns 1, and the caller never
+# runs <file>:
+#   an empty argument, or a <version> that BINARY_NAME_RE does not match, before any gh call. An empty
+#     <signer> matters most: an older gh would read github.com/<repo>/ as a prefix that every workflow in
+#     the repo matches;
+#   binary_tag_commit's failure, with its own line, before any gh attestation verify;
+#   gh attestation verify failing, or giving no answer within BINARY_ATTEST_SECONDS, when binary_within
+#     stops gh. After a failure that was not that stop, binary_attested_at asks gh once more, with no
+#     commit, which commits <file> is attested at. When it names only other commits, the line names them
+#     and the tag's commit: <file> is another release's binary. Otherwise the line says
+#     gh attestation verify failed.
 # Two runs at once are safe. gh reads <file> and never writes it. It writes only its sigstore cache
 # under its cache dir, through go-tuf v2.4.2 (the one gh 2.101.0 pins): metadata through a temp file and
 # a rename, and a target in place, but a cached target is used only once its length and hashes match,
 # so a half-written one is fetched again, never trusted.
 binary_attest() {
-  local file="${1:-}" repo="${2:-}" signer="${3:-}" rc=0 why=""
-  if [[ -z "${file}" || -z "${repo}" || -z "${signer}" ]]; then
-    echo "binary: binary_attest needs a file, a repo and a signer workflow, and was given '${file}' '${repo}' '${signer}', so nothing was verified or run" >&2
+  local file="${1:-}" signer="${2:-}" version="${3:-}" repo commit at rc=0 why=""
+  if [[ -z "${file}" || -z "${signer}" ]] || ! [[ "${version}" =~ ${BINARY_NAME_RE} ]]; then   # loose-match: ok BINARY_NAME_RE is a fixed regex
+    echo "binary: binary_attest needs a file, a signer workflow and a version that is a plain name, and was given '${file}' '${signer}' '${version}', so nothing was verified or run" >&2
     return 1
   fi
+  repo="$(binary_repo)"
+  commit="$(binary_tag_commit "${version}")" || return 1
   binary_within "${BINARY_ATTEST_SECONDS}" gh attestation verify "${file}" --hostname github.com \
-    --repo "${repo}" --signer-workflow "github.com/${repo}/${signer}" </dev/null >/dev/null 2>&1 || rc=$?
+    --repo "${repo}" --signer-workflow "github.com/${repo}/${signer}" --source-digest "${commit}" \
+    --source-ref "${BINARY_SOURCE_REF}" </dev/null >/dev/null 2>&1 || rc=$?
   [[ "${rc}" -ne 0 ]] || return 0
-  [[ "${rc}" -ne 142 ]] || why=" (no answer within ${BINARY_ATTEST_SECONDS} s)"
-  echo "binary: gh attestation verify failed for ${file}${why}, so its build attestation from ${repo}'s ${signer} is not proven and it was not run: check that gh is ${BINARY_GH_MIN} or newer, logged in (gh auth status) and online, then run the command again" >&2
+  if [[ "${rc}" -eq 142 ]]; then
+    why=" (no answer within ${BINARY_ATTEST_SECONDS} s)"
+  elif at="$(binary_attested_at "${file}" "${signer}" "${commit}")"; then
+    echo "binary: ${file} is attested at commit ${at}, but v${version}'s tag is at commit ${commit}, so it is not v${version}'s binary and it was not run: report it at https://github.com/${repo}/issues" >&2
+    return 1
+  fi
+  echo "binary: gh attestation verify failed for ${file}${why}, so its build attestation from ${repo}'s ${signer} at commit ${commit}, v${version}'s tag, is not proven and it was not run: check that gh is ${BINARY_GH_MIN} or newer, logged in (gh auth status) and online, then run the command again" >&2
   return 1
 }
 
@@ -352,8 +440,8 @@ binary_fetch_stop() {
 }
 
 # binary_fetch_steps <root> <version> <dir> — binary_fetch's steps, in its subshell, with the PATH it
-# gives: mkdir <dir>; binary_download into it; binary_attest on the asset, with binary_repo and the
-# signer line of `scripts/build.sh --list`; chmod +x; mv -f over <root>/BINARY_BUILD_PATH. The asset is
+# gives: mkdir <dir>; binary_download into it; binary_attest on the asset, with the signer line of
+# `scripts/build.sh --list` and <version>; chmod +x; mv -f over <root>/BINARY_BUILD_PATH. The asset is
 # the one asset name of --list that is a file in <dir>. Returns 0, or prints one `binary: ` line on
 # stderr and returns binary_download's code for its failures, else 1. It never removes <dir>: the
 # subshell's EXIT trap does.
@@ -388,7 +476,7 @@ binary_fetch_steps() {
     echo "binary: ${dir} holds ${n_asset} of the asset files ${build} --list names, where the download leaves one, so none was installed: run it again, and if it fails the same way report it at https://github.com/${repo}/issues" >&2
     return 1
   fi
-  binary_attest "${asset}" "${repo}" "${signer}" || return 1
+  binary_attest "${asset}" "${signer}" "${version}" || return 1
   if ! chmod +x "${asset}" 2>/dev/null; then
     echo "binary: could not make ${asset} executable: check that ${root} is writable, or set SWARMDEV_BIN to a swarm binary" >&2
     return 1

@@ -5,14 +5,15 @@
 # Each case runs a no-.git copy's swarm.sh from a project, with the stubs of tests/binary_fetch_stubs.sh
 # first on PATH, logging wrappers for sha256sum, shasum and git, and go a stub that logs and fails.
 #   The first call: gh logs --version, then the release download (github.com, this version's tag, this
-#     platform's asset and SHA256SUMS, into <copy>/.fetch-<pid>), then the attestation of that file with
-#     release.yml as signer, and no other call. <copy>/swarm is executable and cmp-equal to the fake release, config's output follows, no
+#     platform's asset and SHA256SUMS, into <copy>/.fetch-<pid>), then the read of the tag's commit, then
+#     the attestation of that file with release.yml as signer, at that commit and from main, and no other call. <copy>/swarm is executable and cmp-equal to the fake release, config's output follows, no
 #     .fetch-* folder is left, and git, which find_project runs, sees SWARMDEV_BIN=<copy>/swarm.
 #   A second call starts no gh, uname, shasum or sha256sum, and leaves <copy>/swarm's inode and mtime.
 #   _wrapper-fixture fetches, then prints its two arguments and the frame's project.
 #   A copy whose scripts/build.sh --list names another signer: the attestation call carries it.
-#   A wrong checksum, and a failing attestation: exit 1, one stderr line, no stdout, no <copy>/swarm and
-#     no .fetch-* folder, with bin/ported/config present.
+#   A wrong checksum, a failing attestation, and an asset attested at another commit than the tag's:
+#     exit 1, one stderr line, no stdout, no <copy>/swarm and no .fetch-* folder, with bin/ported/config
+#     present.
 #   Two calls whose gh downloads meet at a rendezvous before either publishes: both exit 0.
 #   Two calls whose second mv onto <copy>/swarm is held: meanwhile <copy>/swarm runs, and the held mv's
 #     source is an executable copy of the release in a .fetch-* folder.
@@ -143,13 +144,15 @@ fetch_dir() {
   d="$(sed -n 's/^.* release download .* --dir \(.*\)$/\1/p' <<< "$1" | head -1)"
   [[ "${d##*/.fetch-}" =~ ^[0-9]+$ && "${d}" == */.fetch-* ]] && echo "${d}"
 }
-# want_calls <dir> [signer] — the three gh lines a good fetch into <dir> logs.
+# want_calls <dir> [signer] — the four gh lines a good fetch into <dir> logs.
 want_calls() {
   printf 'GH_HOST=%s --version\n' "${HOST}"
   printf 'GH_HOST=%s release download v%s --repo github.com/%s --pattern %s --pattern %s --dir %s\n' \
     "${HOST}" "${VERSION}" "${FETCH_REPO}" "${ASSET}" "${SUMS}" "$1"
-  printf 'GH_HOST=%s attestation verify %s/%s --hostname github.com --repo %s --signer-workflow %s' \
-    "${HOST}" "$1" "${ASSET}" "${FETCH_REPO}" "${2:-${SIGNER_WANT}}"
+  printf 'GH_HOST=%s api --hostname github.com repos/%s/git/ref/tags/v%s --jq %s\n' \
+    "${HOST}" "${FETCH_REPO}" "${VERSION}" "${FETCH_TAG_JQ}"
+  printf 'GH_HOST=%s attestation verify %s/%s --hostname github.com --repo %s --signer-workflow %s --source-digest %s --source-ref %s' \
+    "${HOST}" "$1" "${ASSET}" "${FETCH_REPO}" "${2:-${SIGNER_WANT}}" "${FETCH_COMMIT}" "${FETCH_SOURCE_REF}"
 }
 # fifo <name> <fd> — a new fifo ${ROOT}/sync/<name>, held open read-write on <fd> by this shell.
 mkdir -p "${ROOT}/sync"
@@ -168,7 +171,7 @@ sw "${C1}" -- config
 calls="$(log gh)"; dir="$(fetch_dir "${calls}")" || dir=""
 check "first call: exits 0 with config's output, nothing on stderr" "0|${config}|" "${rc}|${out}|${err}"
 check "first call: the download went into <copy>/.fetch-<pid>" yes "$([[ -n "${dir}" && "${dir%/*}" == "${C1}" ]] && echo yes || echo "no: ${calls}")"
-check "first call: gh logged --version, the download, then the attestation of that file with release.yml as signer" \
+check "first call: gh logged --version, the download, the tag read, then the attestation of that file with release.yml as signer at the tag's commit" \
   "$(want_calls "${dir}")" "${calls}"
 check "first call: <copy>/swarm is the release, executable" "executable, same" "$(installed "${C1}")"
 check "first call: no .fetch-* folder is left" "" "$(temps "${C1}")"
@@ -231,8 +234,19 @@ C5="${ROOT}/c5"; copy "${C5}" config
 sw "${C5}" -- config
 fails_closed "a failing attestation" "${C5}"
 check "a failing attestation: the line is binary_attest's" yes "$([[ "${err}" == "binary: gh attestation verify failed for ${C5}/.fetch-"*"/${ASSET}, so"* ]] && echo yes || echo "no: ${err}")"
-check "a failing attestation: gh was asked for it" 1 "$(grep -c ' attestation verify ' <<< "$(log gh)" || true)"
+check "a failing attestation: gh was asked for it, then for the commits it is attested at" 2 "$(grep -c ' attestation verify ' <<< "$(log gh)" || true)"
 rm -f "${F}/stub/attest.fail"
+clear_logs
+# --- An asset attested at another commit than the tag's: another release's signed binary under this
+# release's name, its sum in SHA256SUMS, as the real-release check uploaded one.
+OTHER_COMMIT=e8ffb92e936e0b82d23fd821f88a6a7889ceed04
+C_OTHER="${ROOT}/c-at"; copy "${C_OTHER}" config
+printf '%s\n' "${OTHER_COMMIT}" > "${F}/stub/attested"
+sw "${C_OTHER}" -- config
+fails_closed "attested at another commit" "${C_OTHER}"
+check "attested at another commit: the line names the version and both commits" yes \
+  "$([[ "${err}" == "binary: ${C_OTHER}/.fetch-"*"/${ASSET} is attested at commit ${OTHER_COMMIT}, but v${VERSION}'s tag is at commit ${FETCH_COMMIT}, so it is not v${VERSION}'s binary and it was not run: report it at https://github.com/${FETCH_REPO}/issues" ]] && echo yes || echo "no: ${err}")"
+printf '%s\n' "${FETCH_COMMIT}" > "${F}/stub/attested"
 clear_logs
 
 # --- Two calls whose downloads meet before either publishes. The gh wrapper serves the download, then

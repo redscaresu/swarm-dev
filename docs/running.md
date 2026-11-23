@@ -162,24 +162,29 @@ Each version fetches its own binary once:
 
 1. `gh release download` fetches the release's binary for this machine, and its `SHA256SUMS`, into a new `.fetch-<pid>` folder in the plugin folder.
 2. swarm.sh checks the binary's SHA-256 against its line in `SHA256SUMS`.
-3. `gh attestation verify` checks that swarm-dev's release workflow built it.
+3. swarm.sh reads the commit of the release's tag `v<version>` with `gh api`, then `gh attestation verify` checks that swarm-dev's release workflow built the binary from `main` at that commit.
+   A binary signed for another release fails this check, even under this release's name with its sum in `SHA256SUMS`.
 4. swarm.sh moves the binary to `swarm` in the plugin folder, then removes the `.fetch-<pid>` folder.
 
 Later calls find `swarm` there and check nothing again, except on macOS, where every call checks it for the quarantine mark.
-The fetch runs the real `gh`, past swarm-dev's gh-shim, and needs gh 2.57.0 or newer, logged in.
+The fetch runs the real `gh`, past swarm-dev's gh-shim, and needs gh 2.68.0 or newer, logged in.
 A git checkout of swarm-dev never fetches: it builds the binary from its own tree.
 With `SWARMDEV_BIN` set, swarm.sh runs that file and fetches nothing.
 
-When the download cannot work here (no binary for this platform, no gh, a gh older than 2.57.0, or a failed `gh release download`), a machine with Go builds the binary from source instead, as [Offline](#offline) says.
+When the download cannot work here (no binary for this platform, no gh, a gh older than 2.68.0, or a failed `gh release download`), a machine with Go builds the binary from source instead, as [Offline](#offline) says.
 Otherwise, or when that build fails too, the call stops with one line that starts `binary:`, and the command does not run.
 `swarm.sh version` is the exception: it prints that line after its version line, and goes on.
 What each line means:
 
 - `swarm-dev publishes no binary for <os>/<arch>`: build one with `go build ./cmd/swarm` and set `SWARMDEV_BIN` to its path.
 - `gh is not on PATH`: install the GitHub CLI and run `gh auth login`.
-- `gh <version> is older than 2.57.0`, or `gh --version's first line ... is not 'gh version X.Y.Z'`: upgrade gh. Nothing was downloaded.
+- `gh <version> is older than 2.68.0`, or `gh --version's first line ... is not 'gh version X.Y.Z'`: upgrade gh. Nothing was downloaded.
 - `gh release download ... failed`: the line quotes gh. Fix what it says (no network, or no login), then run the command again.
-- `gh attestation verify failed`, with `(no answer within 60 s)` when gh did not answer: check that gh is 2.57.0 or newer, logged in and online.
+- `gh attestation verify failed`, with `(no answer within 60 s)` when gh did not answer: check that gh is 2.68.0 or newer, logged in and online.
+- `is attested at commit <A>, but v<version>'s tag is at commit <B>`: the release holds another release's signed binary under this one's name, so it was not installed. Report it.
+- `gh api could not read v<version>'s tag`: the line names the `gh api` command that shows why. Fix what it says, then run the command again.
+- `gh api gave no answer within 60 s`: check that gh is logged in and online, then run the command again.
+- `v<version>'s tag ... reads '<text>', not 'commit <sha>'`: the release's tag does not point at a commit, so the binary's commit cannot be checked. Report it.
 - `the SHA-256 of ... does not match`: the file is not the one the release lists, so it was not installed. Run the command again, and report it if it fails the same way.
 - `has no line naming`, `names ... on <n> lines`, `left no`, or `holds <n> of the asset files`: the release is not laid out as swarm-dev expects. Run the command again, and report it if it fails the same way.
 - `could not take the SHA-256`: install `sha256sum` or `shasum`.
@@ -197,12 +202,12 @@ Two calls at once each fetch into a folder of their own, then move a checked bin
 
 With no network, an installed copy's first call cannot download its binary.
 If Go is installed, it builds the binary from the source in the plugin folder instead, prints one line, `binary: built from source, as <why the download could not work>`, and the command runs.
-It builds the same way whenever the download cannot work here: no binary for this platform, no gh, a gh older than 2.57.0, or a failed `gh release download`.
+It builds the same way whenever the download cannot work here: no binary for this platform, no gh, a gh older than 2.68.0, or a failed `gh release download`.
 The build needs the Go version that the plugin's go.mod names, or newer.
 An older Go fetches that version itself, which needs the network.
 If Go is missing or the build fails, the call stops with one `binary:` line, then any error Go printed, and the command does not run.
 The line names why the download could not work, the Go version go.mod names, and why the build failed.
-A download that fails a check (a wrong SHA-256, or a failed attestation) never builds, whether or not Go is installed: the call stops with the check's line.
+A download that fails a check (a wrong SHA-256, a failed attestation, or an attestation at another commit) never builds, whether or not Go is installed: the call stops with the check's line.
 A build that is stopped part way leaves no `swarm`.
 It can leave a `swarm.build-<pid>` file in the plugin folder, which no call runs; the next call builds again, and you can delete the file.
 Once the binary is there, a call needs no network to find it.

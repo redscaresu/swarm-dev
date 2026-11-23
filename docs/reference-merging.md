@@ -1258,6 +1258,9 @@ On a board outside the project's repo, git holds no retro file or story history 
 ### Publishing a release
 
 In swarm-dev's own repo, `.github/workflows/release.yml` runs on every push to `main`.
+Its attestation's signing certificate names that push's commit and `refs/heads/main`.
+An installed copy's fetch takes a binary only when both match: the ref, and the commit the release's tag `v<version>` is at ([running.md § First run](running.md#first-run)).
+The workflow must keep its push-to-main trigger, and the tag must stay a plain tag on the pushed commit.
 Each of its two jobs runs `scripts/publish-release.sh plan`, which prints the steps the push needs: `none`, or some of `draft`, `attach`, `publish` and `move`, in that order.
 A push with no bump plans `none` and makes no gh call, so it publishes nothing and moves nothing.
 

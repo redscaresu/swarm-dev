@@ -142,7 +142,7 @@ way() {
     login) printf '%s\n' "${LOGIN}" > "${F}/stub/download.stderr"; WHY="${dl} '${LOGIN%%$'\n'*}'" ;;
     no-assets) printf '%s\n' "${NO_ASSETS}" > "${F}/stub/download.stderr"; WHY="${dl} '${NO_ASSETS}'" ;;
     riscv64) fetch_uname "${F}" Linux riscv64; WHY="swarm-dev publishes no binary for linux/riscv64 (uname: Linux riscv64)" ;;
-    old-gh) printf '2.56.9\n' > "${F}/stub/gh-version"; WHY="gh 2.56.9 is older than ${FETCH_GH_MIN}," ;;
+    old-gh) printf '2.67.0\n' > "${F}/stub/gh-version"; WHY="gh 2.67.0 is older than ${FETCH_GH_MIN}," ;;
     odd-gh) printf 'DEV\n' > "${F}/stub/gh-version"
       WHY="gh --version's first line, 'gh version DEV (2026-09-15)', is not 'gh version X.Y.Z', so this gh counts as older than ${FETCH_GH_MIN}," ;;
     no-gh) GH_PATH="${BASE_NONE}"; WHY="gh is not on PATH," ;;
