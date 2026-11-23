@@ -11,7 +11,7 @@ Store's file methods, the Python JSON and text decoders, per-file entry registra
 
 A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** Store has ReadFile, Glob, IsFile, MkdirAll, WriteAtomic and Remove with adapter tests. internal/pyjson and internal/pytext each have a comparison test against the Python that fails when either side alone is changed, and internal/clock has one against clock.py. A cmd/swarm entry registers from its own file. docs/port/copies.tsv names, for each of the five modules, what still imports its Python copy, inline sites included. tests/port_copies_test.sh fails when a copy outlives its last importer or is deleted before it. shared-gh-cache-call records your answer on gh_cache.
+**Done when:** Store has ReadFile, Glob, IsFile, MkdirAll, WriteAtomic and Remove with adapter tests. internal/pyjson, internal/pytext and internal/clock each have a comparison test against the Python (clock.py for the clock) that runs both over the same fixtures, the malformed cases among them, compares the output byte for byte, and fails when either side alone is changed. A cmd/swarm entry registers from its own file. docs/port/copies.tsv names, for each of the five modules, what still imports its Python copy, inline sites included. tests/port_copies_test.sh fails when a copy outlives its last importer or is deleted before it. shared-gh-cache-call records your answer on gh_cache.
 
 **Stories:**
 - [go-store-files](../stories/go-store-files.md)
@@ -31,7 +31,7 @@ A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent'
 - Lead: shared-patches (shared step L2).
 
 **Areas:**
-- go-store-files: [internal/iface/iface.go:Store, internal/iface/iface.go:package doc, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store.go:Glob, internal/adapter/store/store.go:IsFile, internal/adapter/store/store.go:MkdirAll, internal/adapter/store/store.go:WriteAtomic, internal/adapter/store/store.go:Remove, internal/adapter/store/store_test.go]
+- go-store-files: [internal/iface/iface.go:Store, internal/iface/iface.go:package doc, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store.go:Glob, internal/adapter/store/store.go:IsFile, internal/adapter/store/store.go:MkdirAll, internal/adapter/store/store.go:WriteAtomic, internal/adapter/store/store.go:Remove, internal/adapter/store/store_test.go:ReadFile, Glob, IsFile, MkdirAll, WriteAtomic and Remove tests]
 - go-py-json: [internal/pyjson/json.go, internal/pyjson/compare_test.go]
 - go-py-decode: [internal/pytext/decode.go, internal/pytext/compare_test.go]
 - go-entries-per-file: [cmd/swarm/frame.go:entries, cmd/swarm/frame_test.go:TestRegister, docs/port/README.md:§ Two forms, AGENTS.md:§ Working on this repository]

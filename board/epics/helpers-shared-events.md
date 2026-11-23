@@ -11,7 +11,7 @@ events_outcome and touches_rows exist as Go beside their Python copies. The outc
 
 A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** internal/eventsoutcome and internal/touchesrows have comparison tests against the Python that fail when either side alone is changed. The outcome-scan check from docs/port/tests.tsv runs in Go and keeps the assertion its go_check column names. bin/lib/lifecycle.sh's resend_pass runs `_resend-rows`, and the differential run is clean for its fixtures.
+**Done when:** internal/eventsoutcome and internal/touchesrows each have a comparison test that runs the Python and the Go over the same fixtures, the malformed cases among them, compares the output byte for byte, and fails when either side alone is changed. The outcome-scan check from docs/port/tests.tsv runs in Go and keeps the assertion its go_check column names. bin/lib/lifecycle.sh's resend_pass runs `_resend-rows`, and the differential run is clean for its fixtures.
 
 **Stories:**
 - [go-events-outcome](../stories/go-events-outcome.md)

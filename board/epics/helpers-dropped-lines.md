@@ -1,7 +1,7 @@
 ---
 status: active
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
-depends_on: [foundation-exit]
+depends_on: [foundation-exit, helpers-shared-base, helpers-shared-report]
 ---
 
 # dropped_lines.py runs as Go, and a merge that dropped a base line is still held

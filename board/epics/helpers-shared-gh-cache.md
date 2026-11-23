@@ -11,7 +11,7 @@ gh_cache's files and records and report's merged listing exist as Go. The patch 
 
 A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** internal/ghcache has comparison tests for files, listing and records, and internal/report for merged. Each fails when either side alone is changed. bin/lib/board.sh's non_fix_cache runs `_non-fix-cache`, and the patch gate's cache keeps its key and its files. A test shows an old session's bash and the binary read each other's entries. The differential run is clean for fx_gate_next_cached and fx_gate_next_cached_empty.
+**Done when:** internal/ghcache has comparison tests for files, listing and records, and internal/report for merged. Each runs the Python and the Go over the same fixtures, the malformed cases among them, compares the output byte for byte, and fails when either side alone is changed. bin/lib/board.sh's non_fix_cache runs `_non-fix-cache`, and the patch gate's cache keeps its key and its files. A test shows an old session's bash and the binary read each other's entries. The differential run is clean for the fx_gate_next_* fixtures, fx_gate_next_cached and fx_gate_next_cached_empty among them.
 
 **Stories:**
 - [go-gh-cache-files](../stories/go-gh-cache-files.md)

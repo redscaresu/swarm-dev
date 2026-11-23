@@ -11,7 +11,7 @@ flow_report.py and retro_report.py hand a section that has no .py file to the bi
 
 A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** flow_report.py and retro_report.py run a section with no .py file through the binary, in the same name order, under the same heading and with the same context. One fixture section in Go shows it for each runner. A gh limit that one side spends is seen as spent by the other, Python and Go alike. bin/lib/lifecycle.sh's archive_session and bin/swarm.sh's codex_story_prompt run the binary, and the differential run is clean for their fixtures.
+**Done when:** flow_report.py and retro_report.py run a section with no .py file through the binary, in the same name order, under the same heading and with the same context. One fixture section in Go shows it for each runner. When the Go section spends the gh limit, the runner's next Python section sees it spent. bin/lib/lifecycle.sh's archive_session and bin/swarm.sh's codex_story_prompt run the binary, and the differential run is clean for their fixtures.
 
 **Stories:**
 - [go-flow-sections](../stories/go-flow-sections.md)

@@ -2,8 +2,9 @@
 kind: code
 status: later
 epic: helpers-shared-base
-depends_on: []
-touches: [internal/iface/iface.go:Store, internal/iface/iface.go:package doc, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store.go:Glob, internal/adapter/store/store.go:IsFile, internal/adapter/store/store.go:MkdirAll, internal/adapter/store/store.go:WriteAtomic, internal/adapter/store/store.go:Remove, internal/adapter/store/store_test.go]
+depends_on: [store-file-reads]
+needs: store-file-reads (board-store): it adds ReadFile to internal/iface/iface.go:Store first; reuse it, and add the other five methods.
+touches: [internal/iface/iface.go:Store, internal/iface/iface.go:package doc, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store.go:Glob, internal/adapter/store/store.go:IsFile, internal/adapter/store/store.go:MkdirAll, internal/adapter/store/store.go:WriteAtomic, internal/adapter/store/store.go:Remove, internal/adapter/store/store_test.go:ReadFile, Glob, IsFile, MkdirAll, WriteAtomic and Remove tests]
 estimate_lines: 220
 ---
 
