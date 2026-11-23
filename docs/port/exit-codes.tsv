@@ -160,7 +160,7 @@ tidy	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_
 tidy	1	--yes with no pane id, or herdr lists unreadable; says why	bin/lib/lifecycle.sh:tidy_panes	none
 unblock	0	blocked stories whose parents are done were made ready	bin/swarm.sh:main	tests/backlog_test.sh,tests/board_state_test.sh
 unblock	1	bad --startable scope or an unknown argument	bin/swarm.sh:dispatch	none
-update	0	the plugin update ran	bin/swarm.sh:(early case)	none
+update	0	the plugin update ran	bin/swarm.sh:(early case)	tests/update_test.sh
 upgrade	0	every agent moved to the new version	bin/swarm.sh:main	tests/upgrade_test.sh
 upgrade	1	not run inside a herdr pane; says so on stderr	bin/lib/agents.sh:require_herdr	none
 upgrade	1	bad argument, unknown epic, or an agent was left on the old version	bin/lib/lifecycle.sh:upgrade_agents	tests/upgrade_test.sh
