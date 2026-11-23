@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-sections
 depends_on: [go-report-logs, go-entries-per-file, shared-copies-list]
 needs: go-report-logs: report.SessionLog. go-entries-per-file: the register call. shared-copies-list: docs/port/copies.tsv's archive_session row, deleted here.
 touches: [cmd/swarm/session_log.go, bin/ported/_session-log, bin/lib/lifecycle.sh:archive_session, docs/port/sites.tsv:archive_session row, docs/port/copies.tsv:archive_session row, tests/diff_fixtures_archive.sh, tests/nopy_list.txt:fx_archive_session line, tests/lib_path_test.sh:_archive check, tests/speed_list.txt:archive_session line]

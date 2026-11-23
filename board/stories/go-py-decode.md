@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-base
 depends_on: []
 touches: [internal/pytext/decode.go, internal/pytext/compare_test.go]
 estimate_lines: 130

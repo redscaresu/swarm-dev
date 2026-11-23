@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-sections
 depends_on: [go-flow-sections]
 needs: go-flow-sections: the _section entry, internal/sections' registration and fixture pattern, the bin/sections/<runner>/ marker rule and reports.sh's section_bin.
 touches: [internal/sections/retro.go, cmd/swarm/section_retro_test.go, bin/lib/retro_report.py:header, bin/lib/retro_report.py:names, bin/lib/retro_report.py:section loop, bin/lib/reports.sh:retro_report, tests/retro_test.sh:Go section checks, tests/diff_fixtures_retro.sh, tests/speed_list.txt:retro_sections line, docs/port/swarm-names.tsv:SWARM_SECTION_BIN row, docs/reference-logs.md:§ swarm.sh retro]

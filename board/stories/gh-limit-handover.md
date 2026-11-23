@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-sections
 depends_on: [go-report-gh, go-flow-sections]
 needs: go-report-gh: report.GH, its Limit and the SPENT rule. go-flow-sections: flow_sections' SWARM_SECTION_BIN hand-over, the flow fixture section and cmd/swarm's section test.
 touches: [bin/lib/report.py:gh, bin/lib/reports.sh:flow_sections, internal/report/gh.go:GH, internal/report/gh_state_test.go, internal/sections/flow.go:fixture, cmd/swarm/section_test.go:TestFlowGHLimit, docs/port/swarm-names.tsv:SWARM_GH_STATE row]

@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-gh-cache
 depends_on: [go-gh-cache-files, go-store-files]
 needs: go-gh-cache-files: ghcache.Get, Put and Path. go-store-files: Store.Glob and Remove.
 touches: [internal/ghcache/records.go, internal/ghcache/records_compare_test.go]

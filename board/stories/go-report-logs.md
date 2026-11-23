@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-report
 depends_on: [go-store-files, go-py-json, go-py-decode]
 needs: go-store-files: Store.Glob and ReadFile. go-py-json: pyjson.Decode. go-py-decode: pytext.DecodeIgnore.
 touches: [internal/report/logs.go, internal/report/logs_compare_test.go, internal/layers/imports_test.go:allowedStd]

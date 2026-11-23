@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-events
 depends_on: []
 touches: [internal/touchesrows/text.go, internal/touchesrows/text_compare_test.go]
 estimate_lines: 200

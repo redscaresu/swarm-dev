@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-shared
+epic: helpers-shared-base
 depends_on: []
 touches: [internal/iface/iface.go:Store, internal/iface/iface.go:package doc, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store.go:Glob, internal/adapter/store/store.go:IsFile, internal/adapter/store/store.go:MkdirAll, internal/adapter/store/store.go:WriteAtomic, internal/adapter/store/store.go:Remove, internal/adapter/store/store_test.go]
 estimate_lines: 220
