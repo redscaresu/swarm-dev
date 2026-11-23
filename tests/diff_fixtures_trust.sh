@@ -48,5 +48,12 @@ fx_trusted_nan() { trust_project "${ROOT}/plain"; trust_file '{"x": NaN, "projec
 # Arrays nested 500 deep, inside every python3's limit: trusted.
 fx_trusted_nested() { trust_project "${ROOT}/plain"; trust_nested 500; }
 # Arrays nested 200000 deep, past every python3's limit: the RecursionError is not caught, so it exits
-# 1 with a traceback, and is refused.
-fx_trusted_deep() { trust_project "${ROOT}/plain"; trust_nested 200000; }
+# 1 with a traceback, and is refused. python3 3.14 names the stack it used ("Stack overflow (used
+# 16348 kB)"), which differs between two trees on Linux CI, so stderr goes through a sed that masks
+# that number as <n>. pipefail keeps swarm.sh's exit, and stdout stays its own.
+fx_trusted_deep() {
+  trust_project "${ROOT}/plain"; trust_nested 200000
+  # shellcheck disable=SC2016 # the inner bash expands $1 and $2
+  FX_CMD=(bash -c 'set -o pipefail; { bash "$1" _trusted "$2" 2>&1 1>&3 | sed -E "s/\(used [0-9]+ kB\)/(used <n> kB)/" >&2; } 3>&1' \
+    _ "${TREE}/bin/swarm.sh" "${ROOT}/plain")
+}
