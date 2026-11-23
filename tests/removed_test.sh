@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # removed_test.sh — the switches, modes and reports that were removed stay gone: none of their names
-# is in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh (this file excepted), and they say
+# is in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py, tests/*.sh (this file excepted) or any .go file under
+# cmd/ and internal/ (testdata included), and they say
 # verify only as git's --verify, as gh's `gh attestation verify` (binary.sh's binary_attest), or in the
 # one LEGACY_BUILDER_ROLES line that keeps past verify builds counted. cost, features and review-yield, folded into flow, each print the flow section that
 # holds their numbers and exit 0.
@@ -24,11 +25,13 @@ fails=0
 
 files=("${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/lib/*.py)
 for f in "${REPO}"/tests/*.sh; do [[ "${f}" == "${SELF}" ]] || files+=("${f}"); done
+# Every Go file under cmd/ and internal/, testdata included: a loop bash 3.2 runs (no mapfile, no globstar).
+while IFS= read -r f; do files+=("${f}"); done < <(find "${REPO}/cmd" "${REPO}/internal" -type f -name '*.go' | sort)
 # bin/swarm.sh's REMOVED_KEYS line names the removed keys a config may still set, to warn on them.
 found="$(grep -nE "${GONE}" "${files[@]}" | grep -vE '^[^:]*/bin/swarm\.sh:[0-9]+:REMOVED_KEYS="' || true)"
 if [[ -n "${found}" ]]; then
   echo "FAIL a removed name is back:"; echo "${found}"; fails=$((fails + 1))
-else echo "ok   no removed name in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh but REMOVED_KEYS"; fi
+else echo "ok   no removed name in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py, tests/*.sh or the .go files under cmd/ and internal/ but REMOVED_KEYS"; fi
 
 # Why: an older board's config still sets these keys, and swarm.sh must keep running there. Boards
 # outside swarm-dev and infrafactory set them, so checking those two configs is not enough to make
