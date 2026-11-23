@@ -103,9 +103,10 @@ func startFindingLines(found []startFinding) []string {
 }
 
 // TestStartsFixtures asserts the exact findings on the fixture trees under testdata/starts/, written
-// out here. bad/ calls os.StartProcess and syscall's starts and passes each as a value, builds
-// exec.Cmd literals with and without & and through an aliased os/exec, passes exec.Command and
-// exec.CommandContext as values, and dot-imports os, os/exec and syscall, os/exec in an adapter.
+// out here. bad/ calls os.StartProcess and syscall's starts, passes os.StartProcess and
+// syscall.ForkExec as values, builds exec.Cmd literals with and without & and through an aliased
+// os/exec, passes exec.Command and exec.CommandContext as values, and dot-imports os, os/exec and
+// syscall, os/exec in an adapter.
 // clean/ calls exec.Command and exec.CommandContext, takes *exec.Cmd as a parameter, declares an
 // exec.Cmd variable and uses os and syscall names that start nothing: it has no finding.
 func TestStartsFixtures(t *testing.T) {
