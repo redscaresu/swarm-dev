@@ -20,7 +20,8 @@
 #   No user entry, two, or no bin/swarm.sh at installPath: one line naming swarm.sh version, no run.
 #   A stub that sleeps, with SWARM_UPDATE_WAIT=2: update returns within 10 s with that one line.
 #   A stub that runs its own binary_within, as a new copy's fetch bounds gh: once update's bound passes,
-#     the inner command, in a process group of its own, is gone too.
+#     the inner command, in a process group of its own, is gone too. Also when that command ignores TERM
+#     and only the inner binary_within's KILL, after its own grace, stops it.
 # And from a swarm-dev@swarm-dev-pre copy, an entry for swarm-dev@swarm-dev alone counts as none.
 # Every case exits 0.
 set -euo pipefail
@@ -35,11 +36,15 @@ fi
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [[ -d "${tmp}" ]] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-# The nested case's inner command runs in a process group of its own; if a case leaves it, KILL it by its pid.
+# The nested cases' inner commands run in a process group of their own; if a case leaves one, KILL it by
+# its pid.
 cleanup() {
-  local p=""
-  [[ ! -s "${ROOT}/inner.pid" ]] || p="$(cat "${ROOT}/inner.pid")"
-  [[ -z "${p}" ]] || kill -KILL "${p}" 2>/dev/null || true
+  local f p
+  for f in "${ROOT}/inner.pid" "${ROOT}/inner-deaf.pid"; do
+    p=""
+    [[ ! -s "${f}" ]] || p="$(cat "${f}")"
+    [[ -z "${p}" ]] || kill -KILL "${p}" 2>/dev/null || true
+  done
   rm -rf "${ROOT}"
 }
 trap cleanup EXIT
@@ -187,9 +192,31 @@ update "${C}"
 unset SWARM_UPDATE_WAIT
 check "nested binary_within: exits 0" 0 "${rc}"
 one_line "nested binary_within"
-check "nested binary_within: the inner command ran and is gone once update returns" gone \
-  "$(p="$(cat "${ROOT}/inner.pid" 2>/dev/null)"
-    if [[ -z "${p}" ]]; then echo "no pid written"; elif kill -0 "${p}" 2>/dev/null; then echo alive; else echo gone; fi)"
+# pid_state <file> — gone, alive, or "no pid written": the state of the pid <file> holds.
+pid_state() {
+  local p
+  p="$(cat "$1" 2>/dev/null)"
+  if [[ -z "${p}" ]]; then echo "no pid written"; elif kill -0 "${p}" 2>/dev/null; then echo alive; else echo gone; fi
+}
+check "nested binary_within: the inner command ran and is gone once update returns" gone "$(pid_state "${ROOT}/inner.pid")"
+
+# The same, with an inner command that ignores TERM and an inner grace of 1 s: only the inner perl's KILL,
+# a second after update's TERM, stops it. The bash that ran the inner perl dies on that TERM at once, so
+# update's binary_within must wait for its whole group, the inner perl too, not only for that bash.
+D="${ROOT}/deaf/swarm-dev/5.0.0"; mkdir -p "${D}/bin"
+cat > "${D}/bin/swarm.sh" <<STUB
+source "${REPO}/bin/lib/binary.sh"
+BINARY_WITHIN_GRACE=1
+binary_within 60 sh -c 'trap "" TERM; echo \$\$ > "${ROOT}/inner-deaf.pid"; exec sleep 60'
+STUB
+entries swarm-dev@swarm-dev "${D}"
+export SWARM_UPDATE_WAIT=2
+update "${C}"
+unset SWARM_UPDATE_WAIT
+check "nested binary_within, TERM ignored: exits 0" 0 "${rc}"
+one_line "nested binary_within, TERM ignored"
+check "nested binary_within, TERM ignored: the inner command ran and is gone once update returns" gone \
+  "$(pid_state "${ROOT}/inner-deaf.pid")"
 rm -f "${ROOT}/next.json"
 
 echo

@@ -91,13 +91,15 @@ BINARY_WITHIN_GRACE=3   # seconds binary_within gives a TERMed group to end befo
 # <seconds> (at least 1) with exit 142; else the command's own status (128+N for a signal). gh, a Go
 # program, ignores SIGALRM, so the alarm goes to perl, which stops the group. A HUP, INT or TERM to perl
 # stops the command too and exits 128+N: in a group of its own, the command would run on with no alarm.
-# To stop the group, perl TERMs it, gives it BINARY_WITHIN_GRACE seconds, then KILLs what is left. The
-# TERM comes first for a binary_within inside the command, such as swarm.sh update's run of a new copy's
-# swarm.sh version, whose fetch bounds gh with one: that inner perl, TERMed, stops its own group, where a
-# KILL would leave it running with no alarm. Each KILL is followed by a waitpid, so the command is reaped
-# and gone when binary_within returns, not a zombie left for init. It is merge.sh's within in whole
-# seconds, plus that reap and the TERM first, copied as hooks/lead-stop.sh copies it: this file needs no
-# other bin/lib file.
+# To stop the group, perl TERMs it, waits up to BINARY_WITHIN_GRACE seconds for every process in it to
+# end, then KILLs what is left. The TERM comes first for a binary_within inside the command, such as
+# swarm.sh update's run of a new copy's swarm.sh version, whose fetch bounds gh with one: that inner perl,
+# TERMed, stops its own group, where a KILL would leave it running with no alarm. The wait is for the
+# whole group, not only the command: the bash that ran the inner perl dies on the TERM at once, and a KILL
+# then would reach the inner perl before it had stopped its group. The command is reaped, by the wait or
+# by a waitpid after the KILL, so it is gone when binary_within returns, not a zombie left for init. It is
+# merge.sh's within in whole seconds, plus that reap and the TERM first, copied as hooks/lead-stop.sh
+# copies it: this file needs no other bin/lib file.
 binary_within() {
   perl -MPOSIX=WNOHANG -e 'my ($g, $t) = (shift, shift); $t = 1 if $t < 1;
     defined(my $p = fork) or exit 127;
@@ -107,8 +109,14 @@ binary_within() {
     sub stop {
       $SIG{$_} = "IGNORE" for qw(HUP INT TERM ALRM);
       kill "TERM", -$p;
-      for (1 .. $g * 10) { last if waitpid($p, WNOHANG); select undef, undef, undef, 0.1 }
-      kill "KILL", -$p, $p; waitpid $p, 0; exit shift }
+      my $reaped = 0;
+      for (1 .. $g * 10) {
+        $reaped ||= waitpid($p, WNOHANG) != 0;
+        exit $_[0] if $reaped && !kill 0, -$p;
+        select undef, undef, undef, 0.1 }
+      kill "KILL", -$p;
+      unless ($reaped) { kill "KILL", $p; waitpid $p, 0 }
+      exit $_[0] }
     my %n = (HUP => 1, INT => 2, TERM => 15);
     for my $s (keys %n) { $SIG{$s} = sub { stop(128 + $n{$s}) } }
     $SIG{ALRM} = sub { stop(142) };
