@@ -57,8 +57,9 @@ hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_
 # The Go module: a renamed Go path can break a doc that names it, which doc_check_test.sh catches. Not
 # `named`, since no test names main.go and it would select every test; CI's go-checks job runs the Go tests.
 # port_swarm_names_test.sh, port_locks_test.sh and port_fields_test.sh scan the Go files by a glob, and
-# command_names_test.sh greps them for a bare /swarm.
-go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/command_names_test.sh tests/binary_dispatch_test.sh
+# command_names_test.sh greps them for a bare /swarm. removed_test.sh greps every .go file under cmd/ and
+# internal/ for a removed name.
+go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/command_names_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh
 # The docs: the tests that name the file, always the ones that check or read the real docs, and
 # command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
 # epic_briefs_test.sh, plan_epic_test.sh and upgrade_test.sh read docs/reference*.md through a glob.
