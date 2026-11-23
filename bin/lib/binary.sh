@@ -290,8 +290,11 @@ binary_run() {
 # filesystem, so the last step is a rename over <root>/BINARY_BUILD_PATH, and a call started meanwhile
 # never runs half a file.
 BINARY_FETCH_TMP=.fetch-
-# BINARY_REINSTALL: what a stop line of binary_fetch or binary_ensure says to do about a broken copy.
-BINARY_REINSTALL="reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)"
+# BINARY_REINSTALL: what a stop line of binary_fetch, binary_download or binary_ensure says to do about a
+# broken copy. It names PLUGIN, the ID the copy is installed as (plugin_id in bin/swarm.sh), so a copy
+# from swarm-dev-pre says swarm-dev@swarm-dev-pre; with PLUGIN unset (binary.sh sourced alone) it names
+# swarm-dev@swarm-dev.
+BINARY_REINSTALL="reinstall swarm-dev (claude plugin uninstall ${PLUGIN:-swarm-dev@swarm-dev}, then claude plugin install ${PLUGIN:-swarm-dev@swarm-dev})"
 
 # binary_gh_path — PATH with every empty entry and every folder whose name ends /gh-shim taken out, as
 # bin/gh-shim/gh skips them when it looks for the real gh, so the download runs no version's shim and
@@ -586,7 +589,7 @@ BINARY_SUM_RE='^([^ ]+) [ *](.*)$'
 binary_download() {
   local root="${1:-}" version="${2:-}" dir="${3:-}" build list s m os arch kind f2 f3 why=""
   local asset="" n_asset=0 n_all=0 sums="" n_sums=0 repo report err line file got want="" n=0 sum_cmd=()
-  local fix="reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)"
+  local fix="${BINARY_REINSTALL}"
   if [[ -z "${root}" || -z "${version}" || ! -d "${dir}" ]]; then
     echo "binary: binary_download needs a plugin root, a version and an existing folder; it got '${root}' '${version}' '${dir}'" >&2
     return 1

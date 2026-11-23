@@ -10,7 +10,8 @@
 # no word and leaves the old binary as it was. With no go on PATH the call exits 1 in one line and bash's
 # config does not run. A copy with no .git tries no build: it is an installed copy, whose swarm.sh fetches
 # the binary first (binary_ensure), and its copy has no scripts/build.sh, so the call stops with
-# binary_download's line. Two calls started together on a missing binary both print the word, and git
+# binary_download's line. Installed from swarm-dev-pre, that line names swarm-dev@swarm-dev-pre, and so
+# does binary_copy_lists's when gh is too old to download. Two calls started together on a missing binary both print the word, and git
 # status is empty after.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -179,6 +180,20 @@ check "no .git: exits 1" 1 "${rc}"
 check "no .git: binary_download's line" \
   "binary: cannot tell which release files are this copy's binary: ${N}/scripts/build.sh is missing: reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev, then claude plugin install swarm-dev@swarm-dev)" "${err}"
 check "no .git: the go stub logged no call" 0 "$(builds failgo)"
+
+# The same copy installed from swarm-dev-pre: its reinstall hint names swarm-dev@swarm-dev-pre, both
+# from binary_download (a gh new enough to download) and from binary_copy_lists (a gh older than
+# BINARY_GH_MIN, so the download is never tried).
+PRE="${ROOT}/plugins/cache/swarm-dev-pre/swarm-dev/9.9.9"; mkdir -p "${PRE%/*}"; cp -R "${N}" "${PRE}"
+PRE_FIX="reinstall swarm-dev (claude plugin uninstall swarm-dev@swarm-dev-pre, then claude plugin install swarm-dev@swarm-dev-pre)"
+for v in fit:2.99.0 old:2.0.0; do
+  d="${ROOT}/gh-${v%%:*}"; mkdir -p "${d}"
+  printf '#!/bin/sh\necho "gh version %s (2026-01-01)"\n' "${v#*:}" > "${d}/gh"; chmod +x "${d}/gh"
+  sw "${PRE}" "${d}:${FAILSTUBS}:${PATH}"
+  check "-pre copy, ${v%%:*} gh: exits 1" 1 "${rc}"
+  check "-pre copy, ${v%%:*} gh: the line names swarm-dev@swarm-dev-pre" \
+    "binary: cannot tell which release files are this copy's binary: ${PRE}/scripts/build.sh is missing: ${PRE_FIX}" "${err}"
+done
 
 # Two calls started together on a missing binary: both print the word, and git status stays empty.
 C2="${ROOT}/co2"; checkout "${C2}" together
