@@ -122,9 +122,6 @@ awk -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { exit !(k ~ /^[0-9]*\.?[0-9]+$/ && k 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Where the newest version is published. SWARM_LATEST_URL is overridable so the tests need no network.
-LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swarm-dev/main/.claude-plugin/plugin.json}"
-
 # plugin_id <plugin root> — set PLUGIN, the plugin's ID in Claude Code (<plugin>@<marketplace>), and
 # MARKETPLACE, the marketplace it was installed from, from <root>'s path. Claude Code installs a plugin
 # at <dir>/plugins/cache/<marketplace>/<plugin>/<version>, so swarm-dev@swarm-dev-pre sits at
@@ -141,6 +138,14 @@ plugin_id() {
   PLUGIN="${plugin}@${market}"; MARKETPLACE="${market}"
 }
 plugin_id "${SWARM_HOME}"
+
+# Where the newest version this copy can get is published: plugin.json on the ref its marketplace
+# follows, prerelease for swarm-dev-pre and stable for any other (a checkout included). main runs ahead
+# of both, so a copy that read it was warned about a version it could not install. SWARM_LATEST_URL is
+# overridable so the tests need no network.
+LATEST_REF=stable
+if [[ "${MARKETPLACE}" == swarm-dev-pre ]]; then LATEST_REF=prerelease; fi
+LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swarm-dev/${LATEST_REF}/.claude-plugin/plugin.json}"
 
 # plugin_version — the top-level "version" string of the plugin.json on stdin, as python3's json.load
 # reads it, in bash builtins alone: each process start counts in the speed job. It scans the text,
