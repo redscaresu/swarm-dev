@@ -1,8 +1,8 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
-depends_on: []
+epic: helpers-ci-gate-modes
+depends_on: [ci-gate-go-rules]
 touches: [internal/merge/fixed.go, internal/merge/fixed_test.go, tests/ci_gate_cases/fixed.cases, tests/ci_gate_cases/admin.cases]
 estimate_lines: 270
 risk: high

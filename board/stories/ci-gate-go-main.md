@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-main-poll, ci-gate-go-main-rerun]
 needs: ci-gate-go-main-poll: the poll's verdict, ci_state and next_poll (internal/merge/mainpoll.go). ci-gate-go-main-rerun: the rerun type and red_line (internal/merge/rerun.go). Parts: ci-gate-go-records (the record lifecycle, covering), ci-gate-go-head-expected (expected), ci-gate-go-rules (required). Core: ci-gate-go-entry.
 touches: [internal/merge/mainwait.go, internal/merge/mainwait_test.go, tests/ci_gate_cases/main.cases]

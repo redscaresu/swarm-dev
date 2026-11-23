@@ -1,8 +1,8 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
-depends_on: []
+epic: helpers-ci-gate-cache
+depends_on: [ci-gate-go-cache-lock]
 touches: [cmd/swarm/pollcache.go, bin/ported/_poll-cache, internal/merge/pollcache_cmd.go, internal/merge/pollcache_cmd_test.go, tests/poll_cache_lock_test.sh, docs/port/tests.tsv:tests/poll_cache_lock_test.sh row, scripts/test-map.tsv:internal/merge row]
 estimate_lines: 270
 risk: high
@@ -15,5 +15,5 @@ Adds `_poll-cache <dir> <max-age> -- gh <args...>` (bin/lib/poll_cache.py:208-24
 Adds tests/poll_cache_lock_test.sh for P4 while poll_cache.py is left: Python holds a key's lock while the binary waits on the same read and then takes Python's entry, and the reverse. Its tests.tsv row (py reach); it joins the internal/merge test-map row.
 
 **Done when:**
-- (1) tests/poll_cache_lock_test.sh passes both ways, and each goes red on a worktree copy without .git where the Go, or the Python, takes the lock without waiting. (2) It compares the binary with poll_cache.py's command form on one stub gh: a kept read, a run with stderr, a failure (stdout then stderr, the exit code), bad UTF-8 on stdout, no gh on PATH (127) and a gh killed by TERM (143). (3) TestTableMatchesMarkers passes, and fails with bin/ported/_poll-cache removed. (4) port_tests_list_test.sh passes. (5) gofmt -l . prints nothing, go vet ./... and go test ./... pass, and scripts/select-tests.sh --run passes.
+- (1) tests/poll_cache_lock_test.sh passes both ways, and each goes red on a worktree copy without .git where the Go, or the Python, takes the lock without waiting. (2) It compares the binary with poll_cache.py's command form on one stub gh: a kept read, a run with stderr, a failure (stdout then stderr, the exit code), bad UTF-8 on stdout, no gh on PATH (127) and a gh killed by TERM (143). It goes red, on a worktree copy without .git, when either side alone changes its output or exit code. (3) TestTableMatchesMarkers passes, and fails with bin/ported/_poll-cache removed. (4) port_tests_list_test.sh passes. (5) gofmt -l . prints nothing, go vet ./... and go test ./... pass, and scripts/select-tests.sh --run passes.
 - scripts/select-tests.sh --run passes

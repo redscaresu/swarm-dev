@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-modes
 depends_on: []
 touches: [internal/merge/rules.go, internal/merge/rules_test.go, tests/ci_gate_cases/base.cases:go mark, tests/ci_gate_cases/required.cases, tests/ci_gate_cases/age.cases]
 estimate_lines: 290

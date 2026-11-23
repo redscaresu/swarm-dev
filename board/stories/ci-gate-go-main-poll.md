@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-main
 depends_on: []
 touches: [internal/merge/mainpoll.go, internal/merge/mainpoll_test.go]
 estimate_lines: 270

@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-main
 depends_on: []
 touches: [internal/merge/rerun.go, internal/merge/rerun_test.go]
 estimate_lines: 230

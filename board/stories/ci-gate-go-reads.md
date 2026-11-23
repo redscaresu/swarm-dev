@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-core
 depends_on: [ci-gate-go-gh, ci-gate-go-pyvalues]
 needs: ci-gate-go-gh: gh, Err and the CodeHost method (internal/merge/gh.go). ci-gate-go-pyvalues: the decoder and Str (internal/merge/pyvalues.go).
 touches: [internal/merge/reads.go, internal/merge/reads_test.go]

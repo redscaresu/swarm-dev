@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-switch
 depends_on: [ci-gate-ci-go, ci-gate-diff-fixtures]
 needs: ci-gate-ci-go: setup-go ahead of the gate in all seven jobs. ci-gate-diff-fixtures: tests/diff_fixtures_ci_gate.sh, which gains the nopy fixtures. Modes and parts: the 15 registered modes and `_poll-cache`. Core: ci-gate-tests-outside's rewritten tests, whose Python halves it deletes, and tests/ci_gate_cases_test.sh.
 touches: [bin/lib/ci_gate.py, bin/lib/poll_cache.py, bin/lib/merge.sh:file head constants, bin/lib/merge.sh:ci_gate, bin/lib/merge.sh:pr_contents, bin/lib/merge.sh:pinned_files, bin/lib/merge.sh:base_moved, bin/lib/merge.sh:merge_base_update, bin/lib/merge.sh:board_paths, bin/lib/merge.sh:clear_red_main, bin/lib/merge.sh:queue_merge, bin/lib/merge.sh:wait_pr, bin/lib/merge.sh:watch_prs, bin/lib/merge.sh:watch_gh, bin/lib/lifecycle.sh:heads_green, bin/lib/lifecycle.sh:lead_bases, bin/lib/lifecycle.sh:main_red_run, bin/lib/board.sh:next_queued, bin/lib/board.sh:review_heads, bin/lib/build.sh:review_recheck, scripts/board-only.sh:version-only path, scripts/board-only.sh:header, tests/ci_gate_cases_test.sh:python side, tests/board_only_test.sh:gate step cases, tests/merge_queue_test.sh:queued handler case, tests/merge_ci_budget_test.sh:simulated wait, tests/merge_ci_budget_test.sh:spy, tests/merge_base_moved_test.sh:on_board cases (py_on), tests/merge_rules_test.sh:file read that dies silent, tests/watch_cache_test.sh:header, tests/wait_pr_cache_test.sh:header, tests/wait_pr_cache_test.sh:contracts left direct, tests/poll_cache_lock_test.sh:python side, tests/diff_run.sh:SIGQUIT comment, tests/diff_run_order_test.sh:SIGINT comment, tests/diff_fixtures_ci_gate.sh:nopy fixtures, tests/nopy_list.txt:ci_gate lines, docs/reference-logs.md:poll cache, docs/port/locks.tsv:.swarm/poll-cache rows, docs/port/swarm-names.tsv:SWARM_POLL_CACHE, docs/port/swarm-names.tsv:SWARM_POLL_CACHE_AGE, docs/port/swarm-names.tsv:SWARM_POLL_CACHE_SECONDS, docs/port/tests.tsv:tests/poll_cache_lock_test.sh row, scripts/allow/stage-2/ci-gate-switch.md]
@@ -11,7 +11,7 @@ risk: high
 
 # Every bash call of ci_gate and the poll cache runs the binary, CI's gate runs it on a version-only PR, and both Python files are gone
 
-Needs ci-gate-ci-go and ci-gate-diff-fixtures, every mode from the three earlier children, and core's rewritten tests.
+Needs ci-gate-ci-go and ci-gate-diff-fixtures, every mode from the three earlier children, and ci-gate-tests-outside's rewritten tests (helpers-ci-gate-prep).
 P2's port PR, under P3 and P10:
 - The 16 python3 sites (merge.sh:142, 503, 550, 654, 2259, 2323, 2606, 3465; lifecycle.sh:2773, 3182, 3820, 3830, 3837; board.sh:1050, 3415; build.sh:1118) run `_ci-gate` or `_poll-cache` in the form docs/port/README.md § Two forms gives. A site under within passes the binary's path, which within execs. The ci_gate wrapper's callers need no change. Exit codes, stdout and gh calls stay, and queue_merge still runs queued in the background, so its trap reaches it.
 - scripts/board-only.sh's version-only path (:56-61) runs `_ci-gate head`, finding the binary as bin/lib/binary.sh does: SWARMDEV_BIN when set, else a build from the checkout. With neither it says false and why. Every other verdict starts no binary and no go.
