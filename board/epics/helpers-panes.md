@@ -4,11 +4,11 @@ hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
 depends_on: [foundation-exit, helpers-shared]
 ---
 
-# The helpers that read panes and sessions run as Go: panes, session_mtime, longest_child, herdr_events, log_turn_over, usage_estimate, require_trusted, goal_entry, tidy_panes and status_report
+# The helpers that read panes and sessions run as Go: panes, session_mtime, longest_child, herdr_events, log_turn_over, usage_estimate, goal_entry, tidy_panes and status_report
 
 Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewrite.md).
 
-**Done when:** None of the 10 files is left but panes.py, which stays under the comparison test until its last importer is ported. Each inline site the agreed list gives this epic calls the binary: the ones that import panes or session_mtime in agents.sh, lifecycle.sh and merge.sh:3274. tests/lib_path_test.sh's rule is kept by the check the agreed list names. The differential run is clean for every command that called them: agent starts, status, dash, wait, close, tidy. The harness shows those call sites start no python3. Each helper's mutation proofs are repeated on the Go.
+**Done when:** None of the 9 files is left but panes.py, which stays under the comparison test until its last importer is ported. Each inline site the agreed list gives this epic calls the binary: the ones that import panes or session_mtime in agents.sh, lifecycle.sh and merge.sh:3274. tests/lib_path_test.sh's rule is kept by the check the agreed list names. The differential run is clean for every command that called them: agent starts, status, dash, wait, close, tidy. The harness shows those call sites start no python3. Each helper's mutation proofs are repeated on the Go.
 
 **Out of scope:**
 - The dash helpers and dash.sh's inline sites: deleted in stage 1 (delete-dash), not ported
@@ -33,7 +33,7 @@ Stage 2 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 
 **Areas:**
 - internal/ (panes, sessions)
-- 9 of the 10 bin/lib/*.py files (deleted; panes.py stays)
+- 8 of the 9 bin/lib/*.py files (deleted; panes.py stays)
 - bin/lib/agents.sh, lifecycle.sh, merge.sh (the inline sites and call sites)
 - tests/
 
