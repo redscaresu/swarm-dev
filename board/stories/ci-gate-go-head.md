@@ -2,7 +2,7 @@
 kind: code
 status: later
 epic: helpers-ci-gate-modes
-depends_on: []
+depends_on: [ci-gate-go-head-expected, ci-gate-go-rules]
 touches: [internal/merge/head.go, internal/merge/head_test.go, tests/ci_gate_cases/head.cases]
 estimate_lines: 250
 risk: high

@@ -1,8 +1,8 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate-core
-depends_on: []
+epic: helpers-ci-gate-main
+depends_on: [ci-gate-go-gh, ci-gate-go-pyvalues, ci-gate-go-cache-store]
 touches: [internal/merge/records.go, internal/merge/records_test.go]
 estimate_lines: 260
 risk: high
@@ -10,7 +10,7 @@ risk: high
 
 # Go that nothing runs: main's wait records, covering, and their lifecycle
 
-Needs core's cache-store, gh and pyvalues.
+Needs cache-store (helpers-ci-gate-cache), and gh and pyvalues (helpers-ci-gate-core).
 Adds alive, wait_record and covering (ci_gate.py:742-794), and main_ci's record lifecycle (:796-818): the record written before the wait, the warning on stderr when it cannot be, and the record, its temp and an emptied folder removed after. A record keeps Python's name (<sha>-<pid>.json), its temp (<path>.tmp) and its JSON, so a Python wait and a Go wait on one machine read each other's (HLD:447-449). The warning embeds OSError's text (:806; contradiction 6).
 
 **Done when:**

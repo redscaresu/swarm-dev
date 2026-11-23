@@ -11,7 +11,7 @@ Before the switch, the tests that reach inside ci_gate drive swarm.sh from outsi
 
 A child of [helpers-ci-gate](helpers-ci-gate.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** The tests the stories name pass on the bash and drive it only from outside, and each rewritten check is shown to fail when the rule it guards is broken. tests/diff_fixtures_ci_gate.sh runs clean, head against head. All seven gated jobs set up Go before scripts/board-only.sh runs, and tests/board_only_test.sh fails when a job lacks it.
+**Done when:** The tests the stories name pass on the bash and drive it only from outside, and each rewritten check is shown to fail when the rule it guards is broken. Each fixture in tests/diff_fixtures_ci_gate.sh records ci_gate's check-runs read on its head. The run is clean, head against head, and red, naming each fixture, when ci_gate.py's judge is broken. All seven gated jobs set up Go before scripts/board-only.sh runs, and tests/board_only_test.sh fails when a job lacks it.
 
 **Stories:**
 - [ci-gate-tests-outside](../stories/ci-gate-tests-outside.md)

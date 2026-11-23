@@ -7,11 +7,11 @@ depends_on: [foundation-exit, helpers-ci-gate-core, helpers-ci-gate-cache]
 
 # ci_gate's per-PR subcommands run as Go, compared case by case with the Python
 
-head, files, the expected workflows, fixed, admin, behind, required, queue and queued exist as Go modes of `_ci-gate`.
+base, head, files, the expected workflows, fixed, admin, behind, required and queue exist as Go modes of `_ci-gate`.
 
 A child of [helpers-ci-gate](helpers-ci-gate.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** Each of these modes has a tests/ci_gate_cases/<mode>.cases file: head, files, files-status, fixed, admin, behind, merged, required, age, queue, pushed and queued. tests/ci_gate_cases_test.sh runs every one through the Python and the Go, compares output and exit code, and fails when either side alone is changed. No file under bin/ runs the Go.
+**Done when:** Each of these modes has a tests/ci_gate_cases/<mode>.cases file: base, head, files, files-status, fixed, admin, behind, merged, required, age, queue and pushed. tests/ci_gate_cases_test.sh runs every one through the Python and the Go, compares output and exit code, and fails when either side alone is changed. No file under bin/ runs the Go.
 
 **Stories:**
 - [ci-gate-go-head](../stories/ci-gate-go-head.md)
@@ -21,10 +21,9 @@ A child of [helpers-ci-gate](helpers-ci-gate.md), split on 2026-11-23. The paren
 - [ci-gate-go-behind](../stories/ci-gate-go-behind.md)
 - [ci-gate-go-rules](../stories/ci-gate-go-rules.md)
 - [ci-gate-go-queue](../stories/ci-gate-go-queue.md)
-- [ci-gate-go-queued](../stories/ci-gate-go-queued.md)
 
 **Out of scope:**
-- The wait on main and the stop mode (helpers-ci-gate-main)
+- The wait on main, the stop and queued modes and the records (helpers-ci-gate-main)
 
 **Your part:**
 - You merge every port here (protected merge package). The carve-out covers every story, as in the parent.
@@ -37,4 +36,3 @@ A child of [helpers-ci-gate](helpers-ci-gate.md), split on 2026-11-23. The paren
 - ci-gate-go-behind: [internal/merge/behind.go, internal/merge/behind_test.go, tests/ci_gate_cases/behind.cases, tests/ci_gate_cases/merged.cases]
 - ci-gate-go-rules: [internal/merge/rules.go, internal/merge/rules_test.go, tests/ci_gate_cases/base.cases:go mark, tests/ci_gate_cases/required.cases, tests/ci_gate_cases/age.cases]
 - ci-gate-go-queue: [internal/merge/queue.go, internal/merge/queue_test.go, tests/ci_gate_cases/queue.cases, tests/ci_gate_cases/pushed.cases]
-- ci-gate-go-queued: [internal/merge/queued.go, internal/merge/queued_test.go, tests/ci_gate_cases/queued.cases]

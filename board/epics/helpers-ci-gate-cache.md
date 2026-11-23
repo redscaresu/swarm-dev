@@ -11,7 +11,7 @@ poll_cache's store, lock and `_poll-cache` entry exist as Go, reading and writin
 
 A child of [helpers-ci-gate](helpers-ci-gate.md), split on 2026-11-23. The parent's constraints and its shared rules (L2, the P rules) apply here unchanged.
 
-**Done when:** internal/merge/pollcache.go and pollcache_lock.go read and write .swarm/poll-cache in the Python's format, shown by a Go test over files the Python wrote. `_poll-cache` is registered and has its marker file. tests/poll_cache_lock_test.sh has the bash hold the lock while the Go waits, and the reverse, and fails if either side skips the lock. docs/port/locks.tsv and swarm-names.tsv carry the rows the stories name.
+**Done when:** internal/merge/pollcache.go and pollcache_lock.go read and write .swarm/poll-cache in the Python's format, shown by a Go test over files the Python wrote. `_poll-cache` is registered and has its marker file. tests/poll_cache_lock_test.sh has the bash hold the lock while the Go waits, and the reverse, and fails if either side skips the lock. docs/port/locks.tsv and swarm-names.tsv carry the rows the stories name. tests/poll_cache_lock_test.sh also compares `_poll-cache` with poll_cache.py's command form on output and exit code, and goes red when either side alone is changed.
 
 **Stories:**
 - [ci-gate-go-cache-lock](../stories/ci-gate-go-cache-lock.md)

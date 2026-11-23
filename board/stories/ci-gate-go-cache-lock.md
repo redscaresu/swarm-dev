@@ -2,7 +2,7 @@
 kind: code
 status: later
 epic: helpers-ci-gate-cache
-depends_on: []
+depends_on: [ci-gate-go-cache-store]
 touches: [internal/merge/pollcache_lock.go, internal/merge/pollcache_lock_test.go, internal/merge/reads.go:pages, docs/port/locks.tsv:.swarm/poll-cache rows, docs/port/swarm-names.tsv:SWARM_POLL_CACHE, docs/port/swarm-names.tsv:SWARM_POLL_CACHE_SECONDS]
 estimate_lines: 290
 risk: high
@@ -10,7 +10,7 @@ risk: high
 
 # Go that nothing runs: the poll cache's lock and through, and pages reading through them
 
-Needs core's cache-store and reads.
+Needs cache-store (helpers-ci-gate-cache) and reads (helpers-ci-gate-core).
 Adds lock, owner, release, stale, holder and through (bin/lib/poll_cache.py:107-206): the <key>.lock made exclusively and holding the pid, LOCK_PAUSE, a dead owner's lock or one held past the max age released by the next reader, only the taker releasing, and a read stamped with when it started. The lock file and its protocol do not change (P4).
 Hooks pages: with SWARM_POLL_CACHE and SWARM_POLL_CACHE_SECONDS set, a kept read stands in for gh's and a read pages accepts is kept (ci_gate.py:46-66); with them unset nothing changes. docs/port/locks.tsv gains a row for each take site port_locks_test.sh finds in this Go. The swarm-names rows for SWARM_POLL_CACHE and SWARM_POLL_CACHE_SECONDS name the Go files.
 

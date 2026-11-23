@@ -11,7 +11,7 @@ risk: high
 
 # Every bash call of ci_gate and the poll cache runs the binary, CI's gate runs it on a version-only PR, and both Python files are gone
 
-Needs ci-gate-ci-go and ci-gate-diff-fixtures, every mode from the three earlier children, and core's rewritten tests.
+Needs ci-gate-ci-go and ci-gate-diff-fixtures, every mode from the three earlier children, and ci-gate-tests-outside's rewritten tests (helpers-ci-gate-prep).
 P2's port PR, under P3 and P10:
 - The 16 python3 sites (merge.sh:142, 503, 550, 654, 2259, 2323, 2606, 3465; lifecycle.sh:2773, 3182, 3820, 3830, 3837; board.sh:1050, 3415; build.sh:1118) run `_ci-gate` or `_poll-cache` in the form docs/port/README.md § Two forms gives. A site under within passes the binary's path, which within execs. The ci_gate wrapper's callers need no change. Exit codes, stdout and gh calls stay, and queue_merge still runs queued in the background, so its trap reaches it.
 - scripts/board-only.sh's version-only path (:56-61) runs `_ci-gate head`, finding the binary as bin/lib/binary.sh does: SWARMDEV_BIN when set, else a build from the checkout. With neither it says false and why. Every other verdict starts no binary and no go.
