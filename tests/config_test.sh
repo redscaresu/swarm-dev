@@ -488,6 +488,62 @@ check "a submodule is keyed on its own folder" "trusted" "$(trusted "${t}/repo/l
 rm "${t}/cfg/.claude.json"
 check "no trust file to read: the start goes ahead" "trusted" "$(trusted "${t}/plain")"
 
+# How bin/lib/require_trusted.py reads .claude.json, the cases a port must keep. Each runs on the plain
+# folder outside git unless it says otherwise. trust_raw writes the file from raw text, which
+# json.dumps cannot (NaN, a duplicate key); trust_deep nests arrays <n> deep under "x", before a
+# "projects" that trusts <folder>. A read that fails (OSError, ValueError) goes ahead; one that
+# raises anything else exits 1, so the start is refused.
+trust_raw() { printf '%s' "$1" > "${t}/cfg/.claude.json"; }
+trust_deep() { python3 -c 'import json, sys; n = int(sys.argv[1]); print("{\"x\": " + "[" * n + "]" * n + ", \"projects\": " + json.dumps({sys.argv[2]: {"hasTrustDialogAccepted": True}}) + "}")' "$1" "$2" > "${t}/cfg/.claude.json"; }
+refused() { echo "swarm: Claude Code does not trust $1 yet, so the agent would stall on its trust prompt. Run claude in $1 once, accept the prompt, then try again."; }
+p="${t}/plain"
+yes_p="{\"hasTrustDialogAccepted\": true}"
+trust_raw "{\"projects\": {\"${p}\": ${yes_p}"   # vacuous-test: ok, cut off on purpose
+check "trust file: text that is not JSON (cut off) goes ahead" "trusted" "$(trusted "${p}")"
+# The byte sits outside any string: inside one, a Latin-1 locale reads it as a character and the file
+# parses, so the answer would hang on the locale.
+trust_raw "{\"projects\": {}}"$'\xff'   # vacuous-test: ok, a bad byte on purpose
+check "trust file: a byte that is not UTF-8 goes ahead" "trusted" "$(trusted "${p}")"
+rm "${t}/cfg/.claude.json"; mkdir "${t}/cfg/.claude.json"
+check "trust file: a directory where the file should be goes ahead" "trusted" "$(trusted "${p}")"
+rmdir "${t}/cfg/.claude.json"
+trust_raw $'\xef\xbb\xbf'"{\"projects\": {}}"
+check "trust file: a UTF-8 BOM before an object that trusts nothing goes ahead" "trusted" "$(trusted "${p}")"
+trust_raw '{"other": 1}'
+check "trust file: no projects key is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw '[]'
+check "trust file: a list at the top level is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw '{"projects": []}'
+check "trust file: projects a list is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}\": null}}"
+check "trust file: the folder's entry null is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}\": {\"hasTrustDialogAccepted\": 1}}}"
+check "trust file: hasTrustDialogAccepted 1 is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}\": {\"hasTrustDialogAccepted\": \"true\"}}}"
+check "trust file: hasTrustDialogAccepted \"true\" is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}\": ${yes_p}, \"${p}\": {\"hasTrustDialogAccepted\": false}}}"
+check "trust file: a duplicate folder key keeps the last (false)" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}\": {\"hasTrustDialogAccepted\": false}, \"${p}\": ${yes_p}}}"
+check "trust file: a duplicate folder key keeps the last (true)" "trusted" "$(trusted "${p}")"
+trust_raw "{\"x\": NaN, \"projects\": {}}"
+check "trust file: NaN elsewhere in a file that trusts nothing is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"x\": 1e400, \"projects\": {}}"
+check "trust file: 1e400 elsewhere in a file that trusts nothing is refused" "$(refused "${p}")" "$(trusted "${p}")"
+trust_raw "{\"projects\": {\"${p}/sub\": ${yes_p}, \"${p}\": []}}"
+check "trust file: the folder's own entry is read before its parent's, a list" "trusted" "$(trusted "${p}/sub")"
+trust_raw "{\"projects\": {\"${p}\": []}}"
+check "trust file: with the folder's entry missing, its parent's, a list, is refused" "$(refused "${p}/sub")" "$(trusted "${p}/sub")"
+trust_raw "{\"projects\": {\"${t}\": ${yes_p}}}"
+check "trust file: inside git, a trusted ancestor of the main checkout does not cover its worktree" \
+  "$(refused "${t}/repo")" "$(trusted "${t}/repo-wt/story")"
+# python3 3.9.6 reads arrays 994 deep and 3.14.7 116216 deep (the lead's Mac, 2026-11-23); 500 and
+# 200000 sit outside both. The RecursionError is not caught, so the deep one exits 1.
+trust_deep 500 "${p}"
+check "trust file: arrays nested 500 deep elsewhere in a file that trusts the folder: trusted" "trusted" "$(trusted "${p}")"
+trust_deep 200000 "${p}"
+check "trust file: arrays nested 200000 deep elsewhere in a file that trusts the folder: refused" "$(refused "${p}")" "$(trusted "${p}")"
+rm "${t}/cfg/.claude.json"
+
 # The stub. The version is one the real binary never prints, so a real claude on PATH cannot pass.
 # run_stub runs claude only when the stub is what `claude` resolves to; otherwise it prints a marker
 # that fails the check, so the real binary (which may open a logged-in session) is never run.
