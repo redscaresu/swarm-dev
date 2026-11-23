@@ -3,4 +3,5 @@
 # adds the commands it ports, each on a line of its own.
 next
 status
+trusted_git
 usage
