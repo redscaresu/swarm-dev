@@ -15,16 +15,25 @@
 #                                 the real uname, as it does for any other argument
 #   fetch_sum <file>              the SHA-256 of <file>, in hex
 #
-# The gh stub logs `GH_HOST=<its value> <arguments>` for every call, then serves only the --version and attestation forms below and
+# The gh stub logs `GH_HOST=<its value> <arguments>` for every call, then serves only the --version, tag
+# and attestation forms below and
 #   release download v<version> --repo github.com/<FETCH_REPO> --pattern <asset> --pattern <checksums> --dir <folder>
 # with the arguments in that order and <folder> an existing folder: it copies the release's two files
 # there and exits 0. With <dir>/stub/download.stderr present it prints that file on stderr and exits 1
 # instead. Any other arguments: one line on stderr, exit 1.
-# The download also adds <folder> to the folders it served. The attestation form, with the arguments in that order:
+# The download also adds <folder> to the folders it served. The tag form,
+#   api --hostname github.com repos/<FETCH_REPO>/git/ref/tags/v<version> --jq <FETCH_TAG_JQ>
+# prints the line of <dir>/stub/tag (fetch_stubs writes `commit <FETCH_COMMIT>` there) and exits 0. The
+# two attestation forms, with the arguments in that order:
 #   attestation verify <file> --hostname github.com --repo <FETCH_REPO> --signer-workflow github.com/<FETCH_REPO>/<signer>
+#     --source-digest <commit> --source-ref <FETCH_SOURCE_REF>
+#   attestation verify <file> ... --signer-workflow github.com/<FETCH_REPO>/<signer>
+#     --source-ref <FETCH_SOURCE_REF> --format json --jq <FETCH_ATTESTED_JQ>
 # with <signer> the line of <dir>/stub/signer (fetch_stubs writes FETCH_SIGNER there), and <file> named as the
-# asset, in a folder it served, and cmp-equal to the release's asset: exit 0. With <dir>/stub/attest.fail
-# present it exits 1 instead. The --version form, `--version` alone, prints `gh version <v> (2026-09-15)`,
+# asset, in a folder it served, and cmp-equal to the release's asset. The asset is attested at the line of
+# <dir>/stub/attested (fetch_stubs writes FETCH_COMMIT there): the first form exits 0 when <commit> is
+# that line, and the second prints that line and exits 0. With <dir>/stub/attest.fail present both exit
+# 1 instead. The --version form, `--version` alone, prints `gh version <v> (2026-09-15)`,
 # then its release URL, as gh prints them, and exits 0, with <v> the line of <dir>/stub/gh-version
 # (fetch_stubs writes FETCH_GH_MIN there; a test sets another).
 
@@ -34,10 +43,17 @@ FETCH_REPO=redscaresu/swarm-dev
 # FETCH_GH_MIN: the version the gh stub reports by default, copied from BINARY_GH_MIN in bin/lib/binary.sh,
 # so a change there is a change to these tests too. It is the oldest gh the fetch takes, so a fetch
 # through the stub also checks that this one is taken.
-FETCH_GH_MIN=2.57.0
+FETCH_GH_MIN=2.68.0
 # FETCH_SIGNER: the signer workflow the gh stub's attestation form takes by default, as scripts/build.sh
 # --list names it.
 FETCH_SIGNER=.github/workflows/release.yml
+# FETCH_SOURCE_REF, FETCH_TAG_JQ and FETCH_ATTESTED_JQ: copied from BINARY_SOURCE_REF, BINARY_TAG_JQ and
+# BINARY_ATTESTED_JQ in bin/lib/binary.sh, so a change there is a change to these tests too.
+FETCH_SOURCE_REF=refs/heads/main
+FETCH_TAG_JQ='.object.type + " " + .object.sha'
+FETCH_ATTESTED_JQ='[.[].verificationResult.signature.certificate.sourceRepositoryDigest] | unique | .[]'
+# FETCH_COMMIT: the commit the fake release's tag is at, and its asset's attestation, by default.
+FETCH_COMMIT=1366655d122831b7f3c404a933541bc144d52efb
 
 fetch_stubs() {
   local real_cp real_cat real_uname
@@ -50,8 +66,11 @@ fetch_stubs() {
   printf '%s\n' "$2" > "$1/stub/version"
   printf '%s\n' "${FETCH_SIGNER}" > "$1/stub/signer"
   printf '%s\n' "${FETCH_GH_MIN}" > "$1/stub/gh-version"
+  printf 'commit %s\n' "${FETCH_COMMIT}" > "$1/stub/tag"
+  printf '%s\n' "${FETCH_COMMIT}" > "$1/stub/attested"
   printf "#!/bin/sh\nD='%s' CP='%s' CAT='%s' REPO='%s'\n" "$1" "${real_cp}" "${real_cat}" "${FETCH_REPO}" > "$1/bin/gh"
-  printf "CMP='%s'\n" "${real_cmp}" >> "$1/bin/gh"
+  printf "CMP='%s' SREF='%s'\nTJQ='%s'\nAJQ='%s'\n" "${real_cmp}" "${FETCH_SOURCE_REF}" "${FETCH_TAG_JQ}" \
+    "${FETCH_ATTESTED_JQ}" >> "$1/bin/gh"
   cat >> "$1/bin/gh" <<'GH_STUB'
 printf 'GH_HOST=%s %s\n' "${GH_HOST-}" "$*" >> "$D/log/gh"
 v= a= s=
@@ -71,14 +90,27 @@ if [ "$#" -eq 11 ] && [ "$1" = release ] && [ "$2" = download ] && [ "$3" = "v$v
   printf '%s\n' "${11%/}" >> "$D/stub/served"
   exit 0
 fi
-if [ "$#" -eq 9 ] && [ "$1" = attestation ] && [ "$2" = verify ] && [ -n "$a" ] && [ "${3##*/}" = "$a" ] &&
+if [ "$#" -eq 6 ] && [ "$1" = api ] && [ "$2" = --hostname ] && [ "$3" = github.com ] &&
+   [ "$4" = "repos/$REPO/git/ref/tags/v$v" ] && [ "$5" = --jq ] && [ "$6" = "$TJQ" ]; then
+  read -r t < "$D/stub/tag" || exit 1
+  printf '%s\n' "$t"; exit 0
+fi
+if [ "$#" -ge 13 ] && [ "$1" = attestation ] && [ "$2" = verify ] && [ -n "$a" ] && [ "${3##*/}" = "$a" ] &&
    [ "$4" = --hostname ] && [ "$5" = github.com ] && [ "$6" = --repo ] && [ "$7" = "$REPO" ] &&
    [ "$8" = --signer-workflow ] && [ -n "$g" ] && [ "$9" = "github.com/$REPO/$g" ]; then
   served=
   while IFS= read -r f; do [ "$f" != "${3%/*}" ] || served=1; done 2>/dev/null < "$D/stub/served"
   if [ -n "$served" ] && [ -f "$3" ] && "$CMP" -s "$3" "$D/release/$a"; then
     [ ! -f "$D/stub/attest.fail" ] || exit 1
-    exit 0
+    read -r at < "$D/stub/attested" || exit 1
+    if [ "$#" -eq 13 ] && [ "${10}" = --source-digest ] && [ "${12}" = --source-ref ] && [ "${13}" = "$SREF" ]; then
+      [ "${11}" = "$at" ] || exit 1
+      exit 0
+    fi
+    if [ "$#" -eq 15 ] && [ "${10}" = --source-ref ] && [ "${11}" = "$SREF" ] && [ "${12}" = --format ] &&
+       [ "${13}" = json ] && [ "${14}" = --jq ] && [ "${15}" = "$AJQ" ]; then
+      printf '%s\n' "$at"; exit 0
+    fi
   fi
 fi
 echo "gh stub: no form matches: $*" >&2
