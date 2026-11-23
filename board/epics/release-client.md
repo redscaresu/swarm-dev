@@ -50,3 +50,22 @@ Stage 1 of the [v0.32 Go rewrite HLD](../hld/2026-11-18-swarm-dev-v0-32-go-rewri
 - P12: A story that changes a rule of the guard, merge, the release gates or the agents' environment while that rule is still bash is merged by the user, through a merge = human window as in ship-gates. A port that only swaps a call site in those files is not such a change.
 
 **release-ci's results:** the throwaway copy (redscaresu/swarm-dev-release-spike), its rulesets, and the spike, install and publish proofs are recorded in [board/epics/release-ci.md at 6db3c48e](https://github.com/redscaresu/swarm-dev/blob/6db3c48e202814122fd8b9eb2b801cffeff38eca/board/epics/release-ci.md), the last version before release-ci finished. The real-release check here uses that copy.
+
+## real-release-check results (2026-11-23)
+
+The lead ran these on the throwaway copy redscaresu/swarm-dev-release-spike, from a throwaway CLAUDE_CONFIG_DIR (/tmp/rrc/cc), with SWARMDEV_BIN and SWARM_PROJECT unset.
+
+- **Before:** copy main c389aba3, stable 3ed134ce, prerelease 097c6ca7, pre-marketplace 25af1ca5, newest release v0.31.8. swarm-dev stable and prerelease 06b35a67, pre-marketplace 653d9366, newest release v0.31.3.
+- **The copy brought forward:** swarm-dev main d3a2b1d2 merged in (5d8944d, 1cc59cd). One copy-only commit, b944ae49, keeps plugin.json at the copy's 0.31.8 and sets `binary_repo` to the copy. No seam was added to swarm-dev.
+- **v0.31.90:** published with five files, and prerelease moved to e8ffb92e: https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/45097381585
+- **Install:** `claude plugin marketplace add https://github.com/redscaresu/swarm-dev-release-spike.git#pre-marketplace`, then `claude plugin install swarm-dev@swarm-dev-pre`. Scope user, installPath .../swarm-dev-pre/swarm-dev/0.31.90, version 0.31.90.
+- **The real wrapper's fetch:** v0.31.90's `swarm.sh version` downloaded and verified darwin/arm64. Its swarm's SHA-256 6cff7344…36c3 is v0.31.90's SHA256SUMS line. The file carries com.apple.provenance only, no quarantine mark.
+- **Update:** after v0.31.91 published (https://github.com/redscaresu/swarm-dev-release-spike/actions/runs/45097735824), v0.31.90's `swarm.sh update` moved the install to 0.31.91. v0.31.91's folder held a swarm with v0.31.91's sum, 097286bc…a56c, before any restart.
+- **Swaps on v0.31.91:** each upload took a new asset id with the uploaded file's digest, so GitHub accepted each one.
+  - (i) Another file under swarm-darwin-arm64, SHA256SUMS unchanged: refused. "the SHA-256 of v0.31.91's swarm-darwin-arm64 does not match its line in SHA256SUMS", and no swarm was installed.
+  - (ii) An unattested local build, its sum written into SHA256SUMS: refused. "gh attestation verify failed … not proven and it was not run", and no swarm was installed.
+  - (iii) v0.31.90's attested swarm-darwin-arm64 under v0.31.91's name, its sum written into SHA256SUMS: **installed**. Its SHA-256 6cff7344 is v0.31.90's. binary_attest checks only --repo and --signer-workflow, so an older release's signed binary passes as a newer one. The fix is the story binary-attest-release-commit.
+  - The originals were restored with --clobber, and the release read shows their digests again. Positive control: a fresh fetch installed v0.31.91's 097286bc.
+- **Rollback:** the admin role force-moved the copy's prerelease to v0.31.90 (e8ffb92e), after v0.31.90's swarm was removed. v0.31.91's `swarm.sh update` moved the install to 0.31.90 ("updated from 0.31.91 to 0.31.90"). installPath is .../0.31.90, and its swarm has v0.31.90's sum, 6cff7344.
+- **Restart:** a fresh `claude -p` session on the throwaway config found .../0.31.90/bin/swarm.sh. `swarm.sh version` printed 0.31.90, and the swarm beside it hashed to 6cff7344…36c3.
+- **After:** copy main 1366655d, stable 3ed134ce, prerelease e8ffb92e (left at v0.31.90's commit), pre-marketplace 25af1ca5, newest release v0.31.91. swarm-dev stable and prerelease 06b35a67, pre-marketplace 653d9366, newest release v0.31.3: unchanged. The lead's real installed_plugins.json is unchanged (dc604ce0…). Its known_marketplaces.json changed at 02:04Z, but only in claude-plugins-official's and claude-skills' lastUpdated: a background marketplace refresh. swarm-dev's entry (2026-11-19) did not change.
