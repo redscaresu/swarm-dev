@@ -166,6 +166,8 @@ Useful while it runs:
 bin/swarm.sh          the entry point: usage, settings, the model policy, the command dispatch
 bin/lib/*.sh          the commands by group (agents, board, build, lifecycle, merge, reports)
 bin/lib/*.py          the Python helpers the commands run
+bin/lib/binary.sh     finds, fetches, checks and builds the swarm binary an installed copy runs
+bin/ported/           one marker file per command the binary runs in place of bash, inside bash's frame
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
 cmd/swarm/            the Go command, the wiring layer: the table of entries by name and the frame bash hands
@@ -258,6 +260,9 @@ Development rules for anyone, agent or person, working in this repository:
   Only `internal/clock` reads the time.
   Wiring imports no `os/exec` either, except `cmd/swarm/bridge.go`, which hands a form still in bash to `bin/swarm.sh` and goes with the last one.
   The four protected packages (`internal/guard/`, `internal/merge/`, `internal/release/` and `internal/agentenv/`) import no package of the module but each other, `internal/iface` and `internal/clock`.
+  A process start in the module is an `exec.Command` or `exec.CommandContext` call and nothing else: `os.StartProcess`, the `syscall` starts, an `exec.Cmd` literal and a dot import of `os`, `os/exec` or `syscall` fail the process-start check.
+  A start of `gh`, `herdr` or `curl`, or of a shell that runs a `-c` script, needs a deadline made where it starts, or the deadline check fails it.
+  The pattern of a regexp compile or match, or of a `path.Match`, `filepath.Match` or glob, is string literals, constants and `regexp.QuoteMeta` calls; a variable in one fails the variable-pattern check unless the line ends `// loose-match: ok <reason>`.
   `internal/layers` holds the checks, and `go test -v ./internal/layers/` prints what each covers.
 - A PR that adds a `SWARM_` name, a lock take site, an inline Python site or a test that reaches inside the code adds its row under `docs/port/`; [docs/port/README.md](docs/port/README.md) says which list holds what.
 - In a test or a helper under `tests/`, never pipe into `grep -q`: under `pipefail` the pipeline
