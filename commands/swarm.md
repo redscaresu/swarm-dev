@@ -45,6 +45,7 @@ run `start` again for the next edit. `done` also clears a start you abandoned wi
 
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
+The WARNING names a newer version on the ref this install follows: `prerelease` for an install from swarm-dev-pre, `stable` for every other install.
 
 When the user has updated the plugin while a conductor runs, run `swarm.sh upgrade` (with no
 epic, it moves every agent the project started). It moves them to the new version with `--resume`,
