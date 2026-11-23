@@ -2,8 +2,8 @@
 // touching a file: the agent runner, the code host, the repo and the store. Each has exactly one
 // implementation, under internal/adapter/. The store's types sit here beside Store.
 //
-// Store has the two methods the frame's handoff needs, and the other three have none yet: each port
-// adds the methods it needs.
+// Store has the two methods the frame's handoff needs and ReadFile, which _require-trusted reads
+// .claude.json with. The other three have none yet: each port adds the methods it needs.
 package iface
 
 // AgentRunner starts, reads and stops the agents. herdr is its one implementation
@@ -18,9 +18,12 @@ type CodeHost interface{}
 // (internal/adapter/git).
 type Repo interface{}
 
-// Store reads and writes .swarm/, the board's files and the files bin/swarm.sh hands the binary.
-// internal/adapter/store is its one implementation.
+// Store reads and writes .swarm/, the board's files and the files bin/swarm.sh hands the binary. It
+// also reads a file bash names in an argument, such as .claude.json. internal/adapter/store is its one
+// implementation.
 type Store interface {
+	// ReadFile returns all of path's bytes, or the error the read returned.
+	ReadFile(path string) ([]byte, error)
 	// WriteLine makes path hold line and a newline, and nothing else.
 	WriteLine(path, line string) error
 	// AppendLines adds each line, with a newline, to the end of path, making the file if it is missing.

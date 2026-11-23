@@ -103,9 +103,29 @@ It sets `SWARM_PROJECT` to the frame's project, so the nested `swarm.sh` finds t
 It passes `SWARM_GH_VIA` on as the binary got it, so the nested call logs its gh calls under the same via.
 stdin, stdout, stderr and the exit code pass through unchanged.
 `bridge.go` is the one file outside the four adapters that may import `os/exec`, and `internal/layers` names it.
-The reverse needs no bridge: bash runs a `_` entry of the binary as it runs its own `_` arms, `"${BASH}" "${SWARM_HOME}/bin/swarm.sh" _<name>`.
+The reverse needs no bridge.
+Bash calls a `_` entry of the binary with `binary_run _<name> <args>`, from inside the same `swarm.sh`, so it starts no second `swarm.sh`.
+`require_trusted` in `bin/lib/agents.sh` runs `_require-trusted` that way.
+A `_` entry has a marker, so `swarm.sh _<name>` run by hand reaches it through the dispatch too.
 `wrapper-fixture`'s first argument `name` or `board-rel` is its bash form, which runs `_name` or `_board-rel`.
-`_wrapper-fixture` is the `_` entry tests/binary_dispatch_test.sh runs from bash.
+`_wrapper-fixture` is the `_` entry tests/binary_dispatch_test.sh runs through `swarm.sh`.
+
+## Porting a helper
+
+A helper is a `bin/lib` program, such as a Python file, that a command's bash starts.
+`_require-trusted` set the pattern: it replaced the Python helper that `require_trusted` in `bin/lib/agents.sh` ran.
+The entry's name is `_` and the helper's file name with each `_` as `-`, and its marker is `bin/ported/_<name>`.
+A helper that writes nothing also goes in `READ_ONLY_COMMANDS` in `bin/swarm.sh` and `RO_EXPECTED` in tests/events_test.sh.
+Bash calls `binary_run _<name>` with the helper's arguments, and keeps the helper's exit codes and die texts.
+The rule goes in a rules package under `internal/`, named for what it decides.
+When the Go would take the port past the 300-line cap, that package lands first, in a PR of its own with no caller.
+The entry goes in `cmd/swarm/<name>.go`, and it reads files through `iface.Store`.
+The Go must pass `internal/layers`' checks, and `go test -v ./internal/layers/` prints their rules.
+The story lists every `tests/` file the PR changes in its touches before the build, since the patch gate reads them at the PR's base.
+tests/nopy_list.txt gains a line for each of the helper's fixtures.
+The story's allow entry names any output the Go drops, such as a Python traceback.
+The PR body carries the Python-to-Go map, the mutation table repeated on the Go, the diff-run result and the speed row.
+It also names go-entries-per-file (epic helpers-shared), the story that moves each entry out of the shared table into a file of its own.
 
 ## The closed plumbing list
 

@@ -868,6 +868,7 @@ dispatch() {
 
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# _require-trusted is the binary's helper entry that require_trusted runs: it reads .claude.json and writes nothing.
 # _fix-main writes a fix-main story, and logs its own main-red line (fix_main), as merge does.
 # _close-when-idle closes a retired review pane or a reported conductor, and logs its own close-when-idle line (close_idle_wait).
 # The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
@@ -876,7 +877,7 @@ dispatch() {
 # status and next each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
+READ_ONLY_COMMANDS="status where swarms next config policy grants cost outcomes flow dataset retro review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _require-trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check _fix-main _close-when-idle"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.

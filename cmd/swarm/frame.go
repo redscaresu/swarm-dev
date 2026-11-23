@@ -120,7 +120,9 @@ type entry struct {
 // entries is the binary's table, by dispatch name. Each entry but a fixture has a marker file
 // bin/ported/<name>, which sends bin/swarm.sh's dispatch to the binary.
 var entries = map[string]entry{
-	"wrapper-fixture": {needsFrame: true, fixture: true, run: wrapperFixture},
+	// bash's require_trusted runs it in place of the Python helper it replaced (trusted.go).
+	"_require-trusted": {needsFrame: true, run: requireTrusted},
+	"wrapper-fixture":  {needsFrame: true, fixture: true, run: wrapperFixture},
 	// The reverse of the bridge: bash runs a _ entry of the binary as it runs one of its own _ arms.
 	"_wrapper-fixture": {needsFrame: true, fixture: true, run: wrapperFixture},
 }

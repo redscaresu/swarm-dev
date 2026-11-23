@@ -19,6 +19,11 @@
 # errors included. Bash runs the binary's _wrapper-fixture entry as it runs its own _ arms, with its
 # arguments, and with herdr's socket and a herdr stub present it labels no workspace, which
 # wrapper-fixture does.
+# The installed copy: with SWARMDEV_BIN unset, the copy's own <copy>/swarm (BINARY_BUILD_PATH), a wrapper
+# that logs its arguments and then runs make test's binary, is what binary_ensure exports. swarm.sh
+# _trusted <plain folder>, a command with no marker, then starts the binary once per call as
+# `_require-trusted <folder> <CLAUDE_CONFIG_DIR>/.claude.json ''` (require_trusted's helper entry), and
+# prints trusted for a folder .claude.json trusts and require_trusted's die line for one it does not.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -231,6 +236,38 @@ sw "${T}" "${herdr_env[@]}" -- wrapper-fixture c1
 check "the control: wrapper-fixture calls herdr to label the workspace" yes \
   "$([[ -s "${LOGS}/herdr" ]] && echo yes || echo no)"
 rm -f "${STUBS}/herdr"
+
+# The installed copy: SWARMDEV_BIN unset, so binary_ensure finds the copy's own binary at <copy>/swarm,
+# here a wrapper that logs its arguments, one start a line, then runs make test's binary. _trusted has
+# no marker: its bash runs require_trusted, which starts the binary's _require-trusted entry.
+# shellcheck disable=SC2016 # the $ names are the wrapper script's own
+printf '#!/bin/sh\nfor a in "$@"; do printf "[%%s]" "$a"; done >> "%s/installed"\necho >> "%s/installed"\nexec "%s" "$@"\n' \
+  "${LOGS}" "${LOGS}" "${REAL_BIN}" > "${T}/swarm"; chmod +x "${T}/swarm"
+check "the installed copy: _trusted has no marker" no "$([[ -e "${T}/bin/ported/_trusted" ]] && echo yes || echo no)"
+PLAIN="${ROOT}/plain"; mkdir -p "${PLAIN}" "${ROOT}/trust-config"
+TRUST_CFG="${ROOT}/trust-config/.claude.json"
+check "the installed copy: the plain folder is outside git" no \
+  "$(git -C "${PLAIN}" rev-parse --show-toplevel >/dev/null 2>&1 && echo yes || echo no)"
+# installed <folder> — run the copy's swarm.sh _trusted <folder> from the project, with SWARMDEV_BIN unset.
+installed() {
+  rc=0
+  (cd "${P}" || exit 1
+   env -u HERDR_ENV -u SWARM_PROJECT -u SWARMDEV_BIN PATH="${STUBS}:${PATH}" CLAUDE_CONFIG_DIR="${ROOT}/trust-config" \
+     "${BASH}" "${T}/bin/swarm.sh" _trusted "$1") < /dev/null > "${ROOT}/out" 2> "${ROOT}/err" || rc=$?
+  out="$(cat "${ROOT}/out")"; err="$(cat "${ROOT}/err")"
+}
+printf '{"projects": {"%s": {"hasTrustDialogAccepted": true}}}' "${PLAIN}" > "${TRUST_CFG}"
+installed "${PLAIN}"
+check "the installed copy, a trusted folder: prints trusted, exit 0, nothing on stderr" "trusted|0|" "${out}|${rc}|${err}"
+printf '{"projects": {}}' > "${TRUST_CFG}"
+installed "${PLAIN}"
+check "the installed copy, an untrusted folder: require_trusted's die line, exit 1" \
+  "|1|swarm: Claude Code does not trust ${PLAIN} yet, so the agent would stall on its trust prompt. Run claude in ${PLAIN} once, accept the prompt, then try again." \
+  "${out}|${rc}|${err}"
+check "the installed copy: one _require-trusted start per call, with the folder, the config and an empty third argument" \
+  "[_require-trusted][${PLAIN}][${TRUST_CFG}][]|[_require-trusted][${PLAIN}][${TRUST_CFG}][]" \
+  "$(paste -sd '|' - < "${LOGS}/installed" 2>/dev/null || true)"
+rm -f "${T}/swarm"
 
 # Every run above had only the stubs for gh and go.
 for s in gh go; do

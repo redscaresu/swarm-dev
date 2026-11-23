@@ -115,7 +115,8 @@ require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr
 # Claude Code keys trust on the git root, and for a worktree on its main checkout, so a new story
 # worktree is covered once its repo is trusted. Outside git, a trusted ancestor covers it. Trust
 # lives in ~/.claude.json, which every running session rewrites, so this only reads it; if the
-# file cannot be read, the start goes ahead.
+# file cannot be read, the start goes ahead. The binary's _require-trusted entry (cmd/swarm/trusted.go)
+# reads it and decides: one process start.
 require_trusted() {
   local cwd="$1" in_git="" root gitdir common
   if root=$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null); then
@@ -128,7 +129,7 @@ require_trusted() {
   else
     root="$(cd "${cwd}" && pwd -P)"
   fi
-  python3 "${SWARM_HOME}/bin/lib/require_trusted.py" "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" \
+  binary_run _require-trusted "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" \
     || die "Claude Code does not trust ${root} yet, so the agent would stall on its trust prompt. Run claude in ${root} once, accept the prompt, then try again."
 }
 

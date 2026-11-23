@@ -13,3 +13,12 @@
 # bin/lib/touches_rows.py's idle check (bin/lib/board.sh).
 
 usage python3
+trusted_git python3
+trusted_refused python3
+trusted_ancestor python3
+trusted_no_file python3
+trusted_bad_json python3
+trusted_not_object python3
+trusted_nan python3
+trusted_nested python3
+trusted_deep python3

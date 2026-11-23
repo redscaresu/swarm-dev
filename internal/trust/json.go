@@ -9,11 +9,11 @@ import (
 
 // maxDepth is how deep arrays and objects may nest. It is encoding/json's own limit, so the
 // decoder never meets text deeper than it reads. Text that nests deeper is taken as Python's
-// RecursionError, which require_trusted.py does not catch, so it exits 1.
+// RecursionError, which the Python helper did not catch, so it exited 1.
 const maxDepth = 10000
 
 var (
-	// errNotJSON is text that json.load raises ValueError on, which require_trusted.py catches.
+	// errNotJSON is text that json.load raises ValueError on, which the Python helper caught.
 	errNotJSON = errors.New("not JSON as Python's json module reads it")
 	// errTooDeep is text that nests deeper than maxDepth before any syntax error.
 	errTooDeep = errors.New("nested deeper than maxDepth")
