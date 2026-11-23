@@ -1,6 +1,6 @@
 // Package store is the one implementation of iface.Store: the files under .swarm/, the board's
-// files and the files bin/swarm.sh hands the binary (the die file and the fields file). It reads and
-// writes them itself and runs no program.
+// files and the files bin/swarm.sh hands the binary (the die file and the fields file), and a file
+// bash names in an argument, such as .claude.json. It reads and writes them itself and runs no program.
 package store
 
 import (
@@ -17,6 +17,11 @@ const fileMode = 0o600
 type Files struct{}
 
 var _ iface.Store = Files{}
+
+// ReadFile returns all of path's bytes, or the error the read returned.
+func (Files) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
 
 // WriteLine makes path hold line and a newline, and nothing else.
 func (Files) WriteLine(path, line string) error {

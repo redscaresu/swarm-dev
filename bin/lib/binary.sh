@@ -329,8 +329,9 @@ binary_build() {
 #     one line of its own, naming SWARMDEV_BIN, before binary_build runs. A failed build stops with
 #     binary_build's line and Go's error, and leaves the old binary as it was; the caller never runs
 #     the old one.
-# Only binary_run calls it, for a marked command, so no other command starts a find. A hook that
-# needs the binary uses binary_find, which never builds.
+# Only binary_run calls it, for a marked command or a helper entry a command's bash runs (require_trusted
+# runs _require-trusted), so no other command starts a find. A hook that needs the binary uses
+# binary_find, which never builds.
 binary_path() {
   local root="${1:-}" built
   if [[ -n "${SWARMDEV_BIN+set}" || -z "${root}" || ! -e "${root%/}/.git" ]]; then
@@ -364,8 +365,9 @@ is_ported() { [[ "$1" =~ ${PORTED_NAME_RE} && -f "${SWARM_HOME}/bin/ported/$1" ]
 # valued as `swarm.sh config` shows them (board_dir and repos_dir resolved). The die file and the fields
 # file pass only at the command's own level, as die() and event_fields keep them. Every name is set on
 # each run, empty values included, and any other SWARMDEV_CFG_ or SWARMDEV_SRC_ name is unset, so a
-# swarm.sh the binary runs never takes its parent's die file or settings. Only swarm.sh calls it: it
-# needs die, CONFIG_KEYS and the settings.
+# swarm.sh the binary runs never takes its parent's die file or settings. Only swarm.sh calls it: its
+# dispatch for a marked command, and a command's bash for a helper entry (require_trusted in
+# bin/lib/agents.sh runs _require-trusted). It needs die, CONFIG_KEYS and the settings.
 binary_run() {
   local bin die_file="" fields_file="" key v n
   bin="$(binary_path "${SWARM_HOME}" 2>&1)" || die "${bin}"

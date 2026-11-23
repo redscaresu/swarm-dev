@@ -53,6 +53,10 @@ scripts/*	named
 commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
 # A hook: the shell scans and the port list tests, which read hooks/ by a glob (above).
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+# The trust rule and its entry (require_trusted's Go): config_test.sh drives swarm.sh _trusted, and
+# nopy_test.sh runs the fx_trusted_* fixtures with python3 stubbed. The Go row's tests are its floor,
+# since a path takes this row and not that one.
+internal/trust/** cmd/swarm/trusted*.go	tests/config_test.sh tests/nopy_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/command_names_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh
 # binary_dispatch_test.sh runs the binary built from cmd/swarm, its wrapper-fixture entry and the frame it reads.
 # The Go module: a renamed Go path can break a doc that names it, which doc_check_test.sh catches. Not
 # `named`, since no test names main.go and it would select every test; CI's go-checks job runs the Go tests.

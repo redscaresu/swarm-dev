@@ -169,14 +169,17 @@ bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 go.mod                the Go module github.com/redscaresu/swarm-dev: the Go port of swarm.sh, standard library only
 cmd/swarm/            the Go command, the wiring layer: the table of entries by name and the frame bash hands
-                      over (frame.go); no command is ported yet, and wrapper-fixture is for the wrapper's tests
+                      over (frame.go); no command is ported yet, trusted.go is the _require-trusted helper entry
+                      that bash's require_trusted runs, and wrapper-fixture is for the wrapper's tests
                       bridge.go runs a form still in bash as `bash bin/swarm.sh _<name>`
 internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
-                      the store's two methods for the frame's files and the store's types
+                      the store's methods for the frame's files and for reading a file, and the store's types
 internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
-                      and store/ (.swarm/, the board's files and the frame's die and fields files)
+                      and store/ (.swarm/, the board's files, the frame's die and fields files, and a file
+                      bash names, such as .claude.json)
 internal/clock/       the one package that may read the time
-internal/layers/      the Go checks that give each package its layer, in tests only
+internal/trust/       a rules package: whether Claude Code trusts a folder, from its .claude.json
+internal/layers/      the Go checks over the module's code, in tests only
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),

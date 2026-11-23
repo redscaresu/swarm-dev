@@ -31,9 +31,9 @@ var trusted = trusting(`"` + folder + `": ` + entry("true"))
 // nested is n arrays nested inside each other.
 func nested(n int) string { return strings.Repeat("[", n) + strings.Repeat("]", n) }
 
-// The rows of TestDecide. Each want is what `python3 bin/lib/require_trusted.py <root> <config>
-// <git|>` exited on the same bytes, run by hand (Python 3.9.6 and 3.14.7, 2026-11-23); the PR that
-// added this table has the runs. Letters (a) to (o) are trusted-tests-outside's cases.
+// The rows of TestDecide. Each want is what the Python helper, run as `python3 <helper> <root>
+// <config> <git|>` before the port deleted it, exited on the same bytes, run by hand (Python 3.9.6
+// and 3.14.7, 2026-11-23); the PR that added this table has the runs. Letters (a) to (o) are trusted-tests-outside's cases.
 var decideRows = []struct {
 	name    string
 	data    string
@@ -95,7 +95,7 @@ var decideRows = []struct {
 	{name: "surrogate pair key", data: trusting(`"/w/\ud83d\ude00": ` + entry("true")), root: "/w/\U0001F600", want: 0},
 }
 
-// TestDecide pins Decide to require_trusted.py's exit code on each row's bytes. If the Go reads
+// TestDecide pins Decide to the Python helper's exit code on each row's bytes. If the Go reads
 // .claude.json or walks the paths any other way than the Python does, a row goes red.
 func TestDecide(t *testing.T) {
 	for _, row := range decideRows {

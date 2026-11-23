@@ -341,6 +341,31 @@ is "the retro gate in the plugin's own repo, a port: true patch whose tests/ fil
 check "the retro gate in the plugin's own repo, a port: true patch whose tests/ files its touches all list: merged" merged
 check "the retro gate in the plugin's own repo, a port: true patch: its pass line names port: true and tests-only changes" \
   said "retro gate: v1.2.1 is a patch; every change since v1.2.0 is from a fix: true or port: true story, a fix-main build or a change only under tests/"
+# The epic's gate case: trusted-go-port's own PR, replayed. Before the tag, main holds
+# bin/lib/require_trusted.py and the story with port: true and its touches as main had them (copied
+# word for word, plus tests/select_tests_test.sh, which the lead added to the story; the fixture's
+# board is docs/). One squashed commit then changes exactly the PR's paths,
+# as git diff --name-status gave them on its last head, deleting the .py and the story file. Its tests/
+# files are all in those touches, so the patch passes, naming port: true.
+TGP_TOUCHES='touches: [internal/iface/iface.go:Store, internal/adapter/store/store.go:ReadFile, internal/adapter/store/store_test.go:ReadFile cases, cmd/swarm/trusted.go, cmd/swarm/trusted_test.go, cmd/swarm/frame.go:entries, cmd/swarm/main.go:package comment, bin/ported/_require-trusted, bin/swarm.sh:READ_ONLY_COMMANDS, bin/lib/agents.sh:require_trusted, bin/lib/binary.sh:binary_path comment, bin/lib/binary.sh:binary_run comment, bin/lib/require_trusted.py (deleted), tests/events_test.sh:RO_EXPECTED, tests/nopy_list.txt:fx_trusted lines, tests/binary_dispatch_test.sh:header comment, tests/binary_dispatch_test.sh:installed-copy case, tests/select_tests_test.sh:fixture floor tests, tests/merge_rules_test.sh:port: true patch cases, scripts/allow/stage-1/trusted-go-port.md, scripts/test-map.tsv:internal/trust row, docs/port/README.md:§ Two forms, docs/port/README.md:§ Porting a helper, AGENTS.md:layout block (cmd/swarm, internal/iface, internal/trust and internal/layers lines)]'
+TGP_M=(AGENTS.md bin/lib/agents.sh bin/lib/binary.sh bin/swarm.sh cmd/swarm/frame.go cmd/swarm/main.go docs/port/README.md
+  internal/adapter/store/store.go internal/iface/iface.go internal/trust/json.go internal/trust/trust.go internal/trust/trust_test.go
+  scripts/test-map.tsv tests/binary_dispatch_test.sh tests/events_test.sh tests/merge_rules_test.sh tests/nopy_list.txt
+  tests/select_tests_test.sh)
+TGP_A=(bin/ported/_require-trusted cmd/swarm/trusted.go cmd/swarm/trusted_test.go internal/adapter/store/store_test.go
+  scripts/allow/stage-1/trusted-go-port.md)
+commit "${TGP_M[@]}" bin/lib/require_trusted.py
+landed docs/stories/trusted-go-port.md "kind: code" "port: true" "${TGP_TOUCHES}"; retag
+gt rm -q bin/lib/require_trusted.py
+c="$(squashed trusted-go-port "${TGP_M[@]}" "${TGP_A[@]}")"; prs 1=release/v1.2.0=v1.2.0 9=story/trusted-go-port="${c}"
+is "the gate case: the squash changes exactly trusted-go-port's paths" \
+  "M AGENTS.md|M bin/lib/agents.sh|M bin/lib/binary.sh|D bin/lib/require_trusted.py|A bin/ported/_require-trusted|M bin/swarm.sh|M cmd/swarm/frame.go|M cmd/swarm/main.go|A cmd/swarm/trusted.go|A cmd/swarm/trusted_test.go|M docs/port/README.md|D docs/stories/trusted-go-port.md|M internal/adapter/store/store.go|A internal/adapter/store/store_test.go|M internal/iface/iface.go|M internal/trust/json.go|M internal/trust/trust.go|M internal/trust/trust_test.go|A scripts/allow/stage-1/trusted-go-port.md|M scripts/test-map.tsv|M tests/binary_dispatch_test.sh|M tests/events_test.sh|M tests/merge_rules_test.sh|M tests/nopy_list.txt|M tests/select_tests_test.sh" \
+  "$(gt diff --name-status --no-renames v1.2.0 "${c}" | tr '\t' ' ' | paste -sd'|' -)"
+own_pr; as_patch; merge --release "${OWN}"
+is "the gate case, trusted-go-port's PR as a patch: exits 0" 0 "${rc}"
+check "the gate case, trusted-go-port's PR as a patch: merged" merged
+check "the gate case, trusted-go-port's PR as a patch: its pass line names port: true" \
+  said "retro gate: v1.2.1 is a patch; every change since v1.2.0 is from a fix: true or port: true story, a fix-main build or a change only under tests/"
 retag   # the next patch's window starts after the port stories, which are no fix in o/r
 commit bin/g.sh README.md; c="$(gt rev-parse HEAD)"
 release_pr; as_patch; merge --release "${URL}"; refused "the retro gate, a patch with a commit no PR lists" \

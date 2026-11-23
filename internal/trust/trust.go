@@ -1,5 +1,6 @@
-// Package trust decides whether Claude Code trusts a folder, from the bytes of its .claude.json,
-// as bin/lib/require_trusted.py decides it. It has no caller yet: bash still runs the .py.
+// Package trust decides whether Claude Code trusts a folder, from the bytes of its .claude.json, as
+// require_trusted's Python helper decided it before the port deleted it. cmd/swarm's _require-trusted
+// entry calls it, and bash's require_trusted (bin/lib/agents.sh) runs that entry.
 package trust
 
 import (
@@ -7,7 +8,7 @@ import (
 	"strings"
 )
 
-// The two codes Decide returns, as require_trusted.py exits.
+// The two codes Decide returns, as the Python helper exited.
 const (
 	// goAhead: the folder is trusted, or the file cannot be read or is not JSON.
 	goAhead = 0
@@ -19,7 +20,7 @@ const (
 // trustKey is the field of a folder's entry that trusts it when it is JSON true.
 const trustKey = "hasTrustDialogAccepted"
 
-// Decide returns 0 or 1 as `python3 require_trusted.py <root> <config> <git|>` exits, given the
+// Decide returns 0 or 1 as the Python helper's `<root> <config> <git|>` exited, given the
 // bytes read from <config> (data) and the error the read returned (readErr). inGit is the third
 // argument's "git": the root is a git root, so its ancestors are not checked.
 func Decide(data []byte, readErr error, root string, inGit bool) int {
