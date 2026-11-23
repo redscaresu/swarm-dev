@@ -2,7 +2,7 @@
 # binary_attest_test.sh — bin/lib/binary.sh's binary_attest verifies a downloaded binary's build
 # attestation with exactly one call, `gh attestation verify <file> --hostname github.com --repo <repo>
 # --signer-workflow github.com/<repo>/<signer>`, and prints none of gh's output. When gh fails, or the
-# file's bytes are not the release's, it returns 1 and says one line. When gh hangs, binary_within KILLs
+# file's bytes are not the release's, it returns 1 and says one line. When gh hangs, binary_within stops
 # it once BINARY_ATTEST_SECONDS pass, and it returns 1 and says one line naming the bound. An empty
 # argument stops it in one line before any gh call. Each case runs in a new bash whose PATH holds only a
 # gh stub and perl, which binary_within runs. The stub logs every call and prints a line on stdout and on
@@ -147,7 +147,7 @@ cp "${RELEASE}" "${ROOT}/tampered/${ASSET}"; printf 'x' >> "${ROOT}/tampered/${A
 attest "${ROOT}/tampered/${ASSET}" "${GH_REPO}" "${SIGNER}"
 stopped "bytes not the release's" "${ROOT}/tampered/${ASSET}"
 
-# 4. gh hangs: binary_within KILLs it at the bound, here 1 s, well before the stub's 60 s sleep ends.
+# 4. gh hangs: binary_within stops it at the bound, here 1 s, well before the stub's 60 s sleep ends.
 echo 60 > "${HANG_FLAG}"; start=${SECONDS}
 attest "${DL}/${ASSET}" "${GH_REPO}" "${SIGNER}" 1
 took=$((SECONDS - start)); rm -f "${HANG_FLAG}"

@@ -85,32 +85,42 @@ BINARY_GH_MIN=2.57.0
 # network that drops packets, the call can wait for ever, and the swarm.sh call behind it with it.
 BINARY_ATTEST_SECONDS=60
 
-# binary_within <seconds> <command>... — the command in its own process group, the group KILLed after
+BINARY_WITHIN_GRACE=3   # seconds binary_within gives a TERMed group to end before it KILLs what is left
+
+# binary_within <seconds> <command>... — the command in its own process group, the group stopped after
 # <seconds> (at least 1) with exit 142; else the command's own status (128+N for a signal). gh, a Go
-# program, ignores SIGALRM, so the alarm goes to perl, which KILLs the group. A HUP, INT or TERM to perl
-# KILLs the command too and exits 128+N: in a group of its own, the command would run on with no alarm.
-# Each KILL is followed by a waitpid, so the command is reaped and gone when binary_within returns,
-# not a zombie left for init. It is merge.sh's within in whole seconds, plus that reap, copied as
-# hooks/lead-stop.sh copies it: this file needs no other bin/lib file.
+# program, ignores SIGALRM, so the alarm goes to perl, which stops the group. A HUP, INT or TERM to perl
+# stops the command too and exits 128+N: in a group of its own, the command would run on with no alarm.
+# To stop the group, perl TERMs it, gives it BINARY_WITHIN_GRACE seconds, then KILLs what is left. The
+# TERM comes first for a binary_within inside the command, such as swarm.sh update's run of a new copy's
+# swarm.sh version, whose fetch bounds gh with one: that inner perl, TERMed, stops its own group, where a
+# KILL would leave it running with no alarm. Each KILL is followed by a waitpid, so the command is reaped
+# and gone when binary_within returns, not a zombie left for init. It is merge.sh's within in whole
+# seconds, plus that reap and the TERM first, copied as hooks/lead-stop.sh copies it: this file needs no
+# other bin/lib file.
 binary_within() {
-  perl -e 'my $t = shift; $t = 1 if $t < 1;
+  perl -MPOSIX=WNOHANG -e 'my ($g, $t) = (shift, shift); $t = 1 if $t < 1;
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
-    # The parent sets the group too, before the alarm: one that fires first would KILL no group.
+    # The parent sets the group too, before the alarm: one that fires first would stop no group.
     setpgrp $p, $p;
-    sub stop { kill "KILL", -$p, $p; waitpid $p, 0; exit shift }
+    sub stop {
+      $SIG{$_} = "IGNORE" for qw(HUP INT TERM ALRM);
+      kill "TERM", -$p;
+      for (1 .. $g * 10) { last if waitpid($p, WNOHANG); select undef, undef, undef, 0.1 }
+      kill "KILL", -$p, $p; waitpid $p, 0; exit shift }
     my %n = (HUP => 1, INT => 2, TERM => 15);
     for my $s (keys %n) { $SIG{$s} = sub { stop(128 + $n{$s}) } }
     $SIG{ALRM} = sub { stop(142) };
     alarm $t; waitpid $p, 0;
-    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "${BINARY_WITHIN_GRACE}" "$@"
 }
 
 # binary_attest <file> <repo> <signer> — return 0 when gh verifies <file>'s build attestation: built in
 # <repo> (<owner>/<name>) on github.com, and signed by its workflow at <signer>, a path in <repo> such as
 # .github/workflows/release.yml. gh comes from PATH and needs BINARY_GH_MIN or newer. It prints none of
 # gh's output. Any failure prints one line on stderr saying what to do and returns 1: an empty argument,
-# gh's own failure, or no answer within BINARY_ATTEST_SECONDS, when binary_within KILLs gh. There is no
+# gh's own failure, or no answer within BINARY_ATTEST_SECONDS, when binary_within stops gh. There is no
 # fallback, so the caller never runs <file>. An empty <signer> stops before gh: an older gh would read
 # github.com/<repo>/ as a prefix that every workflow in <repo> matches.
 # Two runs at once are safe. gh reads <file> and never writes it. It writes only its sigstore cache

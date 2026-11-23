@@ -54,7 +54,7 @@
 #   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session, or the same round again when the PR's head moved with no findings sent since that round started: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
-#   swarm.sh update                                         update the plugin to the newest version
+#   swarm.sh update                                         update the plugin to the newest version, then run that version's swarm.sh version once, within 5 minutes
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
@@ -240,11 +240,60 @@ then restart Claude Code so the new version is loaded.
 EOF
 }
 
+UPDATE_WAIT=300   # seconds update gives the new copy's swarm.sh version, which can build Go from source
+# SWARM_UPDATE_WAIT overrides it, for tests, when it is a whole number of seconds; anything else is ignored.
+[[ ! "${SWARM_UPDATE_WAIT:-}" =~ ^[1-9][0-9]*$ ]] || UPDATE_WAIT="${SWARM_UPDATE_WAIT}"
+
+# installed_path <file> <plugin ID> — print the installPath of the one entry with scope user under
+# plugins[<plugin ID>] in <file>, Claude Code's installed_plugins.json, and return 0. The ID matches
+# exactly, and no version folder is guessed: after a rollback the entry names the older one. Otherwise
+# print why not (an unreadable file, no such entry, more than one, no installPath) and return 1.
+installed_path() {
+  local out
+  out="$(python3 -I -c '
+import json, sys
+f, pid = sys.argv[1], sys.argv[2]
+try:
+    with open(f) as fh:
+        d = json.load(fh)
+    es = d["plugins"][pid] if pid in d["plugins"] else []
+    es = [e for e in es if isinstance(e, dict) and e.get("scope") == "user"]
+except Exception:
+    print("%s could not be read" % f); sys.exit(1)
+if len(es) != 1:
+    print("%s has %s user entries for %s" % (f, len(es) or "no", pid)); sys.exit(1)
+p = es[0].get("installPath")
+if not isinstance(p, str) or not p:
+    print("the user entry for %s in %s has no installPath" % (pid, f)); sys.exit(1)
+print(p)' "$1" "$2" 2>/dev/null)" && { printf '%s\n' "${out}"; return 0; }
+  printf '%s\n' "${out:-python3 could not read $1}"
+  return 1
+}
+
 # update_plugin — fetch the newest version of the plugin this copy is installed as (MARKETPLACE, then
-# PLUGIN: plugin_id). Claude Code loads it on its next start.
+# PLUGIN: plugin_id), then run the copy Claude Code loads next (installed_path) once: its swarm.sh version
+# fetches or builds that copy's binary, within UPDATE_WAIT seconds, its output shown. When that copy cannot
+# be found, or its run fails or passes the bound, one line says why and that swarm.sh version after the
+# restart fetches it; update still exits 0. This copy fetches nothing for itself. Claude Code loads the new
+# version on its next start.
 update_plugin() {
+  local file="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/installed_plugins.json" path why="" rc=0
   claude plugin marketplace update "${MARKETPLACE}"
   claude plugin update "${PLUGIN}"
+  if ! path="$(installed_path "${file}" "${PLUGIN}")"; then
+    why="${path}"
+  elif [[ ! -f "${path}/bin/swarm.sh" ]]; then
+    why="${path}/bin/swarm.sh does not exist"
+  else
+    binary_within "${UPDATE_WAIT}" bash "${path}/bin/swarm.sh" version < /dev/null || rc=$?
+    if [[ "${rc}" -eq 142 ]]; then
+      why="its swarm.sh version did not finish within ${UPDATE_WAIT} s"
+    elif [[ "${rc}" -ne 0 ]]; then
+      why="its swarm.sh version exited ${rc}"
+    fi
+  fi
+  [[ -z "${why}" ]] \
+    || echo "The new version's binary was not fetched (${why}): run swarm.sh version after the restart, which fetches it."
   echo "Restart Claude Code to load the new version."
 }
 

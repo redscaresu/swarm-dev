@@ -34,7 +34,8 @@ jobs:
       #   tests/binary_source_test.sh  go.mod's Go version, read with bash 3.2's builtins
       #   tests/binary_fetch_test.sh   the whole fetch of an installed copy's binary: traps and rename under bash 3.2
       #   tests/binary_quarantine_test.sh  macOS's quarantine mark, set by a real xattr -w, stops the call
-      SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh tests/binary_find_test.sh tests/binary_dispatch_test.sh tests/binary_build_test.sh tests/binary_download_test.sh tests/binary_source_test.sh tests/binary_fetch_test.sh tests/binary_quarantine_test.sh
+      #   tests/update_test.sh         update's plugin ID from the copy's path, and its read of installed_plugins.json
+      SUBSET: tests/build_test.sh tests/test_helpers_test.sh tests/env_allowlist_test.sh tests/binary_find_test.sh tests/binary_dispatch_test.sh tests/binary_build_test.sh tests/binary_download_test.sh tests/binary_source_test.sh tests/binary_fetch_test.sh tests/binary_quarantine_test.sh tests/update_test.sh
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

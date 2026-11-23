@@ -156,6 +156,8 @@ lists them all.
 
 An installed copy of swarm-dev has no `swarm` binary until its first `swarm.sh` call fetches one.
 Every call does this except `swarm.sh update`, inside a project or not.
+`swarm.sh update` fetches nothing for the running copy.
+It runs the newly installed copy's `swarm.sh version`, which fetches that copy's binary.
 Each version fetches its own binary once:
 
 1. `gh release download` fetches the release's binary for this machine, and its `SHA256SUMS`, into a new `.fetch-<pid>` folder in the plugin folder.
@@ -206,6 +208,7 @@ It can leave a `swarm.build-<pid>` file in the plugin folder, which no call runs
 Once the binary is there, a call needs no network to find it.
 `swarm.sh version` and `swarm.sh update` never need the binary, so they still run.
 `swarm.sh version` still tries the download and the build, and prints their `binary:` lines after its version line.
+`swarm.sh update` does the same for the new version: it runs that copy's `swarm.sh version` once, which tries the download and the build for that copy.
 
 ## Updating
 
@@ -216,15 +219,30 @@ the merge and passes `--upgrade` when you say yes; run by hand on a terminal, me
 moves no agent and prints `upgrade not run:` with the command to run in each project. Either way,
 it then asks you to restart the lead session (`/exit`, then `claude --continue`). If a PR landed on the base after the release was
 checked, it names the commits that shipped unchecked and updates nothing. In that case, or when
-you release some other way, update by hand:
+you release some other way, run `swarm.sh update`.
+
+`swarm.sh update` updates the plugin ID this copy is installed as.
+For a stable install it runs:
 
 ```bash
 claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
 ```
 
+For a prerelease install it runs:
+
+```bash
+claude plugin marketplace update swarm-dev-pre && claude plugin update swarm-dev@swarm-dev-pre
+```
+
+Then it runs the new version's `swarm.sh version` once, within 5 minutes, and shows its output.
+That fetches the new version's binary, as [First run](#first-run) describes, or builds it, as [Offline](#offline) describes, before your next session starts.
+It finds the new version in Claude Code's `installed_plugins.json`, by the one user entry for the plugin ID.
+When it cannot find it there, or that run fails or takes longer than 5 minutes, it prints one line saying the new version's binary was not fetched and that `swarm.sh version` after the restart fetches it.
+It still exits 0.
 Restart Claude Code afterwards.
-Then run `swarm.sh version`: it fetches the new version's binary, as [First run](#first-run) describes, or builds it, as [Offline](#offline) describes.
-When it can do neither, it says why after its version line, in one line that starts `binary:` and then any error Go printed, and still exits 0.
+
+After a plain `claude plugin update`, run `swarm.sh version` yourself once Claude Code has restarted.
+When it can neither fetch nor build the binary, it says why after its version line, in one line that starts `binary:` and then any error Go printed, and still exits 0.
 The next `swarm.sh` call tries again.
 
 Agents already running stay on the old version until

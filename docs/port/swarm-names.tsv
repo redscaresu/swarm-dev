@@ -119,6 +119,7 @@ SWARM_STUCK_MINUTES	setting	bin/lib/lifecycle.sh
 SWARM_TABS	handoff	bin/lib/agents.sh bin/lib/merge.sh bin/lib/status_report.py
 SWARM_TELL_QUEUED	handoff	bin/lib/agents.sh
 SWARM_TIP	handoff	bin/lib/lifecycle.sh
+SWARM_UPDATE_WAIT	seam	bin/swarm.sh
 SWARM_UPGRADE_GRACE_MS	setting	bin/lib/lifecycle.sh
 SWARM_UPGRADE_START_WAIT	seam	bin/lib/merge.sh
 SWARM_UPGRADE_WAIT_MS	setting	bin/lib/lifecycle.sh bin/swarm.sh
