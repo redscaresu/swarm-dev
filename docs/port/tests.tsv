@@ -146,6 +146,7 @@ tests/test_runner_test.sh	py	rewrite-from-outside		delete-dash
 tests/time_in_state_test.sh	py	rewrite-from-outside		helpers-flow-reviews
 tests/timeouts_test.sh	lib,text	rewrite-from-outside	a Go check fails a gh, herdr or curl call that runs with no deadline	first-port
 tests/unsent_brief_test.sh	py,python3-stub	rewrite-from-outside		helpers-panes
+tests/update_test.sh	lib	rewrite-from-outside		bash-retired
 tests/usage_estimate_test.sh	py	rewrite-from-outside		helpers-panes
 tests/wait_pr_cache_test.sh	py,python3-stub	rewrite-from-outside		helpers-ci-gate
 tests/wait_pr_expected_test.sh	py	rewrite-from-outside		helpers-ci-gate

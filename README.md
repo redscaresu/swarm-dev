@@ -126,8 +126,13 @@ It is only an estimate, and it counts Fable low until you give it a `/usage` rea
 ## Updating
 
 ```bash
-claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
+swarm.sh update
 ```
+
+It updates the plugin, then runs the new version's `swarm.sh version` once, within 5 minutes, so that version's binary is ready.
+For a stable install it runs `claude plugin marketplace update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`.
+For a prerelease install it runs `claude plugin marketplace update swarm-dev-pre` and `claude plugin update swarm-dev@swarm-dev-pre`.
+If you run those two yourself, run `swarm.sh version` after the restart.
 
 Restart Claude Code afterwards. [Updating](docs/running.md#updating) covers moving running agents
 to the new version.
