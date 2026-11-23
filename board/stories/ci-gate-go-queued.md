@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-modes
 depends_on: []
 touches: [internal/merge/queued.go, internal/merge/queued_test.go, tests/ci_gate_cases/queued.cases]
 estimate_lines: 300

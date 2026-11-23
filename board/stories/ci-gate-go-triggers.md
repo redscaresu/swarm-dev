@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/merge/triggers.go, internal/merge/triggers_test.go, internal/merge/testdata/workflows]
 estimate_lines: 240

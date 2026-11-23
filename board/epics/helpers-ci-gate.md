@@ -1,5 +1,5 @@
 ---
-status: active
+status: split
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
 depends_on: [foundation-exit]
 ---

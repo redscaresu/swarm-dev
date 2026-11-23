@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-modes
 depends_on: [ci-gate-go-files]
 needs: ci-gate-go-files: pr_files and workflows (internal/merge/files.go). Core: ci-gate-go-triggers (on_filters, Unread), ci-gate-go-globs (covers and the bad-pattern error), ci-gate-go-reads (pages), ci-gate-go-cache-store (Store's whole write), ci-gate-go-pyvalues (Dumps).
 touches: [internal/merge/expected.go, internal/merge/expected_test.go]

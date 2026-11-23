@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-core
 depends_on: [go-entries-per-file]
 needs: go-entries-per-file (helpers-shared): register from an entry's own file (cmd/swarm/frame.go) and docs/port/README.md § Two forms.
 touches: [cmd/swarm/cigate.go, bin/ported/_ci-gate, internal/merge/cigate.go, internal/merge/cigate_test.go, tests/ci_gate_cases_test.sh, tests/ci_gate_cases/base.cases, docs/port/tests.tsv:tests/ci_gate_cases_test.sh row, scripts/test-map.tsv:internal/merge row]

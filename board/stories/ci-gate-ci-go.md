@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-prep
 depends_on: []
 touches: [.github/workflows/ci.yml:shellcheck gate, .github/workflows/ci.yml:test-shard gate, .github/workflows/ci.yml:plugin-validate gate, .github/workflows/diff-run.yml:gate, .github/workflows/go.yml:gate, .github/workflows/go.yml:checks' conditions, .github/workflows/macos.yml:gate, .github/workflows/speed.yml:gate, tests/board_only_test.sh:workflow check]
 estimate_lines: 180

@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/merge/records.go, internal/merge/records_test.go]
 estimate_lines: 260

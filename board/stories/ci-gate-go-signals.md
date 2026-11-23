@@ -1,7 +1,7 @@
 ---
 kind: code
 status: later
-epic: helpers-ci-gate
+epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/layers/imports_test.go:allowedStd exception, internal/layers/testdata/imports, cmd/swarm/signals.go, cmd/swarm/signals_test.go, internal/merge/cigate.go:deps, cmd/swarm/cigate.go:signals, AGENTS.md:Go layers rule, docs/port/README.md:bridge exception]
 estimate_lines: 220
