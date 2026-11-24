@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-dropped-lines
 depends_on: [dropped-go-scan, dropped-lines-entry, dropped-lines-pins, go-entries-per-file]
 needs: dropped-go-scan (the check it wires); dropped-lines-entry (the _dropped-lines arm and READ_ONLY_COMMANDS entry it replaces, the fixtures, the mutation table to repeat); dropped-lines-pins (the byte cases and fixtures the switch must keep); go-entries-per-file (helpers-shared: register, and § Two forms' binary_run call from bash).

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-sections
 depends_on: [go-report-logs, go-entries-per-file, shared-copies-list]
 needs: go-report-logs: report.SessionLog. go-entries-per-file: the register call. shared-copies-list: docs/port/copies.tsv's archive_session row, deleted here.

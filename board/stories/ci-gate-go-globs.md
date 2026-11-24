@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/merge/globs.go, internal/merge/globs_test.go]

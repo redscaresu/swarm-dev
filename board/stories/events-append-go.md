@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [store-file-reads, plugin-version-go]
 needs: store-file-reads: AppendLine (makes .swarm, one write, returns its error), RealPath and ReadFile on iface.Store; plugin-version-go: plugin.Version, to read the version= value from plugin.json

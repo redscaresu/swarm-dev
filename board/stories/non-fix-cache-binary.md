@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-gh-cache
 depends_on: [go-gh-cache-files, go-entries-per-file, shared-copies-list, shared-gh-cache-call]
 needs: go-gh-cache-files: ghcache.Get, Put and Path. go-entries-per-file: the register call. shared-copies-list: docs/port/copies.tsv's non_fix_cache row, deleted here. shared-gh-cache-call: the user's You: steps (1), the gh_cache reading, and (2), clearing this carve-out story.

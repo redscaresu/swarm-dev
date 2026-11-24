@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-sections
 depends_on: [go-flow-sections]
 needs: go-flow-sections: the _section entry, internal/sections' registration and fixture pattern, the bin/sections/<runner>/ marker rule and reports.sh's section_bin.

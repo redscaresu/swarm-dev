@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-base
 depends_on: [store-file-reads]
 needs: store-file-reads (board-store): it adds ReadFile to internal/iface/iface.go:Store first; reuse it, and add the other five methods.

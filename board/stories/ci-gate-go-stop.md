@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-signals]
 needs: ci-gate-go-signals: the ignore span in the deps (internal/merge/cigate.go). Core: ci-gate-go-gh (graphql, Err), ci-gate-go-reads (checks), ci-gate-go-entry (the registry and the case runner).

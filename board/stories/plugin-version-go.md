@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: board-store
 depends_on: []
 touches: [internal/plugin/plugin.go (new), internal/plugin/plugin_test.go (new), internal/plugin/bash_compare_test.go (new), internal/plugin/testdata/ (new), docs/port/tests.tsv:header, docs/port/tests.tsv:internal/plugin row]

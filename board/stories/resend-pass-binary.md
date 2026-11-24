@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-events
 depends_on: [go-resend-rows, shared-copies-list]
 needs: go-resend-rows: the _resend-rows entry and its marker. shared-copies-list: docs/port/copies.tsv's resend_pass row, deleted here.

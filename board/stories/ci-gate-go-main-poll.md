@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-main
 depends_on: []
 touches: [internal/merge/mainpoll.go, internal/merge/mainpoll_test.go]

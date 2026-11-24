@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: board-store
 depends_on: []
 touches: [internal/config/config.go (new), internal/config/keys.go (new), internal/config/config_test.go (new)]

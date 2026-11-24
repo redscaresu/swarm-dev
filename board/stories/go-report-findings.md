@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-report
 depends_on: [go-store-files, go-py-decode]
 needs: go-store-files: Store.ReadFile. go-py-decode: pytext.DecodeReplace.

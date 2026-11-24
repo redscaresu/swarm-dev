@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-modes
 depends_on: []
 touches: [internal/merge/queue.go, internal/merge/queue_test.go, tests/ci_gate_cases/queue.cases, tests/ci_gate_cases/pushed.cases]

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [config-go]
 needs: config-go: Parse, Defaults, and the key and removed-key lists in CONFIG_KEYS' and REMOVED_KEYS' order

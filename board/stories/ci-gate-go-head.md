@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-modes
 depends_on: [ci-gate-go-head-expected, ci-gate-go-rules]
 touches: [internal/merge/head.go, internal/merge/head_test.go, tests/ci_gate_cases/head.cases]

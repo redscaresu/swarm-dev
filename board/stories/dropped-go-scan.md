@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-dropped-lines
 depends_on: [dropped-go-diff, dropped-go-counts, dropped-go-reads]
 needs: dropped-go-diff (removed, clean, the 300-character cut); dropped-go-counts (the ordered multiset, owed, missing, extended); dropped-go-reads (the git wrapper, ancestor, automatic, sides, the blob and rename reads, the stop error).

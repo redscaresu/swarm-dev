@@ -1,8 +1,8 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-report
-depends_on: [go-py-json, go-py-decode]
+depends_on: [go-py-json, go-py-decode, ci-gate-go-gh]
 needs: go-py-json: pyjson.Decode (key order kept). go-py-decode: pytext.DecodeReplace.
 touches: [internal/iface/iface.go:CodeHost, internal/adapter/gh/gh.go:Run, internal/adapter/gh/gh_test.go, internal/report/gh.go, internal/report/gh_compare_test.go]
 estimate_lines: 300

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-shared-base
 depends_on: []
 touches: [internal/clock/compare_test.go]

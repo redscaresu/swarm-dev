@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-cache
 depends_on: [ci-gate-go-cache-store]
 touches: [internal/merge/pollcache_lock.go, internal/merge/pollcache_lock_test.go, internal/merge/reads.go:pages, docs/port/locks.tsv:.swarm/poll-cache rows, docs/port/swarm-names.tsv:SWARM_POLL_CACHE, docs/port/swarm-names.tsv:SWARM_POLL_CACHE_SECONDS]

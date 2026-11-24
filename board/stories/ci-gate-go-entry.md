@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-core
 depends_on: [go-entries-per-file]
 needs: go-entries-per-file (helpers-shared): register from an entry's own file (cmd/swarm/frame.go) and docs/port/README.md § Two forms.

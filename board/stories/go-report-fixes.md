@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-shared-report
 depends_on: []
 touches: [internal/report/fixes.go, internal/report/fixes_compare_test.go]

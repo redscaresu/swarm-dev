@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-events
 depends_on: [go-events-outcome, go-store-files, go-py-json, go-py-decode, go-entries-per-file]
 needs: go-events-outcome: eventsoutcome.Outcome. go-store-files: Store.Glob, ReadFile and Remove. go-py-json: pyjson.Decode. go-py-decode: pytext.DecodeReplace. go-entries-per-file: the register call for the entry's own file.

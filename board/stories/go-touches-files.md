@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-events
 depends_on: [go-touches-text, go-store-files, go-events-outcome, go-py-decode]
 needs: go-touches-text: touchesrows.FrontText and Pairs. go-store-files: Store.ReadFile and IsFile. go-events-outcome: eventsoutcome.Outcome. go-py-decode: pytext.DecodeReplace.

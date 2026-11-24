@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-dropped-lines
 depends_on: []
 touches: [internal/merge/dropped_diff.go, internal/merge/dropped_diff_test.go]

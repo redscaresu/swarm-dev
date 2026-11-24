@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-gh-cache
 depends_on: [go-gh-cache-files, go-store-files]
 needs: go-gh-cache-files: ghcache.Get, Put and Path. go-store-files: Store.Glob and Remove.

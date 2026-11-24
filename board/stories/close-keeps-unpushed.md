@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 fix: true
 touches: [bin/lib/lifecycle.sh:close_agent, tests/close_test.sh]
 estimate_lines: 120

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-events
 depends_on: [go-events-outcome]
 needs: go-events-outcome: the internal/eventsoutcome package, the only one the check lets read the column raw.

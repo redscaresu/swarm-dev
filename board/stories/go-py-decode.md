@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-shared-base
 depends_on: []
 touches: [internal/pytext/decode.go, internal/pytext/compare_test.go]

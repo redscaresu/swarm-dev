@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [events-append-go]
 needs: events-append-go: the Appender, with the time passed in, the plugin root set and the write error returned

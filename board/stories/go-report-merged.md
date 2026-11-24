@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-gh-cache
 depends_on: [go-gh-cache-files, go-report-gh, go-report-text]
 needs: go-gh-cache-files: ghcache.Listing and Day. go-report-gh: report.GH, SearchMerged and GHLimit. go-report-text: report.PRKey and MergeTime.

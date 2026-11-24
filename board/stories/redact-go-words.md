@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: board-store
 depends_on: []
 touches: [tests/fixtures/events/redact.py:SOURCE_DIRS, tests/fixtures/events/redact.py:vocabulary, tests/events_fixture_test.sh:Go-word checks, scripts/test-map.tsv:go.mod row]

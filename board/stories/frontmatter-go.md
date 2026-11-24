@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [store-file-reads]
 needs: store-file-reads: ReadFile, Stat and Lstat on iface.Store, with fs.ErrNotExist and fs.ErrPermission wrapped

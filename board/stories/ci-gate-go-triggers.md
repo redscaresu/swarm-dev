@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/merge/triggers.go, internal/merge/triggers_test.go, internal/merge/testdata/workflows]
