@@ -4,8 +4,8 @@
 # replace line three with three-main and main-added, pr replace it with three-pr, and pr merge main,
 # resolving f to the lines the case gives. A base line the resolution dropped prints as
 # `<merge sha7> f: <text>` with exit 1, until a later commit puts it back in the PR's head; the PR's own
-# lines, its own removals, conflict markers and whitespace-only lines never print; a merge it cannot
-# check exits 2 with one line saying why.
+# lines, its own removals, a base line its own commits edited, conflict markers and whitespace-only lines
+# never print; a merge it cannot check exits 2 with one line saying why.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -560,6 +560,170 @@ printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "${BASE
 M="$(printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "${BASE0[@]:7}" | merge "${R}" main -)"
 check "a dropped line the head holds more copies of than the base, short of what it owes: it prints" \
   "${M:0:7} f: ${OWN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# A line the PR's own commit edited is no drop (#1169, #1042); one a merge alone dropped still is.
+# Both sides add WORDED after two (pr by its own commit, main by a squash of the same change), then a pr
+# commit rewords it, and the merge keeps the reword (#1169's comments): the merge base lacks the line, so
+# main's copy is owed.
+WORDED='the helper reads the file' REWORDED='the binary reads the file'
+R="$(new_repo ownreword)"; on "${R}" pr; lines "${WORDED}" three | put "${R}" f
+on "${R}" main; lines "${WORDED}" three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; lines "${REWORDED}" three | put "${R}" f
+lines "${REWORDED}" three | merge "${R}" main - >/dev/null
+check "a line both sides added that the PR's own commit reworded, the reword kept: nothing" "exit 0" "$(scan "${R}" main pr)"
+# Both sides add WORDED twice, a pr commit rewords the first copy, and the merge alone rewords the second:
+# the PR made its edit once, so it stands for one of the two dropped copies, and the other prints.
+R="$(new_repo owncopies)"; on "${R}" pr
+printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f
+on "${R}" main; printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" > "${R}/f"
+git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; printf '%s\n' one two "${REWORDED}" three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f
+M="$(printf '%s\n' one two "${REWORDED}" three four five "${REWORDED}" "${BASE0[@]:5}" | merge "${R}" main -)"
+check "two copies both sides added, one reworded by the PR's own commit and one by the merge alone: one prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The same with pr's commit making two lines of the first copy, and the merge alone deleting the second: one
+# copy edited stands for one dropped copy, however many lines the edit made, so the other prints.
+R="$(new_repo ownsplit)"; on "${R}" pr
+printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f
+on "${R}" main; printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" > "${R}/f"
+git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; printf '%s\n' one two "${REWORDED}" 'the binary reads the files' three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f
+M="$(printf '%s\n' one two "${REWORDED}" 'the binary reads the files' three four five "${BASE0[@]:5}" | merge "${R}" main -)"
+check "a copy the PR's own commit made two lines of, and one the merge alone deleted: one prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The owncopies case with pr's reword of the first copy undone and made again: two reword edits, one copy
+# reworded on pr's side, so they stand for one dropped copy, and the one the merge alone reworded prints.
+R="$(new_repo ownredo)"; on "${R}" pr
+printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f
+on "${R}" main; printf '%s\n' one two "${WORDED}" three four five "${WORDED}" "${BASE0[@]:5}" > "${R}/f"
+git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr
+for x in "${REWORDED}" "${WORDED}" "${REWORDED}"; do printf '%s\n' one two "${x}" three four five "${WORDED}" "${BASE0[@]:5}" | put "${R}" f; done
+M="$(printf '%s\n' one two "${REWORDED}" three four five "${REWORDED}" "${BASE0[@]:5}" | merge "${R}" main -)"
+check "a copy the PR's own commits reworded, put back and reworded again, and one the merge alone reworded: one prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# WORDED twice in the merge base: a pr commit rewords one copy, and the merge alone deletes the other. The
+# count already lets the PR's reword remove one copy, so that edit stands for no other, and it prints.
+R="$(new_repo ownowed)"; printf '%s\n' one two "${WORDED}" "${BASE0[@]:2:5}" "${WORDED}" "${BASE0[@]:7}" | put "${R}" f
+git -C "${R}" branch -f pr main; echo g1 | put "${R}" g
+on "${R}" pr; printf '%s\n' one two "${REWORDED}" "${BASE0[@]:2:5}" "${WORDED}" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two "${REWORDED}" "${BASE0[@]:2:5}" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a copy the merge base had, the PR's own commit rewording another: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The same line once, its reword undone by a later pr commit, and the merge alone making the reword again:
+# an edit the PR's own commits undid stands for nothing, so it prints.
+R="$(new_repo ownundone)"; on "${R}" pr; lines "${WORDED}" three | put "${R}" f
+on "${R}" main; lines "${WORDED}" three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; lines "${REWORDED}" three | put "${R}" f; lines "${WORDED}" three | put "${R}" f
+M="$(lines "${REWORDED}" three | merge "${R}" main -)"
+check "a line the PR's own commit reworded and a later one put back, the merge alone rewording it again: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The same undone in two steps, the reword reworded again and then put back: the merge's pr side no longer
+# holds the PR's reword, so it stands for nothing, and it prints.
+R="$(new_repo ownchain)"; on "${R}" pr; lines "${WORDED}" three | put "${R}" f
+on "${R}" main; lines "${WORDED}" three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; lines "${REWORDED}" three | put "${R}" f; lines 'the binary reads one file' three | put "${R}" f
+lines "${WORDED}" three | put "${R}" f
+M="$(lines "${REWORDED}" three | merge "${R}" main -)"
+check "a line the PR's own commits reworded twice and put back, the merge alone rewording it again: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# Both sides add WORDED; pr adds REWORDED after seven, rewords WORDED and puts it back, and the merge alone
+# deletes WORDED. pr's side holds a REWORDED, but the reword was undone, so it stands for nothing: it prints.
+R="$(new_repo ownelse)"; on "${R}" pr; lines "${WORDED}" three | put "${R}" f
+on "${R}" main; lines "${WORDED}" three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; printf '%s\n' one two "${WORDED}" "${BASE0[@]:3:4}" "${REWORDED}" "${BASE0[@]:7}" | put "${R}" f
+printf '%s\n' one two "${REWORDED}" "${BASE0[@]:3:4}" "${REWORDED}" "${BASE0[@]:7}" | put "${R}" f
+printf '%s\n' one two "${WORDED}" "${BASE0[@]:3:4}" "${REWORDED}" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two "${BASE0[@]:3:4}" "${REWORDED}" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a reword the PR's own commits undid, its new line also added elsewhere, the merge alone deleting the line: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The same with pr's commit deleting the line and, in the same hunk, editing the next one: the edit pairs
+# with the line it is most like, three, so none of the PR's own stands for the deleted line.
+R="$(new_repo owndelete)"; on "${R}" pr; lines "${WORDED}" three | put "${R}" f
+on "${R}" main; lines "${WORDED}" three > "${R}/f"; git -C "${R}" commit -qam 'the story (#1)'
+on "${R}" pr; lines 'three now changed' | put "${R}" f
+M="$(lines 'three now changed' | merge "${R}" main -)"
+check "a line both sides added that the PR's own commit deleted beside a line it edited, dropped: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# Each side adds a test to one list line (#1042): main's word carries the `;`, so the head's line, both
+# added, does not hold main's words, and only pr's own edit made in main's line accounts for it.
+LIST='for t in a_test b_test; do echo floor; done'
+LIST_MAIN='for t in a_test b_test main_test; do echo floor; done'
+LIST_PR='for t in a_test b_test pr_test; do echo floor; done'
+LIST_BOTH='for t in a_test b_test main_test pr_test; do echo floor; done'
+# own_list <name> <resolution's line> — f holds LIST after two on main and pr; main edits it to LIST_MAIN,
+# a pr commit to LIST_PR, and pr's merge of main resolves it to the line given; prints the merge's SHA
+own_list() {
+  local d; d="$(new_repo "$1")"; lines "${LIST}" three | put "${d}" f; git -C "${d}" branch -f pr main
+  lines "${LIST_MAIN}" three | put "${d}" f; on "${d}" pr; lines "${LIST_PR}" three | put "${d}" f
+  lines "$2" three | merge "${d}" main -
+}
+M="$(own_list ownlist "${LIST_BOTH}")"
+check "a base line the PR's own commit also edited, kept with both edits: nothing" "exit 0" "$(scan "${tmp}/ownlist" main pr)"
+M="$(own_list ownlistlost "${LIST_PR}")"
+check "the same resolved to the PR's line alone, main's edit lost: it prints" \
+  "${M:0:7} f: ${LIST_MAIN}"$'\n'"exit 1" "$(scan "${tmp}/ownlistlost" main pr)"
+# main keeps LIST and adds LIST_MAIN after it, and the merge alone makes pr's edit in main's new line: LIST_MAIN
+# starts and ends as LIST does, but main never changed LIST into it, so it prints.
+R="$(new_repo ownbeside)"; lines "${LIST}" three | put "${R}" f; git -C "${R}" branch -f pr main
+lines "${LIST}" "${LIST_MAIN}" three | put "${R}" f; on "${R}" pr; lines "${LIST_PR}" three | put "${R}" f
+M="$(lines "${LIST_PR}" "${LIST_BOTH}" three | merge "${R}" main -)"
+check "a line main added beside the line the PR's own commit edited, the merge alone making that edit in it: it prints" \
+  "${M:0:7} f: ${LIST_MAIN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# main replaces LIST with another line and adds LIST_MAIN after seven, a hunk of its own: main did not change
+# LIST into LIST_MAIN, so the merge alone making pr's edit in it still prints.
+R="$(new_repo ownelsewhere)"; lines "${LIST}" three | put "${R}" f; git -C "${R}" branch -f pr main
+printf '%s\n' one two 'the list moved below' "${BASE0[@]:2:5}" "${LIST_MAIN}" "${BASE0[@]:7}" | put "${R}" f
+on "${R}" pr; lines "${LIST_PR}" three | put "${R}" f
+M="$(printf '%s\n' one two "${LIST_PR}" 'the list moved below' "${BASE0[@]:2:5}" "${LIST_BOTH}" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a line main added in a hunk of its own after removing the line the PR's own commit edited: it prints" \
+  "${M:0:7} f: ${LIST_MAIN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# f holds LIST twice; main edits the first copy into LIST_MAIN, a pr commit the second into LIST_PR, and the
+# merge alone makes pr's edit in main's line. The two sides changed different copies, so it prints.
+R="$(new_repo owntwo)"; printf '%s\n' one two "${LIST}" "${BASE0[@]:2:5}" "${LIST}" "${BASE0[@]:7}" | put "${R}" f
+git -C "${R}" branch -f pr main
+printf '%s\n' one two "${LIST_MAIN}" "${BASE0[@]:2:5}" "${LIST}" "${BASE0[@]:7}" | put "${R}" f
+on "${R}" pr; printf '%s\n' one two "${LIST}" "${BASE0[@]:2:5}" "${LIST_PR}" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two "${LIST_BOTH}" "${BASE0[@]:2:5}" "${LIST_PR}" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a copy main edited while the PR's own commit edited another copy, the merge alone making the PR's edit in it: it prints" \
+  "${M:0:7} f: ${LIST_MAIN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The merge alone rewords a line main added (#1068's "four tests"), and a pr commit edits another line of f:
+# no commit of the PR's own changed main's line, so it prints.
+R="$(new_repo ownmerge)"; lines three "${WORDED}" | put "${R}" f
+on "${R}" pr; printf '%s\n' "${BASE0[@]:0:6}" "${REWORDED} too" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two three "${REWORDED}" "${BASE0[@]:3:3}" "${REWORDED} too" "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a base line a merge alone reworded, the PR's own commit editing another line: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# The same with pr's own commit editing a line that starts as main's does, the helper to the binary in
+# 'the helper reads another file': that edit made in main's line is the merge's reword, but main's line
+# does not end as the edited one does, so it is not that line, and it prints.
+R="$(new_repo ownprefix)"; at_seven 'the helper reads another file' | put "${R}" f; git -C "${R}" branch -f pr main
+printf '%s\n' one two three "${WORDED}" "${BASE0[@]:3:4}" 'the helper reads another file' "${BASE0[@]:7}" | put "${R}" f
+on "${R}" pr; at_seven 'the binary reads another file' | put "${R}" f
+M="$(printf '%s\n' one two three "${REWORDED}" "${BASE0[@]:3:4}" 'the binary reads another file' "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a base line a merge alone reworded as the PR's own commit edited another line: it prints" \
+  "${M:0:7} f: ${WORDED}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# f has CHECKS after two and CHECKS_TOO after seven; main deletes CHECKS, a pr commit rewords it, and the merge
+# alone makes the same reword in CHECKS_TOO, which starts and ends as CHECKS does around it. f had CHECKS_TOO
+# when pr made its edit and pr left it alone, so it prints.
+CHECKS='run old checks here' CHECKS_TOO='run old expensive checks here'
+R="$(new_repo ownleft)"; printf '%s\n' one two "${CHECKS}" "${BASE0[@]:2:5}" "${CHECKS_TOO}" "${BASE0[@]:7}" | put "${R}" f
+git -C "${R}" branch -f pr main
+printf '%s\n' one two "${BASE0[@]:2:5}" "${CHECKS_TOO}" "${BASE0[@]:7}" | put "${R}" f
+on "${R}" pr; printf '%s\n' one two 'run fast checks here' "${BASE0[@]:2:5}" "${CHECKS_TOO}" "${BASE0[@]:7}" | put "${R}" f
+M="$(printf '%s\n' one two 'run fast checks here' "${BASE0[@]:2:5}" 'run fast expensive checks here' "${BASE0[@]:7}" | merge "${R}" main -)"
+check "a base line f had when the PR's own commit edited another, the merge alone making that edit in it: it prints" \
+  "${M:0:7} f: ${CHECKS_TOO}"$'\n'"exit 1" "$(scan "${R}" main pr)"
+# One hunk of main's replaces CHECKS with an unrelated line and rewords the next, CHECK_ONE, into CHECKS_TOO; a
+# pr commit rewords CHECKS, and the merge alone makes that reword in CHECKS_TOO. Main's CHECKS_TOO replaced
+# CHECK_ONE, the line of that hunk's most like it, not CHECKS, so it prints.
+CHECK_ONE='run old expensive check here'
+R="$(new_repo ownnext)"; lines "${CHECKS}" "${CHECK_ONE}" | put "${R}" f; git -C "${R}" branch -f pr main
+lines 'nothing to run' "${CHECKS_TOO}" | put "${R}" f
+on "${R}" pr; lines 'run fast checks here' "${CHECK_ONE}" | put "${R}" f
+M="$(lines 'run fast checks here' 'nothing to run' 'run fast expensive checks here' | merge "${R}" main -)"
+check "a line main's hunk made of the line next to the one the PR's own commit edited, the merge alone making that edit in it: it prints" \
+  "${M:0:7} f: ${CHECKS_TOO}"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
 # --own <path>, the PR's own story file: a story PR deletes it, and a line the base added to it after the
 # branch was cut (#1002's `fix: true`, which held #1003, #1006 and #1008) goes with the file.

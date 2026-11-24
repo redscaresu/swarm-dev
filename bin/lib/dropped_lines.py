@@ -1,4 +1,4 @@
-import re, subprocess, sys
+import difflib, re, subprocess, sys
 from collections import Counter
 
 # dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...] — the base lines a PR's
@@ -67,6 +67,28 @@ from collections import Counter
 # line's own copies, never clears another. Where either commit has no such file under any name git
 # finds, its copies are unknown, and no head line stands for L. Two base lines extended into one head
 # line still print one, and a line whose words were changed, taken out or reordered still prints.
+# A line the PR's own commits edited is no drop either (own_edits): a printed L of EXTENDED_WORDS or more
+# words that no head line extends does not print when one of the PR's own commits (`git log --no-merges
+# <base>..<head>`, so never a merge of the base) changed a line X of F to X' in one hunk, X being the line
+# of those the hunk removed that is most like X', and the head's F holds L with that same edit made at the
+# same place (rebased), from the spare lines the extended check draws on. L must be X with only the part
+# the edit changed changed: it starts and ends as X does around that part. Where X is L, the head line is
+# X' itself, and the merge base of the merge's parents must have no copy of L, as when the PR reworded a
+# line that the base also has by a squash of the same change (#1169): a copy that merge base has is one
+# the count above already lets the PR remove. Where X is not L, the hunk of the base side's change to F
+# (`git diff` of F at that merge base and at the base side, base_edits) that added L must have removed X,
+# X being the line of those that hunk removed most like L, so the base changed X into L, and that merge
+# base must hold more copies of X than the two sides together, so the copy the PR edited is the one the
+# base changed, and the head line is the base's L with the PR's edit in it, as when both sides added a
+# word to one list (#1042). A resolution that kept X' alone and lost the base's edit still prints, as do a
+# line the base added beside an X it kept or in place of an X it removed elsewhere, a line dropped by a
+# merge alone, which no commit of the PR's own changed, one the PR's commits deleted outright, and one
+# edited twice over. Either way the PR side of the merge must hold more copies of X', beyond those that
+# merge base holds, than edits that made X' have already stood for, so no later commit of the PR's own
+# undid the edit before the merge, in one step or more. Each copy of X the PR's commits edited stands for
+# one dropped line, however many lines the hunk made of it, and an edit a later commit of its own made the
+# other way stands for none. The edit is read under the commit's own name for F, which must be the head's,
+# and a hunk of either change with more than OWN_HUNK_LINES removed or added lines edits nothing.
 # Each side's F is read
 # under that side's own name for it: a file renamed on one side is found through `git diff -M`
 # against the merge. Inside a conflict section a line's side is the section's (the first parent's
@@ -89,6 +111,9 @@ EXTENDED_WORDS = 3  # the fewest words a printed line needs for a longer head li
                     # an `exit 1` is in many lines a PR writes for itself (`} else {`, `|| exit 1`)
 EXTENDED_SHARE = 0.5  # a printed line's words must be more than this share of the words of a head line
                       # that clears it, so that line is the printed one with words added
+OWN_HUNK_LINES = 50  # the most removed, or added, lines a hunk of the PR's own commits may have for its
+                     # edits to clear a printed line: each added line is weighed against every removed
+                     # one, so a rewrite of a whole file would cost its square
 OUTSIDE, FIRST, SECOND, ANCESTOR = 0, 1, 2, 3   # where a line of the remerged file sits
 HUNK = re.compile(rb"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 MARKER = re.compile(rb"^(?:<{7,}|\|{7,}|>{7,})(?: |$)|^={7,}$")
@@ -219,8 +244,11 @@ def owed(base, side, root):
     return base + side - root   # with L in the merge base, a new copy on each side can be two additions
 
 def scan(m, pr, base_side, ours, holds, held):
-    """(head key, copies the head owes, copies it holds, the head file's spare lines, `<sha7> <file>: <text>`)
-    per base line merge m's resolution dropped (owing); holds and held are sides'"""
+    """(head key, copies the head owes, copies it holds, the head file's spare lines, `<sha7> <file>: <text>`,
+    its origin) per base line merge m's resolution dropped (owing); holds and held are sides'. The origin is
+    whether the merge base of m's parents lacks the line, a call that gives the lines it replaced in the base
+    side's change (base_edits), and the lines of the PR side's file, of that merge base's and of the base
+    side's, which the PR's own edits need (extended)"""
     rc, out, err = git("show", "--remerge-diff", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
                        "--src-prefix=a/", "--dst-prefix=b/", "--end-of-options", m)
     if rc != 0:
@@ -321,6 +349,32 @@ def scan(m, pr, base_side, ours, holds, held):
             mosts[tuple(revs), path, after] = top if got else None
         return mosts[tuple(revs), path, after]
 
+    added = {}   # (file, its name in m): the base side's hunks of it; with a text too, base_edits' answer
+    def base_edits(path, after, text):
+        """the lines text replaced in the base side's change to the file: per hunk that added it, the line of
+        those the hunk removed that is most like it (like, as own_edits pairs them), from `git diff` of the
+        file at the merge base of m's parents and at the base side, each read under its own name for it
+        (named); none where either has no such file, and none from a hunk past OWN_HUNK_LINES on either side"""
+        if (path, after, text) in added:
+            return added[path, after, text]
+        if (path, after) not in added:
+            got, a, b = [], named(mb, path, after)[0] if mb else None, named(base_side, path, after)[0]
+            if a is not None and b is not None:
+                rc, diff, err = git("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff",
+                                    "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
+                                    mb.encode() + b":" + a, base_side.encode() + b":" + b)
+                if rc != 0:
+                    stop("cannot read the base side's change to %s for merge %s: %s" % (clean(path), m[:7], err))
+                got = [(cut, put) for _, cut, put in hunks(diff)
+                       if cut and put and len(cut) <= OWN_HUNK_LINES and len(put) <= OWN_HUNK_LINES]
+            added[path, after] = got
+        added[path, after, text] = frozenset(max(cut, key=lambda o: like(o, text))
+                                             for cut, put in added[path, after] if text in put)
+        return added[path, after, text]
+
+    origins = {}   # (file, text): (whether the merge base of m's parents lacks text, a call that gives base_edits'
+                   # lines for it, read only when an edit needs them, the PR side's lines, that merge base's, the
+                   # base side's)
     sections = (OUTSIDE, ours, FIRST) if held else (OUTSIDE, ours)
     for path, after, section, text in removed(out):
         if not text.strip() or section not in sections or (OWN_GONE and OWN in (path, after)):
@@ -339,6 +393,9 @@ def scan(m, pr, base_side, ours, holds, held):
             short[path, text] = (owed(two[text], side[text], root[text]) - kept[text]
                                  if base[text] and not gone(path, after, text) else 0)
             counts[path, text] = after, kept[text], max(0, root[text] - side[text])
+            if short[path, text] > 0:   # what the PR's own edits need to stand for it (extended)
+                origins[path, text] = (not root[text], lambda p=path, a=after, t=text: base_edits(p, a, t), side,
+                                       root, copies(base_side, path, after) or Counter())
             # In the PR side's own part of a conflict, a copy its own commits added (beyond the most its merge
             # base with the base side, or a base commit it holds, has) cannot be told from the base's.
             if short[path, text] > 0 and held and section == FIRST \
@@ -350,16 +407,16 @@ def scan(m, pr, base_side, ours, holds, held):
             short[path, text] -= 1
             found.append((path, text, "%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS])))
     printed = Counter((path, text) for path, text, _ in found)
-    return [owing(path, text, printed[path, text]) + (line,) for path, text, line in found]
+    return [owing(path, text, printed[path, text]) + (line, origins[path, text]) for path, text, line in found]
 
 def missing(found):
-    """the entries of found, (head key, copies owed, copies held, spare lines, line) per printed copy, that the
-    head has not put back: per key, as many as the head holds fewer copies than the most any merge owes, the
+    """the entries of found, (head key, copies owed, copies held, spare lines, line, origin) per printed copy,
+    that the head has not put back: per key, as many as the head holds fewer copies than the most any merge owes, the
     newest merges' entries kept, in merge order (oldest first)"""
     owe = {}
-    for key, need, _, _, _ in found:
+    for key, need, _, _, _, _ in found:
         owe[key] = max(owe.get(key, need), need)
-    short = {key: owe[key] - held for key, _, held, _, _ in found}
+    short = {key: owe[key] - held for key, _, held, _, _, _ in found}
     left = []
     for entry in reversed(found):
         if short[entry[0]] > 0:
@@ -376,20 +433,146 @@ def extends(text, head):
     rest = iter(words)
     return all(word in rest for word in wanted)
 
+class Edits:
+    """the edits the PR's own commits made in one file (own_edits): pairs counts each (old, new), less the times
+    the commits made it the other way, so an edit a later commit reverted counts for nothing; cuts counts the
+    copies of each old the hunks removed with a line paired to them, so one removed copy edited into two lines
+    stands for one dropped line"""
+    def __init__(self):
+        self.pairs, self.cuts = Counter(), Counter()
+
+def hunks(diff):
+    """(file, lines removed, lines added) per hunk of a -U0 diff, the file as its +++ line names it (None for
+    a deletion); a context line, which a config's diff.interHunkContext can still put in, is neither"""
+    path, header, old, new, cut, put = None, False, 0, 0, [], []
+    for line in diff.split(b"\n"):
+        if old > 0 or new > 0:
+            tag = line[:1]
+            if tag == b"-":
+                cut.append(line[1:])
+                old -= 1
+            elif tag == b"+":
+                put.append(line[1:])
+                new -= 1
+            elif tag != b"\\":
+                old, new = old - 1, new - 1
+            if old == 0 and new == 0:
+                yield path, cut, put
+            continue
+        if line.startswith(b"diff --git "):
+            path, header = None, True
+        elif header and line.startswith(b"+++ "):
+            name = unquote(line[4:].rstrip(b"\t"))
+            path = name[2:] if name.startswith(b"b/") else None
+        elif header or path is not None:
+            m = HUNK.match(line)
+            if m:
+                header, cut, put = False, [], []
+                old = int(m.group(1)) if m.group(1) is not None else 1
+                new = int(m.group(2)) if m.group(2) is not None else 1
+                if old == 0 and new == 0:
+                    yield path, cut, put
+
+def own_edits(paths):
+    """{file: Edits}: each line new that a hunk of the PR's own commits (`git log --no-merges <base>..<head>`,
+    its merges of the base left out) added, beside the line old of those the hunk removed that is most like it
+    (difflib's ratio, the first of a tie), under the commit's name for the file, for the files in paths; a hunk
+    past OWN_HUNK_LINES on either side is left out. So a line the hunk deleted outright beside one it edited
+    pairs with nothing"""
+    rc, out, err = git("--literal-pathspecs", "log", "--no-merges", "-p", "-M", "-U0", "--inter-hunk-context=0",
+                       "--format=", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
+                       "--dst-prefix=b/", "--end-of-options", BASE + ".." + HEAD, "--", *paths)
+    if rc != 0:
+        stop("cannot read the PR's own commits in %s..%s: %s" % (BASE, HEAD, err))
+    edits = {}
+    for path, cut, put in hunks(out):
+        if path is None or not cut or not put or len(cut) > OWN_HUNK_LINES or len(put) > OWN_HUNK_LINES:
+            continue
+        made = edits.setdefault(path, Edits())
+        pairs = [(max(cut, key=lambda o: like(o, n)), n) for n in put]
+        made.pairs.update(pairs)
+        for o, partners in Counter(o for o, _ in pairs).items():
+            made.cuts[o] += min(cut.count(o), partners)
+    for made in edits.values():
+        each = dict(made.pairs)
+        for (o, n), times in each.items():
+            made.pairs[o, n] = times - each.get((n, o), 0) if o != n else 0
+    return edits
+
+def like(a, b):
+    """how alike lines a and b are, from 0 to 1 (difflib's ratio)"""
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+def common(a, b):
+    """how many leading bytes a and b share"""
+    n = 0
+    while n < min(len(a), len(b)) and a[n] == b[n]:
+        n += 1
+    return n
+
+def rebased(old, new, text):
+    """what text becomes when the edit that turned old into new is made at the same place in it: old is
+    lead + cut + tail and new lead + put + tail, lead and tail the most the two share at each end; text must
+    be lead + mid + tail, so it is old with only the part the edit changed changed, and cut, at mid's start
+    or its end, is swapped for put. Nothing where text does not start with lead and end with tail"""
+    start = common(old, new)
+    end = common(old[start:][::-1], new[start:][::-1])
+    lead, cut, put, tail = old[:start], old[start:len(old) - end], new[start:len(new) - end], old[len(old) - end:]
+    if len(lead) + len(tail) > len(text) or not text.startswith(lead) or not text.endswith(tail):
+        return []
+    mid, out = text[len(lead):len(text) - len(tail)], []
+    if mid.startswith(cut):
+        out.append(lead + put + mid[len(cut):] + tail)
+    if mid.endswith(cut):
+        out.append(lead + mid[:len(mid) - len(cut)] + put + tail)
+    return out
+
 def extended(left, found):
-    """the lines of left (missing's entries) that no line the head added extends: in print order, an entry of
-    EXTENDED_WORDS or more words takes the first spare head line of its file, not yet taken, that extends it,
-    and does not print; a text any entry of found has never stands for another"""
+    """the lines of left (missing's entries) that no line the head added extends or holds as the PR's own
+    edit: in print order, an entry of EXTENDED_WORDS or more words takes the first spare head line of its
+    file, not yet taken, that extends it, else the first that is it with an edit of the PR's own commits made
+    in it (own_edits, rebased), the edit taken too, and does not print; a text any entry of found has never
+    stands for another"""
     pools = {}   # head file: its spare lines' copies not yet taken
-    for key, _, _, spare, _ in found:
+    for key, _, _, spare, _, _ in found:
         pools.setdefault(key[:-1], Counter(spare))
-    for key, _, _, _, _ in found:
+    for key, _, _, _, _, _ in found:
         pools[key[:-1]].pop(key[-1], None)
+    edits = None   # own_edits of the head files left, read once a line needs them
+    spent = Counter()   # (head file, an edit's new line): the dropped lines edits that made it stood for
+
+    def ours(name, made, pair, text, origin):
+        """whether edit pair of the PR's own can stand for dropped line text, given its origin (scan): text is the
+        line the edit changed, and the merge base of the merge's parents had no copy of it, as a copy it had is
+        one the merge's count already lets the PR remove; or the base side's hunk that added text removed the
+        line the edit changed, so the base changed that line into text, and the two sides removed one copy of it
+        between them, as that merge base has more copies than the two sides together. Either way the merge's PR
+        side holds more
+        copies of the edit's new line, beyond those its merge base has, than edits that made it have stood for,
+        so no later commit of the PR's own undid the edit before the merge"""
+        if made.pairs[pair] <= 0 or made.cuts[pair[0]] <= 0 \
+                or spent[name, pair[1]] >= origin[2][pair[1]] - origin[3][pair[1]]:
+            return False
+        side, root, base = origin[2:]
+        if pair[0] == text:
+            return origin[0]
+        return root[pair[0]] > side[pair[0]] + base[pair[0]] and pair[0] in origin[1]()
+
     lines = []
-    for key, _, _, _, line in left:
+    for key, _, _, _, line, origin in left:
         pool, text = pools[key[:-1]], key[-1]
         enough = len(text.split()) >= EXTENDED_WORDS
         head = next((h for h in pool if pool[h] > 0 and extends(text, h)), None) if enough else None
+        if head is None and enough and key[0] is not None:
+            if edits is None:
+                edits = own_edits(sorted({k[0] for k, _, _, _, _, _ in left if k[0] is not None}))
+            made = edits.get(key[0], Edits())
+            edit, head = next(((pair, h) for pair in list(made.pairs) if ours(key[0], made, pair, text, origin)
+                               for h in rebased(pair[0], pair[1], text) if pool[h] > 0), (None, None))
+            if edit is not None:   # each copy the PR edited stands for one dropped line
+                made.pairs[edit] -= 1
+                made.cuts[edit[0]] -= 1
+                spent[key[0], edit[1]] += 1
         if head is None:
             lines.append(line)
         else:
