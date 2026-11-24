@@ -28,3 +28,30 @@ The one story of foundation-exit (X1): no PR of its own and no after: line. The 
 - board/retros/v0.32.0.md is on main with covers: and done: set and the v0.33 test-speed line.
 - This file records the differential run, the speed figures and the three counts, and quotes the user's dated go.
 - The second Mac updated on stable with no other step and ran a command.
+
+## Exit figures (2026-11-24)
+
+Step 4, read on v0.32.0 (d28a74f). The release was checked by hand first: four binaries, SHA256SUMS (all four OK), an attestation on each (all four verified), and prerelease on d28a74f. Stable is still on v0.31.3 (06b35a67).
+
+**Differential run against v0.31.2.** The diff-run job by hand, stage 1, on v0.32.0: [run 45301114197](https://github.com/redscaresu/swarm-dev/actions/runs/45301114197), red. Of 45 fixtures, 36 are the same and 9 differ. The six stage 1 allow entries: four apply in full; docs-gate-go applies 5 of 6 hunks and protected-go-paths 71 of 76.
+
+- go_paths_agentenv, go_paths_guard, go_paths_merge, go_paths_plugin, go_paths_release: explained by protected-go-paths (#1038). v0.32.0 holds the PR for a protected Go path, so the merge and its CI calls are gone. One hunk per fixture, in calls:fg, no longer applies, so the entry needs refreshing.
+- gate_release_go_docs: explained by docs-gate-go (#1039). Its check-runs and status reads are gone; one hunk no longer applies.
+- usage: the dash line is gone, from delete-dash (#1082), a stage story the user decided on 2026-11-20. No allow entry names it.
+- dropped_merge_own_story (14 hunks) and gate_release_port_listed (2 hunks): **not explained.** The same gh calls, in the same order, moved from calls:fg to a step label of their own. No fix: true story or allow entry names this. It looks like the step-label timing gap deferred on #1063.
+
+**Speed.** The speed job by hand on v0.32.0 against v0.31.2: [run 45301119110](https://github.com/redscaresu/swarm-dev/actions/runs/45301119110), green. Five runs a tree, alternating, under strace.
+
+| command | v0.31.2 median | v0.32.0 median | v0.31.2 starts | v0.32.0 starts |
+|---|---|---|---|---|
+| next | 194 ms | 200 ms | 43 | 43 |
+| status | 205 ms | 211 ms | 42 | 42 |
+| trusted_git | 74 ms | 68 ms | 12 | 13 |
+| usage | 49 ms | 50 ms | 8 | 8 |
+
+tests/speed_list.txt lists only these four commands.
+
+**What is left to port, on v0.32.0.**
+- Bash: 23,987 lines, from bin/swarm.sh (1,495) and bin/lib/*.sh with hooks/*.sh (22,492, 13 files).
+- Python: 8,031 lines in 55 bin/lib/*.py files.
+- python3 start sites: 122 lines outside comments name python3 across 12 files in bin/ and hooks/; docs/port/sites.tsv lists 26 rows, the inline sites that import a bin/lib helper.
