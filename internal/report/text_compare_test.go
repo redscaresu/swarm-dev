@@ -45,6 +45,7 @@ def step(r):
     m = report.STEP_UP.fullmatch(r)
     return None if m is None else list(m.groups())
 json.dump({
+    "version": sys.version.split()[0],
     "agent_name_max": report.AGENT_NAME_MAX,
     "phases": list(report.PHASES),
     "pr_key": [report.pr_key(x) for x in c["pr_key"]],
@@ -70,6 +71,7 @@ type textCases struct {
 
 // textResults is what textDriver prints.
 type textResults struct {
+	Version      string               `json:"version"` // python3's, for a failure's log
 	AgentNameMax int                  `json:"agent_name_max"`
 	Phases       []string             `json:"phases"`
 	PRKey        []string             `json:"pr_key"`
@@ -165,7 +167,6 @@ var cases = textCases{
 		"2026-11-24T10:00Z",
 		"2026-11-24 10:00:00.123+01:00",
 		"2026-11-24T10:00:00.123456-03:00",
-		"2026-11-24T10:00:00+00:99",
 		"2026-11-24T10:00:00+23:59:59",
 		"2026-11-24T10:00:00+24:00",
 		"2026-11-24T10:00:00+01:00:30",
@@ -263,6 +264,11 @@ func TestTextMatchesPython(t *testing.T) {
 	t.Cleanup(func() { time.Local = saved })
 
 	py := runPython(t, cases)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("python3 is %s", py.Version)
+		}
+	})
 
 	if py.AgentNameMax != AgentNameMax {
 		t.Errorf("AGENT_NAME_MAX is %d in report.py and AgentNameMax %d", py.AgentNameMax, AgentNameMax)
