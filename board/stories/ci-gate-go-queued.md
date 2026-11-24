@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-stop]
 touches: [internal/merge/queued.go, internal/merge/queued_test.go, tests/ci_gate_cases/queued.cases]

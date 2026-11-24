@@ -1,5 +1,6 @@
 ---
-status: later
+status: active
+agreed: 2026-11-24
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
 parent: helpers-shared
 depends_on: [foundation-exit, helpers-shared-base, helpers-shared-report]

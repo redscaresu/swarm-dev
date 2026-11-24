@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-shared-events
 depends_on: []
 touches: [internal/eventsoutcome/eventsoutcome.go, internal/eventsoutcome/compare_test.go]

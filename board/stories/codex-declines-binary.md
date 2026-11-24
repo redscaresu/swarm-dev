@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-sections
 depends_on: [go-report-text, go-store-files, go-py-decode, go-entries-per-file, shared-copies-list]
 needs: go-report-text: report.PRKey. go-store-files: Store.ReadFile. go-py-decode: pytext.DecodeReplace. go-entries-per-file: the register call. shared-copies-list: docs/port/copies.tsv's codex_story_prompt row, deleted here.

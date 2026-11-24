@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-dropped-lines
 depends_on: []
 touches: [bin/swarm.sh:_dropped-lines arm, bin/swarm.sh:READ_ONLY_COMMANDS, bin/lib/dropped_lines.py:USAGE, tests/dropped_lines_test.sh:header, DL, scan and the stand-in project, tests/dropped_lines_test.sh:usage checks, tests/events_test.sh:RO_EXPECTED, tests/diff_fixtures_dropped_entry.sh, scripts/allow/stage-2/dropped-lines-entry.md]

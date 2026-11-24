@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-gh-cache
 depends_on: [shared-gh-cache-call, go-py-json, go-store-files]
 needs: shared-gh-cache-call: the user's You: step (1), which says whether this is a sixth module under the comparison test or a bridge. go-py-json: pyjson.Encode and pyjson.Decode. go-store-files: Store.ReadFile, MkdirAll and WriteAtomic.

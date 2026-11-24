@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-core
 depends_on: []
 touches: [internal/merge/pyvalues.go, internal/merge/pyvalues_test.go]

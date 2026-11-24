@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-dropped-lines
 depends_on: [go-report-git, dropped-lines-merged-parent]
 needs: go-report-git (helpers-shared): the bounded git method on iface.Repo and adapter/git, which the reads call and the tests run real git through. dropped-lines-merged-parent (outside this epic): sides() as its fix leaves it.

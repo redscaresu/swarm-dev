@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-gh, ci-gate-go-pyvalues, ci-gate-go-cache-store]
 touches: [internal/merge/records.go, internal/merge/records_test.go]

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [frontmatter-go]
 needs: frontmatter-go: FM, GetFM, GetFMOrGone with ErrGone and GetFMText, each with the exact bytes printed, the printed flag and the error, and the Go SET_FM_KEYS list

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-ci-gate-prep
 depends_on: []
 touches: [tests/diff_fixtures_ci_gate.sh]

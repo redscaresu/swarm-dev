@@ -1,8 +1,8 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-ci-gate-core
-depends_on: []
+depends_on: [go-store-files]
 touches: [internal/iface/iface.go:CodeHost, internal/iface/iface.go:package comment, internal/adapter/gh/gh.go:Host, internal/adapter/gh/gh_test.go, internal/merge/gh.go, internal/merge/gh_test.go]
 estimate_lines: 280
 risk: high

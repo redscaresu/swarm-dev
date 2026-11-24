@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: board-store
 depends_on: [config-go]
 needs: config-go: internal/config/keys.go with one `{name: "<key>", ...},` line per key

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-sections
 depends_on: [go-entries-per-file]
 needs: go-entries-per-file: the register call for the _section entry's own file.

@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-sections
 depends_on: [go-report-gh, go-flow-sections]
 needs: go-report-gh: report.GH, its Limit and the SPENT rule. go-flow-sections: flow_sections' SWARM_SECTION_BIN hand-over, the flow fixture section and cmd/swarm's section test.

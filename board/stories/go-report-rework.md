@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: blocked
 epic: helpers-shared-report
 depends_on: [go-report-text, go-report-fixes]
 needs: go-report-text: report.PRKey, MergeTime and LocalDay. go-report-fixes: report.FixesPR.

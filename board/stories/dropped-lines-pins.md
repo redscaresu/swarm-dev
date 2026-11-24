@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-dropped-lines
 depends_on: [dropped-lines-merged-parent]
 needs: dropped-lines-merged-parent (outside this epic): the merged-parent fixture records sides() and merged_parent as that fix leaves them.

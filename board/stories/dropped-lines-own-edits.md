@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 fix: true
 touches: [bin/lib/dropped_lines.py:scan, bin/lib/dropped_lines.py:extended, tests/dropped_lines_test.sh]
 estimate_lines: 150

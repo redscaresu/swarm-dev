@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: board-store
 depends_on: []
 touches: [internal/iface/iface.go:Store, internal/adapter/store/store.go:Files, internal/adapter/store/store_test.go (new)]

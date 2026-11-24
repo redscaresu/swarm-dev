@@ -1,5 +1,6 @@
 ---
-status: later
+status: active
+agreed: 2026-11-24
 hld: 2026-11-18-swarm-dev-v0-32-go-rewrite
 parent: helpers-ci-gate
 depends_on: [foundation-exit, helpers-ci-gate-core, helpers-ci-gate-cache, helpers-ci-gate-modes]

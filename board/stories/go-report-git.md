@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: helpers-shared-report
 depends_on: []
 touches: [internal/iface/iface.go:Repo, internal/adapter/git/git.go:Run, internal/adapter/git/git_test.go, internal/report/git.go, internal/report/git_compare_test.go]
