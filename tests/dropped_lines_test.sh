@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# dropped_lines_test.sh — bin/lib/dropped_lines.py on real repos with real conflicting merges (no gh,
-# no network). Each case starts from f's BASE0 lines on main and a branch pr off it. Most have main
-# replace line three with three-main and main-added, pr replace it with three-pr, and pr merge main,
-# resolving f to the lines the case gives. A base line the resolution dropped prints as
-# `<merge sha7> f: <text>` with exit 1, until a later commit puts it back in the PR's head; the PR's own
-# lines, its own removals, conflict markers and whitespace-only lines never print; a merge it cannot
-# check exits 2 with one line saying why.
+# dropped_lines_test.sh — the dropped-lines check, swarm.sh _dropped-lines, on real repos with real
+# conflicting merges (no gh, no network). Each case starts from f's BASE0 lines on main and a branch pr
+# off it. Most have main replace line three with three-main and main-added, pr replace it with
+# three-pr, and pr merge main, resolving f to the lines the case gives. A base line the resolution
+# dropped prints as `<merge sha7> f: <text>` with exit 1, until a later commit puts it back in the PR's
+# head; the PR's own lines, its own removals, conflict markers and whitespace-only lines never print; a
+# merge it cannot check exits 2 with one line saying why.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
-DL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/lib/dropped_lines.py"
+SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${tmp}"' EXIT
+# The stand-in project scan() names in SWARM_PROJECT: _dropped-lines reads only the repo it is given.
+STANDIN="${tmp}/standin"; mkdir -p "${STANDIN}/.claude/swarm"; : > "${STANDIN}/.claude/swarm/config"
 export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 # No user or system git config: no signing, and git's default conflict style whatever the machine sets.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -26,10 +28,10 @@ check() { # <name> <want> <got>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else printf 'FAIL %s:\n want: %s\n got:  %s\n' "$1" "$2" "$3"; fails=$((fails + 1)); fi
 }
 
-# scan <args...> — dropped_lines.py's output, then `exit <code>` on a line of its own
+# scan <args...> — the check's output (swarm.sh _dropped-lines <args...>), then `exit <code>` on a line of its own
 scan() {
   local out rc=0
-  out="$(python3 "${DL}" "$@")" || rc=$?
+  out="$(SWARM_PROJECT="${STANDIN}" bash "${SWARM}" _dropped-lines "$@")" || rc=$?
   printf '%sexit %s' "${out:+${out}$'\n'}" "${rc}"
 }
 
@@ -289,7 +291,7 @@ check "the same merge with --merged naming a squash that is not on main: uncheck
   "$(scan "${R}" main child --merged "$(pair "${R}" child^1^1)")"
 for bad in "" "$(git -C "${R}" rev-parse pr)" "$(git -C "${R}" rev-parse pr):"; do
   check "a --merged of '${bad:0:7}${bad:40}', not <sha>:<squash>: the usage line, exit 2" \
-    "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
+    "usage: swarm.sh _dropped-lines <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
     "$(scan "${R}" main child --merged ${bad:+"${bad}"})"
 done
 # The merge of pr drops six, which main and pr's branch both still hold, and child's clean merge of main
@@ -607,14 +609,13 @@ M="$(git -C "${R}" rev-parse HEAD)"
 check "own story file kept by the head, a base line of it dropped: it prints with --own, exit 1" \
   "${M:0:7} board/stories/s.md: fix: true"$'\n'"exit 1" "$(scan "${R}" main pr --own board/stories/s.md)"
 check "an --own with no path after it: the usage line, exit 2" \
-  "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
+  "usage: swarm.sh _dropped-lines <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"$'\n'"exit 2" \
   "$(scan "${R}" main pr --own)"
 
 # --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
 # acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
 # commits (${tmp}/commits.json), the PRs that hold a commit (${tmp}/pulls.json) and repo view's name for P's
 # origin (${tmp}/origin.json), each a 404 while its file is absent, honouring --jq, and logs each call.
-SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "${tmp}" && pwd -P)"; O="${ROOT}/acme/widget.git"; P="${ROOT}/widget"; URL7=https://github.com/acme/widget/pull/7
 mkdir -p "${ROOT}/acme" "${ROOT}/bin" "${ROOT}/oldgit"; git init -q --bare "${O}"
 # shellcheck disable=SC2016 # the stub's own variables
