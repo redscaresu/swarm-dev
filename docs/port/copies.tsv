@@ -1,0 +1,116 @@
+# copies.tsv: what still imports each of the five Python modules that keep a copy beside their Go until
+# their last importer is ported (exception 3, HLD:278-281; gh_cache goes with report, which imports it):
+# clock, events_outcome, report, touches_rows and gh_cache. One row per module, importer and kind.
+# kind, and what the importer column holds:
+#   py      a bin/lib/*.py file that imports it, an import inside a function included. The file.
+#   site    an inline python3 -c or python3 - << heredoc in a file under bin/ or hooks/ that is not a .py
+#           file. <file>:<function>, the bash function holding the site, or (top) outside any.
+#   script  bash that runs bin/lib/<module>.py by its path with python3. <file>:<function>.
+#   test    a tests/*.sh with an inline python3 -c or heredoc site that imports it. The file.
+# An import is `import X` or `from X import`, as Python's parser finds it. A module's own imports are its own py rows.
+# A site or script line in a comment, or inside another heredoc's body (text written to a file), is not counted.
+# tests/port_copies_test.sh states the rule in full and fails on an importer with no row, a row whose
+# importer no longer imports, each row of a module whose file is gone, and a module file with no row.
+# A port that removes an importer deletes its row in the same PR. The PR that deletes the last row deletes the module's file.
+# module	importer	kind
+clock	bin/lib/flow_ci_health.py	py
+clock	bin/lib/flow_features.py	py
+clock	bin/lib/flow_merge_ins.py	py
+clock	bin/lib/flow_panes.py	py
+clock	bin/lib/gh_cache.py	py
+clock	bin/lib/handover.py	py
+clock	bin/lib/outcomes_join.py	py
+clock	bin/lib/report.py	py
+clock	bin/lib/retro_recurring.py	py
+events_outcome	bin/lib/dataset.py	py
+events_outcome	bin/lib/finished.py	py
+events_outcome	bin/lib/flow_cost.py	py
+events_outcome	bin/lib/flow_features.py	py
+events_outcome	bin/lib/flow_holds.py	py
+events_outcome	bin/lib/flow_idle_slots.py	py
+events_outcome	bin/lib/flow_incidents.py	py
+events_outcome	bin/lib/flow_lead_queue.py	py
+events_outcome	bin/lib/flow_merges.py	py
+events_outcome	bin/lib/flow_panes.py	py
+events_outcome	bin/lib/flow_review_loops.py	py
+events_outcome	bin/lib/flow_reviewers.py	py
+events_outcome	bin/lib/flow_start_failures.py	py
+events_outcome	bin/lib/flow_tell_refusals.py	py
+events_outcome	bin/lib/flow_test_runs.py	py
+events_outcome	bin/lib/flow_throughput.py	py
+events_outcome	bin/lib/outcomes_join.py	py
+events_outcome	bin/lib/outcomes_rows.py	py
+events_outcome	bin/lib/retro_incidents.py	py
+events_outcome	bin/lib/retro_reaped.py	py
+events_outcome	bin/lib/stall.py	py
+events_outcome	bin/lib/touches_rows.py	py
+events_outcome	bin/lib/lifecycle.sh:resend_pass	site
+events_outcome	tests/agent_liveness_test.sh	test
+events_outcome	tests/codex_rate_limit_test.sh	test
+events_outcome	tests/codex_retry_test.sh	test
+events_outcome	tests/codex_test.sh	test
+events_outcome	tests/codex_unavailable_test.sh	test
+events_outcome	tests/escalate_triggers_test.sh	test
+events_outcome	tests/events_tail_agents_test.sh	test
+events_outcome	tests/events_tail_flow_test.sh	test
+events_outcome	tests/events_test.sh	test
+events_outcome	tests/fallback_reviewer_test.sh	test
+events_outcome	tests/incidents_test.sh	test
+events_outcome	tests/intervene_test.sh	test
+events_outcome	tests/lead_stop_test.sh	test
+events_outcome	tests/merge_guard_test.sh	test
+events_outcome	tests/merge_rules_test.sh	test
+events_outcome	tests/reconcile_pull_test.sh	test
+events_outcome	tests/tell_blocked_test.sh	test
+events_outcome	tests/test_file_timeout_test.sh	test
+events_outcome	tests/wait_pr_test.sh	test
+events_outcome	tests/watch_opened_test.sh	test
+gh_cache	bin/lib/flow_ci_health.py	py
+gh_cache	bin/lib/flow_merge_ins.py	py
+gh_cache	bin/lib/report.py	py
+gh_cache	bin/lib/board.sh:non_fix_cache	site
+gh_cache	tests/flow_test.sh	test
+report	bin/lib/dataset.py	py
+report	bin/lib/flow_ci_health.py	py
+report	bin/lib/flow_cost.py	py
+report	bin/lib/flow_epic_totals.py	py
+report	bin/lib/flow_features.py	py
+report	bin/lib/flow_idle_slots.py	py
+report	bin/lib/flow_incidents.py	py
+report	bin/lib/flow_merge_ins.py	py
+report	bin/lib/flow_model_fit.py	py
+report	bin/lib/flow_predictions.py	py
+report	bin/lib/flow_review_loops.py	py
+report	bin/lib/flow_reviewers.py	py
+report	bin/lib/flow_tell_refusals.py	py
+report	bin/lib/flow_test_runs.py	py
+report	bin/lib/flow_throughput.py	py
+report	bin/lib/flow_time_in_state.py	py
+report	bin/lib/goal_entry.py	py
+report	bin/lib/log_turn_over.py	py
+report	bin/lib/outcomes_join.py	py
+report	bin/lib/outcomes_rows.py	py
+report	bin/lib/recurring.py	py
+report	bin/lib/retro_incidents.py	py
+report	bin/lib/retro_reaped.py	py
+report	bin/lib/session_mtime.py	py
+report	bin/lib/touches_rows.py	py
+report	bin/lib/usage_estimate.py	py
+report	bin/lib/agents.sh:session_mark	site
+report	bin/lib/agents.sh:session_took	site
+report	bin/lib/lifecycle.sh:archive_session	site
+report	bin/lib/lifecycle.sh:prompt_lines	site
+report	bin/lib/lifecycle.sh:restart_took	site
+report	bin/swarm.sh:codex_story_prompt	site
+report	tests/flow_test.sh	test
+report	tests/log_finding_test.sh	test
+report	tests/model_fit_test.sh	test
+touches_rows	bin/lib/dataset.py	py
+touches_rows	bin/lib/flow_holds.py	py
+touches_rows	bin/lib/flow_idle_slots.py	py
+touches_rows	bin/lib/flow_model_fit.py	py
+touches_rows	bin/lib/flow_predictions.py	py
+touches_rows	bin/lib/port_touches.py	py
+touches_rows	bin/lib/board.sh:idle_now	script
+touches_rows	bin/lib/build.sh:touches_rows	script
+touches_rows	tests/events_tail_flow_test.sh	test
