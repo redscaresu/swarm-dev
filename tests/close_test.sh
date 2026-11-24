@@ -888,5 +888,53 @@ cs "${BN}" >/dev/null || true; rm -f "${ROOT}/tabs-extra"
 is "closing the backlog conductor's tab logs its pane under conductor_name backlog" "<w:t16>|ok ~~ pane=w:p98 role=conduct" \
   "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines "${BN}")"
 
+# --- A close that would clear a build first checks its worktree and branch for work origin does not
+# have: commits no branch on origin reaches, and tracked changes not committed. With any, it closes the
+# pane alone: the worktree and branch stay, stderr names them and the count, and nothing is counted,
+# held or cleared. Untracked files do not count (started leaves one), so a pushed, clean build clears.
+echo '[]' > "${ROOT}/prs.json"
+kept_line() { # <slug> <what> — 1 when close.out's stderr line names its worktree, branch and <what>
+  grep -c "^swarm: $1: kept its worktree ${ROOT}/proj-wt/$1 and branch story/$1 in ${P}: $2\. So this close closed its pane only" "${ROOT}/close.out" || true
+}
+item u1 "status: ready" "kind: code" "attempts: 1"; started u1 w:p110
+"${GIT[@]}" -C "${ROOT}/proj-wt/u1" commit -q --allow-empty -m "not pushed"
+close u1 paused; cp "${ROOT}/close.out" "${ROOT}/u1.out"
+is "close u1 paused with a commit not pushed keeps its worktree and branches, names them, holds and counts nothing" \
+  "worktree branch origin|1|closed|code|1|" \
+  "$(left u1)|$(kept_line u1 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$([[ -e "${P}/.swarm/state/u1" ]] && echo open || echo closed)|$(fmv u1 kind)|$(attempts u1)|$(fmv u1 held_for)"
+item u2 "status: ready" "kind: code"; started u2 w:p111
+echo staged > "${ROOT}/proj-wt/u2/new"; git -C "${ROOT}/proj-wt/u2" add new
+close u2
+is "a bare close of u2 with a staged change not committed keeps its build, names it, counts nothing" "worktree branch origin|1|" \
+  "$(left u2)|$(kept_line u2 '0 commit(s) origin does not have, 1 tracked file(s) changed and not committed')|$(attempts u2)"
+# Pushed, then deleted on origin: the clone's origin/story/u3 still names the commit, but origin does not.
+item u3 "status: ready" "kind: code"; started u3 w:p112; git -C "${ROOT}/origin.git" branch -q -D story/u3
+close u3 impossible --drop
+is "close u3 impossible --drop, its commit gone from origin though origin/story/u3 is still fetched, keeps it" "worktree branch|1|code" \
+  "$(left u3)|$(kept_line u3 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$(fmv u3 kind)"
+item u4 "status: ready" "kind: code" "attempts: 1"; started u4 w:p113
+close u4 paused
+is "close u4 paused, pushed with only an untracked file left, clears its build and holds it as before" "|0|lead|paused" \
+  "$(left u4)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(fmv u4 kind)|$(fmv u4 held_for)"
+is "u1's line, a ready story with no hold, says swarm.sh restart u1 starts its builder there again" "1" \
+  "$(grep -c '^swarm: u1: kept its worktree .*Push the work, and swarm.sh restart u1 starts its builder there again, or remove' "${ROOT}/u1.out" || true)"
+# origin's story/u5 went past this clone (a merge GitHub made on it) and the clone never fetched it:
+# its local commits are under origin's tip, so the build is pushed and clears.
+item u5 "status: ready" "kind: code"; started u5 w:p114
+"${GIT[@]}" clone -q -b story/u5 "${ROOT}/origin.git" "${ROOT}/other-u5"
+"${GIT[@]}" -C "${ROOT}/other-u5" commit -q --allow-empty -m "merged on origin" && git -C "${ROOT}/other-u5" push -q origin story/u5
+close u5
+is "close u5, origin's story/u5 past this clone's unfetched copy and the worktree clean, clears its build" "|0|1" \
+  "$(left u5)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(attempts u5)"
+# A build a bare close kept in review, dropped with --drop while it has a commit not pushed: kept, and
+# the line does not offer swarm.sh restart, which refuses a story in review.
+echo "[{\"number\":7,\"state\":\"OPEN\",\"url\":\"${U}/7\",\"headRefOid\":\"feed7\"}]" > "${ROOT}/prs.json"
+item u6 "status: review" "kind: code"; started u6 w:p115
+"${GIT[@]}" -C "${ROOT}/proj-wt/u6" commit -q --allow-empty -m "not pushed"
+close u6 --drop
+is "close u6 --drop, in review with a commit not pushed, keeps its build and story and offers no restart" "worktree branch origin|1|0|review" \
+  "$(left u6)|$(kept_line u6 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$(grep -c 'swarm.sh restart' "${ROOT}/close.out")|$(fmv u6 status)"
+echo '[]' > "${ROOT}/prs.json"
+
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

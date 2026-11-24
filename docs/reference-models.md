@@ -76,6 +76,14 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   `gh pr close`, and the block says the PRs were not listed, so the lead looks before resetting.
   While a PR merged or is merging (auto-merge set), `impossible` is refused, `--drop` or not. Any
   other story, and a name with no story file, is refused before anything closes.
+- **A close never clears unpushed work.** Before any close clears a build, once the builder's pane has closed, it looks for work origin does not have.
+  That is a commit on `story/<slug>` or the worktree's HEAD that no branch on origin reaches, read from origin itself, or a tracked file changed and not committed.
+  Untracked files do not count.
+  With any, or when git cannot read origin or the worktree, the worktree and branch stay, and stderr names both with the count.
+  The close then closes the pane only: nothing is counted, held, handed on or cleared.
+  Push the work, or remove the worktree and branch by hand once the work is not wanted.
+  For a story still `ready` with no hold (`held_by:`), the line adds that `swarm.sh restart <slug>` starts its builder there again.
+  When origin's `story/<slug>` is past this clone, the close fetches it first, so commits under its tip count as pushed.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block with the attempts' PRs (from the same `gh pr
@@ -242,7 +250,9 @@ which also closes the PR unmerged and prints the head SHAs it dropped. `swarm.sh
 removes the same worktree and branches once a story's PR merges, closing its builder first if it is
 open. When a PR closes unmerged, it removes them only if no builder is open. That leaves nothing to
 clean up by hand, unless reconcile prints `build kept: <slug>` or `build cleared: <slug>`, which say
-what is left. A story that has failed
+what is left.
+A close keeps the worktree and branch instead when they hold work origin does not have (§ Model and effort).
+A story that has failed
 twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
 `escalate_after = 0` turns it off. If the Fable build fails as well, the story becomes a `lead`
 story and the lead decides: it re-scopes the story and runs `swarm.sh reset <slug> <reason>` to build
