@@ -236,9 +236,9 @@ check "a differential-run fixture file selects diff_run_test.sh, which loads eve
   "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
 check "an allow list entry selects diff_allow_test.sh, which parses every entry on disk" \
   "$(sel "mkdir -p scripts/allow/stage-1 && echo x > scripts/allow/stage-1/a.md; ${commit}")" tests/diff_allow_test.sh
-check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, command_names_test.sh, which greps it for a bare /swarm, binary_dispatch_test.sh, which runs the binary, and removed_test.sh, which greps it for a removed name, and no other" \
+check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, command_names_test.sh, which greps it for a bare /swarm, binary_dispatch_test.sh, which runs the binary, removed_test.sh, which greps it for a removed name, and events_fixture_test.sh, whose redact.py takes its words from it, and no other" \
   "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
-  "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh)"
+  "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh tests/events_fixture_test.sh)"
 check "a marker under bin/ported/ selects the tests that read the markers, binary_dispatch_test.sh and the port list tests, and no other" \
   "$(sel "mkdir -p bin/ported && : > bin/ported/x; ${commit}")" \
   "$(lines tests/doc_check_test.sh tests/skill_test.sh tests/port_names_test.sh tests/events_test.sh tests/binary_dispatch_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"
