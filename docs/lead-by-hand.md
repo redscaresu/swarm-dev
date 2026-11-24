@@ -43,3 +43,12 @@ should get shorter.
 4. At the stage's end, once stable has moved, go back: install swarm-dev@swarm-dev, uninstall swarm-dev@swarm-dev-pre, and restart. `swarm.sh version` then prints stable's version, which also checks that stable updates.
 
 **Issue.** [#1153](https://github.com/redscaresu/swarm-dev/issues/1153).
+
+## Rebasing open PRs when a check becomes required
+
+**Symptom.** A PR branched before a check became required on `main` never gets a run of that check, so it cannot pass. The v0.32.0 retro found #557, an old Dependabot PR, stuck this way behind the three checks added after it was branched.
+**Step.**
+1. List the open PRs branched before the check was required: `gh pr list --state open`, then compare each branch's base commit with the commit that made the check required.
+2. Merge `origin/main` into each branch, or for a Dependabot PR comment `@dependabot recreate` on it, which rebuilds the branch on current `main`. Never close it: Dependabot then skips that version. (#557 got `@dependabot rebase`, then Dependabot closed it as updatable another way and opened the grouped update #1161.) Each push restarts CI, so a run on the branch now includes the new check.
+
+**Issue.** [#1176](https://github.com/redscaresu/swarm-dev/issues/1176).
