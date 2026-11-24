@@ -319,10 +319,11 @@ const (
 // MergeTime is report.py's merge_time: gh's mergedAt as an aware time, or false when it is empty,
 // malformed or has no offset. Like Python, it reads every Z as +00:00 first. It reads the forms every
 // supported python3's datetime.fromisoformat reads alike: YYYY-MM-DD, any one character,
-// HH[:MM[:SS[.fff|.ffffff]]], then ±HH:MM[:SS]. Python checks only that an offset is under a day, so
-// its minutes and seconds may pass 59. It refuses what only some reads accept, or what Go's zones
-// cannot hold: the forms Python 3.11 added, 24:00, a fraction of minutes (3.12 reads 10:00.5, 3.14
-// does not), one stray character before the offset, and an offset with a fraction of a second.
+// HH[:MM[:SS[.fff|.ffffff]]], then ±HH:MM[:SS] under a day. It refuses what only some reads accept,
+// or what Go's zones cannot hold: the forms Python 3.11 added, 24:00, a fraction of minutes (3.12
+// reads 10:00.5, 3.14 does not), an offset's minutes or seconds over 59 (some patch releases read
+// +00:99 as 99 minutes), one stray character before the offset, and an offset with a fraction of a
+// second.
 func MergeTime(t string) (time.Time, bool) {
 	s := strings.ReplaceAll(t, "Z", "+00:00")
 	if len(s) <= dateLen {
@@ -427,18 +428,16 @@ func isoClock(s string) (hour, minute, second, micro int, ok bool) {
 	return parts[0], parts[1], parts[2], micro, true
 }
 
-// isoOffset reads ±HH:MM[:SS] as seconds east of UTC, under a day either way. Python checks no part
-// on its own, so MM and SS may be any two digits.
+// isoOffset reads ±HH:MM[:SS] as seconds east of UTC, under a day either way, with MM and SS at most
+// 59.
 func isoOffset(s string) (int, bool) {
 	parts, ok := twoDigitFields(s[1:], 2, 3)
 	if !ok {
 		return 0, false
 	}
-	total := parts[0]*3600 + parts[1]*60
-	if len(parts) == 3 {
-		total += parts[2]
-	}
-	if total >= maxOffset {
+	parts = append(parts, 0)[:3]
+	total := parts[0]*3600 + parts[1]*60 + parts[2]
+	if parts[1] > 59 || parts[2] > 59 || total >= maxOffset {
 		return 0, false
 	}
 	if s[0] == '-' {
