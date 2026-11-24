@@ -55,3 +55,12 @@ tests/speed_list.txt lists only these four commands.
 - Bash: 23,987 lines, from bin/swarm.sh (1,495) and bin/lib/*.sh with hooks/*.sh (22,492, 13 files).
 - Python: 8,031 lines in 55 bin/lib/*.py files.
 - python3 start sites: 122 lines outside comments name python3 across 12 files in bin/ and hooks/; docs/port/sites.tsv lists 26 rows, the inline sites that import a bin/lib helper.
+
+## The user's go (2026-11-24)
+
+The user, on 2026-11-24: "just go.  Worse case on the mac we can download the code base and use it as script "go run" not just a binary".
+
+- Their go skipped the second-Mac trial (steps 5, 7 and 9). The second Mac gets v0.32.0 on its next update.
+- It accepted stage 1's allow list as it stands. That covers the 2 unexplained differences (dropped_merge_own_story, gate_release_port_listed) and the 2 out-of-date allow entries (protected-go-paths, docs-gate-go) in the exit figures above.
+- This Mac runs swarm-dev@swarm-dev-pre 0.32.0 only; `swarm.sh version` printed `swarm-dev 0.32.0`.
+- The user pushed stable to d28a74fe (v0.32.0) by hand, as auto mode refused the lead's push. stable, prerelease and the v0.32.0 tag all point at d28a74fe.
