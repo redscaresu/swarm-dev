@@ -17,3 +17,10 @@ The epic's Your part (board/epics/helpers-shared.md:30-33). report.py imports gh
 
 **Done when:**
 - The user's answers to (1) and (2), quoted with their date, are in this story's file. The four stories' scopes say which reading of (1) they build.
+
+## The user's answers (2026-11-24)
+
+- (1) "Sixth module (Recommended)": gh_cache is a sixth module under exception 3. Its Go sits beside gh_cache.py under the comparison test, and the copy goes when report.py's does.
+- (2) "Yes, clear it (Recommended)": non-fix-cache-binary is cleared under the carve-out.
+
+The four stories' scopes now say they build the sixth-module reading, so this story leaves the board.
