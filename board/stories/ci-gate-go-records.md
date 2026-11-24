@@ -3,6 +3,7 @@ kind: code
 status: blocked
 epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-gh, ci-gate-go-pyvalues, ci-gate-go-cache-store]
+needs: ci-gate-go-cache-store: the Store methods (exclusive create, whole write, empty-folder remove, pid check) a record is written and removed with. ci-gate-go-gh: the CodeHost gh method covering reads compare through. ci-gate-go-pyvalues: Dumps and the decoder (internal/merge/pyvalues.go) for the record JSON Python reads.
 touches: [internal/merge/records.go, internal/merge/records_test.go]
 estimate_lines: 260
 risk: high
