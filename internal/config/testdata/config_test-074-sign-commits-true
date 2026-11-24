@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:74, checked at tests/config_test.sh:75; loads
+sign_commits = true
