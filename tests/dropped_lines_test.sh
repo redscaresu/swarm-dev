@@ -134,6 +134,15 @@ R="$(new_repo split)"; conflict "${R}" three-pr p1 p2 p3 p4 p5 p6 p7 p8 '}'
 lines three-pr p1 p2 p3 p4 p5 p6 p7 p8 three-main main-added | merge "${R}" main - >/dev/null
 check "a PR-side '}' dropped in a conflict split over two hunks: nothing" "exit 0" "$(scan "${R}" main pr)"
 
+# A one-line file git merges cleanly and the resolution rewrites: main changes one's only line, and pr's
+# merge of main replaces it. Each side of the remerge diff's hunk is one line, so its header gives no
+# count (@@ -1 +1 @@), which stands for one line, not none.
+R="$(new_repo oneline)"; echo a | put "${R}" one; git -C "${R}" branch -f pr main
+echo a-main | put "${R}" one; on "${R}" pr; lines three-pr | put "${R}" f
+M="$(git -C "${R}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true; echo a-pr | put "${R}" one; git -C "${R}" rev-parse HEAD)"
+check "a one-line file the resolution rewrote, its hunk header with no counts: the base line prints" \
+  "${M:0:7} one: a-main"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # A duplicated line the PR removed: d's merge base has '}' twice, pr removed the second and main
 # edited the line after it, so that '}' is in the base's conflict section while pr keeps the first.
 # The resolution follows the PR.
