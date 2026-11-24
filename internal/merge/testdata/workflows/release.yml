@@ -1,0 +1,211 @@
+name: Release
+
+# On a push to main that bumps the version in .claude-plugin/plugin.json, publish the release
+# v<version> with the four binaries, their checksums and a build attestation, then move the prerelease
+# branch to the pushed commit. scripts/publish-release.sh plan decides the steps: a push with no bump
+# plans none, with no gh call, and publishes nothing. This file is the attestation signer that
+# scripts/build.sh --list names, so it keeps its path. An installed copy takes a binary only when its
+# attestation ran from refs/heads/main (bin/lib/binary.sh's BINARY_SOURCE_REF) at the commit the
+# release's tag is at, so it keeps its push-to-main trigger too. docs/reference-merging.md
+# § Publishing a release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One run at a time: plan only reads, so two runs at once could both plan draft for one version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, where GitHub's default bash has no pipefail
+
+env:
+  REPO: ${{ github.repository }}
+  SHA: ${{ github.sha }}
+  BEFORE: ${{ github.event.before }} # plan compares the version here with BEFORE's
+  REF: prerelease # the branch plan reads and the move writes; nothing here moves stable
+
+# Each step names the plan's steps it runs on, matched as a whole word.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # bounds plan's gh reads too, which set no timeout of their own
+    permissions:
+      contents: read
+    outputs:
+      steps: ${{ steps.plan.outputs.steps }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Checkout the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0 # plan reads plugin.json at BEFORE too
+          persist-credentials: false
+      # This read-only token does not see a draft, so a run that stopped after its draft plans draft
+      # here; the publish job's plan is the one acted on. This plan says only whether to build.
+      - name: Plan (scripts/publish-release.sh plan)
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-release.sh plan
+      - name: Set up Go from go.mod
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false # a release builds from no cache another run could have written
+      - name: Build the four binaries (scripts/build.sh)
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        run: scripts/build.sh
+      # The same check as the publish job's, on the files as built.
+      - name: dist/ holds what scripts/build.sh --list names and the sums pass
+        id: verify
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        run: |
+          list="$(scripts/build.sh --list)"
+          assets="$(awk -F '\t' '$1 == "asset" { print $3 }' <<< "${list}" | sort)"
+          checksums="$(awk -F '\t' '$1 == "checksums" { print $2 }' <<< "${list}")"
+          want="$(printf '%s\n%s\n' "${assets}" "${checksums}" | sort)"
+          got="$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)"
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::dist/ does not hold exactly what scripts/build.sh --list names"
+            diff <(echo "${want}") <(echo "${got}") || true
+            exit 1
+          fi
+          summed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "dist/${checksums}" | sort)"
+          if [ "${summed}" != "${assets}" ]; then
+            echo "::error::dist/${checksums} does not name exactly the assets scripts/build.sh --list names"
+            exit 1
+          fi
+          (cd dist || exit 1; sha256sum --strict -c "${checksums}")
+          echo "checksums=${checksums}" >> "${GITHUB_OUTPUT}"
+      # Named for the attempt, so the publish job takes only what this attempt built.
+      - name: Upload dist/
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Every step below runs only when this job's own plan printed it, and a step that fails stops the
+  # job, so the move, last, runs only once the release is published with every file.
+  publish:
+    needs: build
+    if: needs.build.outputs.steps != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # draft, attach and publish the release (publishing creates the tag), and move REF
+      id-token: write # the OIDC token for the attestation's signing certificate
+      attestations: write # store the attestation
+    steps:
+      - name: Checkout the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0 # plan reads plugin.json at BEFORE too
+          persist-credentials: false
+      - name: Plan again with this job's write token, which sees a draft
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-release.sh plan
+      # Download, verify and attest come before draft, so a bad artifact leaves no draft.
+      - name: Download the build job's dist/
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist-${{ github.run_attempt }}
+          path: dist
+      # The same check as the build job's, on the files as downloaded.
+      - name: dist/ holds what scripts/build.sh --list names and the sums pass
+        id: verify
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        run: |
+          list="$(scripts/build.sh --list)"
+          assets="$(awk -F '\t' '$1 == "asset" { print $3 }' <<< "${list}" | sort)"
+          checksums="$(awk -F '\t' '$1 == "checksums" { print $2 }' <<< "${list}")"
+          want="$(printf '%s\n%s\n' "${assets}" "${checksums}" | sort)"
+          got="$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)"
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::dist/ does not hold exactly what scripts/build.sh --list names"
+            diff <(echo "${want}") <(echo "${got}") || true
+            exit 1
+          fi
+          summed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "dist/${checksums}" | sort)"
+          if [ "${summed}" != "${assets}" ]; then
+            echo "::error::dist/${checksums} does not name exactly the assets scripts/build.sh --list names"
+            exit 1
+          fi
+          (cd dist || exit 1; sha256sum --strict -c "${checksums}")
+          echo "checksums=${checksums}" >> "${GITHUB_OUTPUT}"
+      # The checksums file names exactly the four binaries, and the step above checked each against it.
+      - name: Attest the four binaries
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/${{ steps.verify.outputs.checksums }}
+      - name: Draft the release
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' draft ')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh release create "${TAG}" --repo "${REPO}" --draft --target "${SHA}" \
+            --title "${TAG}" --generate-notes
+      - name: Attach the binaries and the checksums file to the draft
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' attach ')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          draft="$(gh release view "${TAG}" --repo "${REPO}" --json isDraft --jq .isDraft)"
+          if [ "${draft}" != true ]; then
+            echo "::error::${TAG}'s release is not a draft, and attach never writes to a published release"
+            exit 1
+          fi
+          list="$(scripts/build.sh --list)"
+          files=()
+          while IFS=$'\t' read -r kind a b; do
+            case "${kind}" in
+              asset) files+=("dist/${b}") ;;
+              checksums) files+=("dist/${a}") ;;
+            esac
+          done <<< "${list}"
+          gh release upload "${TAG}" "${files[@]}" --repo "${REPO}" --clobber
+          echo "release: attached ${files[*]#dist/} to the draft ${TAG}"
+      - name: Publish the release, which creates the tag
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' publish ')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh release edit "${TAG}" --repo "${REPO}" --draft=false
+          tagged="$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq .object.sha)"
+          if [ "${tagged}" != "${SHA}" ]; then
+            echo "::error::${TAG} is published, but its tag is at '${tagged}', not ${SHA}"
+            exit 1
+          fi
+          echo "release: published ${TAG}, its tag at ${SHA}"
+      # Fast-forward only (force=false): GitHub refuses a move that is not one, and REF stays put.
+      - name: Move the prerelease branch to the pushed commit
+        if: contains(format(' {0} ', steps.plan.outputs.steps), ' move ')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          was="$(gh api "repos/${REPO}/git/ref/heads/${REF}" --jq .object.sha)"
+          gh api -X PATCH "repos/${REPO}/git/refs/heads/${REF}" -f sha="${SHA}" -F force=false > /dev/null
+          now="$(gh api "repos/${REPO}/git/ref/heads/${REF}" --jq .object.sha)"
+          if [ "${now}" != "${SHA}" ]; then
+            echo "::error::${REF} reads back at '${now}', not ${SHA}"
+            exit 1
+          fi
+          echo "release: moved ${REF} from ${was} to ${now}"
