@@ -16,10 +16,10 @@ import (
 	"github.com/redscaresu/swarm-dev/internal/adapter/git"
 )
 
-// pythonSeconds bounds one run of the Python side, and setupSeconds one git call that sets a case up.
+// pythonBound bounds one run of the Python side, and setupBound one git call that sets a case up.
 const (
-	pythonSeconds = 60 * time.Second
-	setupSeconds  = 30 * time.Second
+	pythonBound = 60 * time.Second
+	setupBound  = 30 * time.Second
 )
 
 // pyGit runs each step of argv[2] through report.py (argv[1] is bin/lib) and prints the results as one
@@ -98,7 +98,7 @@ func runPython(t *testing.T, steps []gitStep) []any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pythonSeconds)
+	ctx, cancel := context.WithTimeout(context.Background(), pythonBound)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "python3", "-c", pyGit, lib, string(arg))
 	cmd.Stdin = strings.NewReader("leak\n")
@@ -162,7 +162,7 @@ func runGo(t *testing.T, steps []gitStep) []any {
 // realGit runs the git on PATH in dir for a case's setup, and fails the test if it fails.
 func realGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), setupSeconds)
+	ctx, cancel := context.WithTimeout(context.Background(), setupBound)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -278,7 +278,7 @@ func TestGitComparePythonSpace(t *testing.T) {
 cs = range(0x110000)
 print(json.dumps([[c for c in cs if chr(c).isspace()], [c for c in cs if len(("a" + chr(c) + "b").splitlines()) == 2]]))
 `
-	ctx, cancel := context.WithTimeout(context.Background(), pythonSeconds)
+	ctx, cancel := context.WithTimeout(context.Background(), pythonBound)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "python3", "-c", script).Output()
 	if err != nil {
