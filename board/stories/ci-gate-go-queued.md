@@ -3,6 +3,7 @@ kind: code
 status: blocked
 epic: helpers-ci-gate-main
 depends_on: [ci-gate-go-stop]
+needs: ci-gate-go-stop: turning auto-merge off and leaving the queue (internal/merge/stop.go), which queued runs on exits 2, 3, 4, 5 and 7.
 touches: [internal/merge/queued.go, internal/merge/queued_test.go, tests/ci_gate_cases/queued.cases]
 estimate_lines: 300
 risk: high
