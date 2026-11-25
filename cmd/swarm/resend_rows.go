@@ -39,7 +39,8 @@ func resendRows(c *call) int {
 	if len(c.args) != resendRowsArgs {
 		return c.die(exitUsage, resendRowsUsage+", and was given "+strconv.Itoa(len(c.args))+" argument(s)")
 	}
-	events, resent, briefs, panes, backlog, max := c.args[0], c.args[1], c.args[2], c.args[3], c.args[4], c.args[5]
+	events, resent, briefs, panes := c.args[0], c.args[1], c.args[2], c.args[3]
+	backlog, max := c.args[4], c.args[5] // outcome-scan: ok c.args[4] is the <backlog> argument; this line reads no file's column
 	nameMax, err := strconv.Atoi(max)
 	if err != nil || nameMax < 0 {
 		return c.die(exitUsage, "_resend-rows: <name-max> takes a whole number, not '"+max+"'")
