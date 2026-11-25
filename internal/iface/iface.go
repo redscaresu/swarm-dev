@@ -2,9 +2,7 @@
 // touching a file: the agent runner, the code host, the repo and the store. Each has exactly one
 // implementation, under internal/adapter/. The store's types sit here beside Store.
 //
-// Store has the two methods the frame's handoff needs, ReadFile, which _require-trusted reads
-// .claude.json with, and the stat, real-path and append methods the board-store ports read and
-// write files with. The other three have none yet: each port adds the methods it needs.
+// Each interface holds only the methods a ported command calls: a port adds the ones it needs.
 package iface
 
 import "io/fs"
@@ -38,6 +36,20 @@ type Store interface {
 	// AppendLine makes path's parent folders as mkdir -p does, then adds line and a newline to the end
 	// of path in one write, making the file 0666 before the umask if it is missing.
 	AppendLine(path, line string) error
+	// Glob returns the paths under dir that pattern matches, sorted, as Python's
+	// glob.glob(os.path.join(glob.escape(dir), pattern)) does: dir is literal, and a pattern level that
+	// does not start with a dot matches no dot name. Its one error is filepath.ErrBadPattern, which a
+	// pattern with an empty, . or .. level gets too.
+	Glob(dir, pattern string) ([]string, error)
+	// IsFile reports whether path, its symlinks followed, is a regular file, as os.path.isfile does.
+	IsFile(path string) bool
+	// MkdirAll makes path and each missing folder above it, as mkdir -p does, returning the os error.
+	MkdirAll(path string) error
+	// WriteAtomic makes path hold data through a temp file in path's folder renamed over it. When a step
+	// fails it removes the temp file, leaves path as it was and returns the os error.
+	WriteAtomic(path string, data []byte) error
+	// Remove deletes the file or symlink path, never a folder, returning the os error.
+	Remove(path string) error
 	// WriteLine makes path hold line and a newline, and nothing else.
 	WriteLine(path, line string) error
 	// AppendLines adds each line, with a newline, to the end of path, making the file if it is missing.

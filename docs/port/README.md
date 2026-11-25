@@ -111,7 +111,10 @@ It passes `SWARM_GH_VIA` on as the binary got it, so the nested call logs its gh
 stdin, stdout, stderr and the exit code pass through unchanged.
 `bridge.go` is the one file outside the four adapters that may import `os/exec`, and `internal/layers` names it.
 The reverse needs no bridge.
-Bash calls a `_` entry of the binary with `binary_run _<name> <args>`, from inside the same `swarm.sh`, so it starts no second `swarm.sh`.
+Bash calls a `_` entry of the binary with `binary_run _<name> <args>`, from inside the same `swarm.sh`.
+`binary_run` is a subshell that execs the binary with the frame handed over, and it starts no nested `swarm.sh`.
+In an installed copy, or with `SWARMDEV_BIN` set, that is one process start, as python3's was.
+A git checkout also runs one `find` first, to see whether the binary is older than its Go source.
 `require_trusted` in `bin/lib/agents.sh` runs `_require-trusted` that way.
 A `_` entry has a marker, so `swarm.sh _<name>` run by hand reaches it through the dispatch too.
 `wrapper-fixture`'s first argument `name` or `board-rel` is its bash form, which runs `_name` or `_board-rel`.
@@ -127,12 +130,13 @@ Bash calls `binary_run _<name>` with the helper's arguments, and keeps the helpe
 The rule goes in a rules package under `internal/`, named for what it decides.
 When the Go would take the port past the 300-line cap, that package lands first, in a PR of its own with no caller.
 The entry goes in `cmd/swarm/<name>.go`, and it reads files through `iface.Store`.
+An `init` in that file adds the entry to the table with `register`, so a port edits no shared line.
+`register` panics on a name the table already holds.
 The Go must pass `internal/layers`' checks, and `go test -v ./internal/layers/` prints their rules.
 The story lists every `tests/` file the PR changes in its touches before the build, since the patch gate reads them at the PR's base.
 tests/nopy_list.txt gains a line for each of the helper's fixtures.
 The story's allow entry names any output the Go drops, such as a Python traceback.
 The PR body carries the Python-to-Go map, the mutation table repeated on the Go, the diff-run result and the speed row.
-It also names go-entries-per-file (epic helpers-shared), the story that moves each entry out of the shared table into a file of its own.
 
 ## The closed plumbing list
 
