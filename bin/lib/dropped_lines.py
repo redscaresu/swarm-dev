@@ -579,7 +579,7 @@ def extended(left, found):
             pool[head] -= 1
     return lines
 
-USAGE = "usage: dropped_lines.py <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"
+USAGE = "usage: swarm.sh _dropped-lines <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"
 if len(sys.argv) < 4:
     stop(USAGE)
 REPO, BASE, HEAD = sys.argv[1:4]

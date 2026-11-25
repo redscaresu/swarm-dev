@@ -470,7 +470,7 @@ Between v0.30.3 and v0.31.1, 7 of the 35 merges stalled here without it: #914 fo
 The review agent refused to start on a worktree behind the PR's head, and the lead pulled the worktree or told the builder by hand.
 
 **Waiting for the new head.** Once it has a new head, `merge` waits for that head's CI itself, with
-`swarm.sh wait-pr`'s own loop: every 20 seconds (`MERGE_POLL`), for up to 30 minutes
+`swarm.sh wait-pr`'s own loop: every 20 seconds (`MERGE_POLL`, longer while every check is queued), for up to 30 minutes
 (`MERGE_CI_SECONDS`), it reads the head's check runs and commit statuses, and the runs of each workflow
 that a pull request into the base runs with the PR's files. A spent rate limit is waited out to its
 reset, and a conflict with the base ends the wait, as in wait-pr. Its grace for no check runs, or for
@@ -1415,6 +1415,12 @@ A rate limit while the budget is not spent is GitHub's secondary, per-minute lim
 It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`.
 The no-check grace moves with the reset wait.
 It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background.
+While every pending check run and workflow run is `queued` (no runner has it yet), it polls less often.
+Each read that finds the same pending checks as the read before, all of them queued, waits twice as long as the last before the next, up to 120 seconds (`WAIT_PR_POLL_MAX`).
+A check that starts, finishes or appears, a pending commit status, or no check runs at all brings it back to 20 seconds.
+Once a check is read in progress, its red ends the wait within one 20-second poll.
+One that goes from queued to red between two reads is seen at the next read, up to 120 seconds later.
+A longer wait that would reach the deadline is cut to a second before it, so the wait still reads once more before it times out.
 Concurrent waits on one head, such as a builder's, its review agent's and the lead's, share each poll's reads.
 A wait keeps each check-runs, commit-status and workflow-runs read it makes in `.swarm/poll-cache/` for under one poll: one second less than the poll or the retry pause, whichever is shorter (19 seconds by default).
 Another wait on that head takes a read that recent instead of asking GitHub, and two waits that need it at once make one read between them.

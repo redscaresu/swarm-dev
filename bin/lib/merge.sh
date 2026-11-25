@@ -12,6 +12,7 @@ GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pin
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+WAIT_PR_POLL_MAX=120    # the most seconds between wait-pr's reads, which double from MERGE_POLL while every pending check stays queued (SWARM_WAIT_PR_POLL_MAX)
 WATCH_POLL=60           # seconds between watch's polls, scaled (nap); its poll-cache max age is one under it
 MAIN_CI_OK=0            # ci_gate main's exit codes, as ci_gate.py names them (CI_OK, CI_RED, CI_COVERED)
 MAIN_CI_RED=1
@@ -791,7 +792,7 @@ pull_forward() {
 
 # base_ci <owner/repo> <pr> <old> <new> <base> — wait for green on <new>, the head merge_base_update made
 # of <old> with <base> merged in, with wait-pr's own loop (wait_pr --head <new>, in a subshell, its lines
-# printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds for
+# printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds (longer while all is queued) for
 # up to MERGE_CI_SECONDS, a spent rate limit waited out, a conflict with the base ending it. Its grace for
 # no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. It reads
 # GitHub every poll (WAIT_PR_FRESH): no other wait's read, from the poll cache, stands in for merge's. Succeed
@@ -2507,7 +2508,7 @@ first_green() {
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
 # wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
-# MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
+# MERGE_POLL seconds (SWARM_MERGE_POLL; longer while all is queued, below) until nothing is pending, printing what it waits on whenever
 # that changes. Exits 0 when all are green, printing each check, the first green on a story PR logged
 # as first-green (first_green); 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
@@ -2523,6 +2524,12 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # (bin/lib/poll_cache.py). A pending read that took one N seconds old (the age note) pauses N seconds less, so the waits poll in step and each sees a change within a
 # poll. Merge's gates, its own wait on a head it made by merging the base in (base_ci sets WAIT_PR_FRESH,
 # which turns the cache off) and review-agent --recheck read GitHub every time.
+# While every pending check run and workflow run is queued (no runner yet), nothing changes faster than a
+# runner picks one up: each read that finds the same pending line as the read before, all of it queued,
+# pauses twice as long as the last, from MERGE_POLL up to WAIT_PR_POLL_MAX (SWARM_WAIT_PR_POLL_MAX). Any
+# other pending read (a run in progress, one that finished or appeared, a pending status, no runs yet)
+# pauses MERGE_POLL again. Such a pause that would reach the deadline is cut to a second before it, never
+# under MERGE_POLL, so the wait still reads once more there.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -2545,9 +2552,10 @@ wait_pr() {
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
-  local want="" stale="" share aged=0 cache=() usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
+  local want="" stale="" share aged=0 cache=() queued grown="" cap="${SWARM_WAIT_PR_POLL_MAX:-${WAIT_PR_POLL_MAX}}" backoff
+  local usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
-  for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
+  for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY SWARM_WAIT_PR_POLL_MAX; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
   done
   while [[ "${1:-}" == --timeout || "${1:-}" == --head ]]; do
@@ -2560,7 +2568,7 @@ wait_pr() {
     || wait_pr_fail "${usage}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
-  limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
+  limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry})); cap=$((10#${cap})); backoff=${poll}
   # The poll cache's max age: under the shorter of a poll and a retry pause, so a lone wait never reads
   # its own entry; 0 (a poll or pause of 1 s or less, or merge's own wait: WAIT_PR_FRESH) is off.
   share=$(( (poll < retry ? poll : retry) - 1 )); (( share > 0 )) || share=0
@@ -2634,8 +2642,13 @@ wait_pr() {
              || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
          fi
          missing=""; gone=" (no run on ${head:0:7})"
+         # ci_gate ends each pending run's item with its status, " (queued)" while no runner has it; a
+         # status ends " (pending)", and "no check runs" in no parenthesis. A name holding "; " splits into
+         # a part that need not end so, which only keeps the pause at MERGE_POLL.
+         queued=1
          while IFS= read -r item; do
            [[ "${item%"${gone}"}" == "${item}" ]] || missing="${missing:+${missing}, }${item%"${gone}"}"
+           [[ "${item}" == *" (queued)" ]] || queued=""
          done <<< "${why//; /$'\n'}"
          if [[ -n "${missing}" ]]; then
            unstarted="${unstarted:-${SECONDS}}"
@@ -2643,9 +2656,17 @@ wait_pr() {
              || wait_pr_fail "${missing}: a pull_request into ${base} runs it, but it has no run on ${head:0:7} after $((SECONDS - unstarted))s (${why})"
          fi
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
+         # All queued and unchanged since the read before: twice the last pause, up to the cap (never under
+         # a poll). Anything else: a poll.
+         if [[ -n "${queued}" && "${why}" == "${last}" ]]; then
+           backoff=$((backoff * 2 < cap ? backoff * 2 : cap)); (( backoff > poll )) || backoff=${poll}
+         else
+           backoff=${poll}
+         fi
+         grown=""; (( backoff <= poll )) || grown=1
          # A read another wait made <aged> seconds ago stood in for this one's: the next poll comes that much
          # sooner, in step with that wait's.
-         last="${why}"; what="still pending: ${why}"; pause=${poll}; (( aged <= 0 || aged >= poll )) || pause=$((poll - aged)) ;;
+         last="${why}"; what="still pending: ${why}"; pause=${backoff}; (( aged <= 0 || aged >= pause )) || pause=$((pause - aged)) ;;
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
          # The budget is read once, while the one reset wait is unspent, and never on a secondary limit,
@@ -2679,8 +2700,12 @@ wait_pr() {
          fi ;;
     esac
     # A pause that would reach the deadline is cut to it, and the wait ends there with no more reads:
-    # a read after it could be green and exit 0 past the deadline.
+    # a read after it could be green and exit 0 past the deadline. A back-off pause (grown) is first cut
+    # to a second before the deadline, when that is still a poll or more, so the stretch before the
+    # deadline gets a read as it would without the back-off.
     left=$((limit - (SECONDS - start)))
+    [[ -z "${grown}" ]] || (( pause < left || left - 1 < poll )) || pause=$((left - 1))
+    grown=""
     if (( pause >= left )); then
       (( left <= 0 )) || sleep "${left}"
       wait_pr_fail "timed out after $((SECONDS - start))s, ${what}"

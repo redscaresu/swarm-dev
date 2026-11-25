@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:76, checked at tests/config_test.sh:77; site: sign_commits
+sign_commits = yes
