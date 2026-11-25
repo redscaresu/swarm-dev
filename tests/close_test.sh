@@ -888,5 +888,65 @@ cs "${BN}" >/dev/null || true; rm -f "${ROOT}/tabs-extra"
 is "closing the backlog conductor's tab logs its pane under conductor_name backlog" "<w:t16>|ok ~~ pane=w:p98 role=conduct" \
   "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines "${BN}")"
 
+# --- A close that would clear a build first checks its worktree and branch for work origin does not
+# have: commits no branch on origin reaches, and tracked changes not committed. With any, it closes the
+# pane alone: the worktree and branch stay, stderr names them and the count, and nothing is counted,
+# held or cleared. Untracked files do not count (started leaves one), so a pushed, clean build clears.
+echo '[]' > "${ROOT}/prs.json"
+kept_line() { # <slug> <what> — 1 when close.out's stderr line names its worktree, branch and <what>
+  grep -c "^swarm: $1: kept its worktree ${ROOT}/proj-wt/$1 and branch story/$1 in ${P}: $2\. So this close closed its pane only" "${ROOT}/close.out" || true
+}
+item un1 "status: ready" "kind: code" "attempts: 1"; started un1 w:p110
+"${GIT[@]}" -C "${ROOT}/proj-wt/un1" commit -q --allow-empty -m "not pushed"
+close un1 paused; cp "${ROOT}/close.out" "${ROOT}/un1.out"
+is "close un1 paused with a commit not pushed keeps its worktree and branches, names them, holds and counts nothing" \
+  "worktree branch origin|1|closed|code|1|" \
+  "$(left un1)|$(kept_line un1 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$([[ -e "${P}/.swarm/state/un1" ]] && echo open || echo closed)|$(fmv un1 kind)|$(attempts un1)|$(fmv un1 held_for)"
+item un2 "status: ready" "kind: code"; started un2 w:p111
+echo staged > "${ROOT}/proj-wt/un2/new"; git -C "${ROOT}/proj-wt/un2" add new
+close un2
+is "a bare close of un2 with a staged change not committed keeps its build, names it, counts nothing" "worktree branch origin|1|" \
+  "$(left un2)|$(kept_line un2 '0 commit(s) origin does not have, 1 tracked file(s) changed and not committed')|$(attempts un2)"
+# Pushed, then deleted on origin: the clone's origin/story/un3 still names the commit, but origin does not.
+item un3 "status: ready" "kind: code"; started un3 w:p112; git -C "${ROOT}/origin.git" branch -q -D story/un3
+close un3 impossible --drop
+is "close un3 impossible --drop, its commit gone from origin though origin/story/un3 is still fetched, keeps it" "worktree branch|1|code" \
+  "$(left un3)|$(kept_line un3 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$(fmv un3 kind)"
+item un4 "status: ready" "kind: code" "attempts: 1"; started un4 w:p113
+close un4 paused
+is "close un4 paused, pushed with only an untracked file left, clears its build and holds it as before" "|0|lead|paused" \
+  "$(left un4)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(fmv un4 kind)|$(fmv un4 held_for)"
+is "un1's line, a ready story with no hold, says swarm.sh restart un1 starts its builder there again" "1" \
+  "$(grep -c '^swarm: un1: kept its worktree .*Push the work, and swarm.sh restart un1 starts its builder there again, or remove' "${ROOT}/un1.out" || true)"
+# origin's story/un5 went past this clone (a merge GitHub made on it) and the clone never fetched it:
+# its local commits are under origin's tip, so the build is pushed and clears.
+item un5 "status: ready" "kind: code"; started un5 w:p114
+"${GIT[@]}" clone -q -b story/un5 "${ROOT}/origin.git" "${ROOT}/other-un5"
+"${GIT[@]}" -C "${ROOT}/other-un5" commit -q --allow-empty -m "merged on origin" && git -C "${ROOT}/other-un5" push -q origin story/un5
+close un5
+is "close un5, origin's story/un5 past this clone's unfetched copy and the worktree clean, clears its build" "|0|1" \
+  "$(left un5)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(attempts un5)"
+# A build a bare close kept in review, dropped with --drop while it has a commit not pushed: kept, and
+# the line does not offer swarm.sh restart, which refuses a story in review.
+echo "[{\"number\":7,\"state\":\"OPEN\",\"url\":\"${U}/7\",\"headRefOid\":\"feed7\"}]" > "${ROOT}/prs.json"
+item un6 "status: review" "kind: code"; started un6 w:p115
+"${GIT[@]}" -C "${ROOT}/proj-wt/un6" commit -q --allow-empty -m "not pushed"
+close un6 --drop
+is "close un6 --drop, in review with a commit not pushed, keeps its build and story and offers no restart" "worktree branch origin|1|0|review" \
+  "$(left un6)|$(kept_line un6 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$(grep -c 'swarm.sh restart' "${ROOT}/close.out")|$(fmv un6 status)"
+echo '[]' > "${ROOT}/prs.json"
+# un7 is cut from a base pushed to origin's main and commits nothing, and origin's main then moves on
+# (a merge on GitHub) while this clone never fetches it. No origin head this clone has reaches that
+# base, but origin's new main does: fetched, it counts as pushed, so the clean build clears.
+item un7 "status: ready" "kind: code"
+"${GIT[@]}" -C "${P}" commit -q --allow-empty -m "base of un7" && git -C "${P}" push -q origin HEAD:refs/heads/main
+"${GIT[@]}" -C "${P}" worktree add -q -b story/un7 "${ROOT}/proj-wt/un7"
+echo "w:p116 un7" > "${P}/.swarm/state/un7"; echo "un7 w:p116" >> "${ROOT}/agents"
+"${GIT[@]}" clone -q -b main "${ROOT}/origin.git" "${ROOT}/other-un7"
+"${GIT[@]}" -C "${ROOT}/other-un7" commit -q --allow-empty -m "merged on GitHub" && git -C "${ROOT}/other-un7" push -q origin main
+close un7
+is "close un7, clean on a base only origin's unfetched new main reaches, clears its build and counts it" "|0|1" \
+  "$(left un7)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(attempts un7)"
+
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

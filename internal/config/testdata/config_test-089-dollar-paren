@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:89, checked at tests/config_test.sh:90; site: expansion
+board_dir = $(touch /tmp/parse/pwned)
