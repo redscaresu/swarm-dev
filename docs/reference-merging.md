@@ -324,7 +324,24 @@ the dropped lines. A base line the resolution kept never clears another, and whe
 commits has no such file under any name git finds, no line stands in. Each head line stands in for one
 dropped line, so two base lines joined into one still print one. A dropped line of fewer than three
 words, such as `}` or `exit 1`, never clears this way, since many lines a PR writes contain one. A line
-with a word changed, taken out or moved still prints. When
+with a word changed, taken out or moved still prints.
+A line the PR's own commits edited does not count either.
+The check reads the PR's own commits, never its merges of the base.
+When one of them changed a line of the file, and the head's file holds the dropped line with that same edit made at the same place, the dropped line is not printed.
+That covers a PR that rewords a line the base also got through a squash of the same change ([#1169](https://github.com/redscaresu/swarm-dev/pull/1169)).
+It also covers both sides adding a word to the same list line ([#1042](https://github.com/redscaresu/swarm-dev/pull/1042)).
+The dropped line must start and end the way the edited line did around the part the edit changed.
+When the PR edited the dropped line itself, the merge base of the merge's two parents must have no copy of it, since the count above already lets the PR remove a copy that merge base has.
+When the PR edited another line, the base's change must have turned that line into the dropped line: of the lines removed by the hunk that added the dropped line, the edited line is the one most like it.
+The PR and the base must also have changed the same copy of that line, so the merge base holds more copies of it than the two sides together.
+In either case the PR's side of the merge must still hold the PR's new version of the line, so no later commit of the PR's own undid the edit before the merge, in one step or several.
+That new version clears no more dropped lines than the copies of it the PR's side holds beyond the merge base.
+In a hunk that changes several lines, each added line counts as an edit of the removed line most like it.
+Each copy of a line the PR's commits edited clears one dropped line, however many lines the edit made of it, and an edit that a later commit of the PR's own undid clears none.
+A resolution that kept the PR's line and lost the base's edit still prints.
+So does a line that only a merge changed, which no commit of the PR's own touched, as all eight of [#1068](https://github.com/redscaresu/swarm-dev/pull/1068)'s were, and a line the PR's commits deleted outright.
+The same limits apply as for an extended line: a line of fewer than three words never clears, and each head line the PR added stands in for one dropped line.
+When
 `dropped-lines` prints lines, `merge` holds the PR for you, with the count and the first
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
