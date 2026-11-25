@@ -4,9 +4,9 @@
 # not finished, is pending, even when every check already there is green. A workflow whose paths or
 # types leave this PR out, or that Actions has disabled, is not waited on; one whose triggers ci_gate
 # cannot read is not waited on and is named on a line of its own; one that never starts ends the wait
-# with exit 2 after the grace. ci_gate head with no base, PR and count judges the checks alone, as
-# before. gh is a stub on PATH: it logs every call to gh.log and answers pr view with ${H}, MERGEABLE,
-# main, OPEN and ${FX}/changed files (else 1); the nth check-runs read from ${FX}/checks.<n> (else
+# with exit 2 after the grace. A wait on a PR whose changed-file count it cannot read judges the checks
+# alone, as before. gh is a stub on PATH: it logs every call to gh.log and answers pr view with ${H}, MERGEABLE,
+# main, OPEN and ${FX}/changed files (else 1; an empty file gives no count); the nth check-runs read from ${FX}/checks.<n> (else
 # ${FX}/checks) and the nth workflow-runs read from ${FX}/runs.<n> (else ${FX}/runs); refs/pull/7/merge
 # from ${FX}/merge, failing with ${FX}/merge.err as stderr; Actions' workflow states from ${FX}/states
 # (else none); the .github/workflows listing at a ref from the files in ${FX}/wf.<ref> (else ${FX}/wf),
@@ -18,7 +18,6 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-GATE="$(dirname "${SWARM}")/lib/ci_gate.py"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -208,10 +207,14 @@ fresh; page "${FX}/checks.12" check_runs "$(check_run gitleaks completed failure
 is "a workflow that never starts: exits 2" 2 "${rc}"
 check "a workflow that never starts: names it" said "swarm: wait-pr: .github/workflows/ci.yml: a pull_request into main runs it, but it has no run on ${H:0:7}"
 
-# --- ci_gate head with no base, PR and count: today's verdict, the checks alone (green).
-fresh; rc=0; PATH="${ROOT}/bin:${PATH}" python3 "${GATE}" head o/r "${H}" > "${ROOT}/out" 2>&1 || rc=$?
-is "ci_gate head with no extra args: green on gitleaks alone" 0 "${rc}"
-is "ci_gate head with no extra args: prints the check" "gitleaks (success)" "$(cat "${ROOT}/out")"
-is "ci_gate head with no extra args: reads no workflow" 0 "$(grep -c 'actions/runs\|contents/' "${ROOT}/gh.log" || true)"
+# --- A PR whose changed-file count pr view does not give: the checks alone judge it, so ci.yml, with no
+# run, is not waited on. gitleaks is pending on the first read and green on the second: a pending check
+# keeps the wait going.
+fresh; : > "${FX}/changed"; page "${FX}/checks.1" check_runs "$(check_run gitleaks in_progress)"; wait_pr
+is "no file count: green on gitleaks alone" 0 "${rc}"
+check "no file count: pending while gitleaks runs" said "pending: gitleaks (in_progress)"
+is "no file count: two check reads" 2 "$(grep -c check-runs "${ROOT}/gh.log")"
+check "no file count: prints the check" grep -qxF "  gitleaks (success)" "${ROOT}/out"
+is "no file count: reads no workflow" 0 "$(grep -c 'actions/runs\|contents/' "${ROOT}/gh.log" || true)"
 
 if [[ ${fails} -eq 0 ]]; then echo "all wait-pr expected-workflow tests passed"; else echo "${fails} wait-pr expected-workflow test(s) failed"; exit 1; fi

@@ -107,6 +107,7 @@ tests/non_fix_test.sh	lib,text	becomes-a-Go-test	a Go test of non_fix_change's c
 tests/nopy_test.sh	python3-stub	rewrite-from-outside		first-port
 tests/outcome_scan_test.sh	py,text	rewrite-from-outside	a Go check fails a reader of events.tsv's outcome column that does not go through the Go outcome parser	helpers-shared
 tests/pane_prompt_test.sh	py	becomes-a-Go-test		helpers-panes
+tests/port_copies_test.sh	text	rewrite-from-outside	retired-with: readers-exit	readers-exit
 tests/port_fields_test.sh	text	rewrite-from-outside	the same test finds the story and epic fields the Go code reads	port-inventory
 tests/port_locks_test.sh	text	rewrite-from-outside	the same test finds a lock the Go code takes	port-inventory
 tests/port_names_test.sh	text	rewrite-from-outside	the test reads command names from the ported commands' markers and the Go dispatch table as well as the bash arms; the Go-table read moves to port-frame, and the markers stand in for the table until then (agreed by the user on 2026-11-22)	port-frame
