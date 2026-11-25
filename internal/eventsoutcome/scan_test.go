@@ -30,8 +30,8 @@ import (
 // The scan flags every index expression whose index, and every slice expression whose start, go/types
 // gives as the integer constant outcomeCol, whatever the operand is and wherever it came from: a
 // strings.Split row, an encoding/csv record, a []string parameter, a struct's field. A named constant
-// equal to outcomeCol counts; a variable does not. The one operand it passes is a string, whose [4]
-// is a byte of one value (a date's "-"), never a column. It does not follow where a row comes from, so a
+// equal to outcomeCol counts; a variable does not. The operands it passes are a string and a []byte,
+// whose [4] is a byte of one value (a date's "-", a \u escape's code), never a column. It does not follow where a row comes from, so a
 // read of another file's fifth column (findings.tsv, agents.tsv) ends its line with
 // `// outcome-scan: ok <reason>`, the reason naming the file it reads.
 
@@ -177,7 +177,7 @@ func fileFindings(fset *token.FileSet, root string, f *ast.File, info *types.Inf
 		case *ast.SliceExpr:
 			at, col, x = e.Lbrack, e.Low, e.X
 		}
-		if col == nil || !isOutcomeCol(info.Types[col].Value) || isString(info.Types[x].Type) {
+		if col == nil || !isOutcomeCol(info.Types[col].Value) || isText(info.Types[x].Type) {
 			return true
 		}
 		pos := fset.Position(at)
@@ -198,12 +198,18 @@ func isOutcomeCol(v constant.Value) bool {
 	return v != nil && v.Kind() == constant.Int && constant.Compare(v, token.EQL, constant.MakeInt64(outcomeCol))
 }
 
-// isString reports whether t is a string type, a named one too; a nil t is not.
-func isString(t types.Type) bool {
+// isText reports whether t is a string or a []byte, named ones too: one value's bytes. A [][]byte, a
+// row of byte fields, is not; nor is a nil t.
+func isText(t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	b, ok := types.Unalias(t).Underlying().(*types.Basic)
+	if sl, ok := t.Underlying().(*types.Slice); ok {
+		t = sl.Elem()
+		b, ok := t.Underlying().(*types.Basic)
+		return ok && b.Kind() == types.Byte
+	}
+	b, ok := t.Underlying().(*types.Basic)
 	return ok && b.Info()&types.IsString != 0
 }
 
