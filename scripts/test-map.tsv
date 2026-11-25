@@ -18,15 +18,15 @@
 # selects every test when it cannot follow the calls. The floor is the tests that read bin's code as text (a
 # scan of every file, the dispatch arms, the settings), which name no function a change reaches, and the
 # events_tail_* and events_fixture suites, which run the events.tsv readers whatever function changed.
-# The port list tests (port_sites, port_swarm_names, port_locks, port_names, port_fields) read bin/ and
+# The port list tests (port_sites, port_copies, port_swarm_names, port_locks, port_names, port_fields) read bin/ and
 # hooks/ by a glob or a fixed path, so they name no file; each bin row and the shim and hooks rows has them.
 # retro's sections: retro_report.py runs each bin/lib/retro_<name>.py by a glob, so no function names one.
 # retro_test.sh runs them all, beside the bin row's floor; a section's own test goes on this row.
-bin/lib/retro_*.py	tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+bin/lib/retro_*.py	tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
 # handover: handover_report runs bin/lib/handover.py by its path, which select_tests.py cannot follow, and
 # only the handover arm reaches handover_report; handover_test.sh runs both, beside the bin row's floor.
-bin/lib/handover.sh bin/lib/handover.py	tests/handover_test.sh tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
-bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+bin/lib/handover.sh bin/lib/handover.py	tests/handover_test.sh tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_tail_stall_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
 # The dropped-lines check and its entry (dropped_lines' Go): dropped_lines_test.sh drives swarm.sh
 # _dropped-lines, merge_rules_test.sh merge's hold, and nopy_test.sh runs fx_dropped_entry_scan with
 # python3 stubbed. The Go row's tests are its floor, since a path takes this row and not that one.
@@ -36,7 +36,7 @@ internal/merge/dropped*.go cmd/swarm/dropped.go	tests/dropped_lines_test.sh test
 # bin/ for a removed name. Every bin change runs the events_tail_* and events_fixture suites, a change to
 # bin/lib/events_outcome.py among them.
 # The gh shim runs the port list tests too, as they scan bin/ (above).
-bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh tests/removed_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh tests/removed_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
 # A ported command's marker: the tests that read the markers as command names (doc_check, skill_test,
 # port_names and events_test, through tests/swarm_commands.sh), the dispatch to the binary, and the port
 # list tests. CI's go-checks job runs cmd/swarm's check that the markers match the Go table.
@@ -56,7 +56,7 @@ scripts/*	named
 # skill's links, the removed names, and the bare /swarm that command_names_test.sh greps every command for.
 commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
 # A hook: the shell scans and the port list tests, which read hooks/ by a glob (above).
-hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
+hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh
 # The trust rule and its entry (require_trusted's Go): config_test.sh drives swarm.sh _trusted, and
 # nopy_test.sh runs the fx_trusted_* fixtures with python3 stubbed. The Go row's tests are its floor,
 # since a path takes this row and not that one.
@@ -74,17 +74,19 @@ go.mod go.sum cmd/** internal/**	tests/doc_check_test.sh tests/port_swarm_names_
 # swarm-dev's rules, which every builder, review and conductor brief carries.
 rules.md	named tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh
 README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh tests/llms_test.sh tests/config_test.sh tests/epic_codex_test.sh tests/board_pr_test.sh tests/merge_test.sh tests/skill_test.sh tests/removed_test.sh tests/flow_sections_test.sh tests/command_names_test.sh tests/epic_briefs_test.sh tests/plan_epic_test.sh tests/upgrade_test.sh
-# A test, and the five tests that read every tests/*_test.sh: the mktemp-root checks of
-# sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep, test_shard_test.sh's split and
-# port_tests_list_test.sh's check of each test against docs/port/tests.tsv.
-tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh
+# A test, and the six tests that read every tests/*_test.sh: the mktemp-root checks of
+# sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep, test_shard_test.sh's split,
+# port_tests_list_test.sh's check of each test against docs/port/tests.tsv and port_copies_test.sh's
+# scan of every tests/*.sh for an import of a Python copy (docs/port/copies.tsv).
+tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh
 # The differential run's fixtures: diff_run.sh loads them by a glob, so no test names one, and
 # diff_run_test.sh builds every fixture on disk. removed_test.sh greps every tests/*.sh, and
-# port_tests_list_test.sh reads each helper under tests/.
+# port_tests_list_test.sh reads each helper under tests/, and port_copies_test.sh scans each for an import.
 # diff_run_hooks_test.sh runs the hook ones by name (one row: a path takes the first row it matches).
-tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh
-# A test helper: removed_test.sh greps every tests/*.sh, and port_tests_list_test.sh reads each one.
-tests/*.sh	named tests/removed_test.sh tests/port_tests_list_test.sh
+tests/diff_fixtures_*.sh	tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh
+# A test helper: removed_test.sh greps every tests/*.sh, port_tests_list_test.sh reads each one, and
+# port_copies_test.sh scans each for an import of a Python copy.
+tests/*.sh	named tests/removed_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh
 tests/**	named
 # A board README is checked against its template under templates/docs/ (scripts/board-only.sh does
 # not count it as board-only for that reason); every other board file is skipped by CI's board-only gate.
