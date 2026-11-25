@@ -270,13 +270,18 @@ type failing struct{}
 
 var errFailing = errors.New("the store was called")
 
-func (failing) ReadFile(string) ([]byte, error)    { return nil, errFailing }
-func (failing) Stat(string) (fs.FileInfo, error)   { return nil, errFailing }
-func (failing) Lstat(string) (fs.FileInfo, error)  { return nil, errFailing }
-func (failing) RealPath(string) (string, error)    { return "", errFailing }
-func (failing) AppendLine(string, string) error    { return errFailing }
-func (failing) WriteLine(string, string) error     { return errFailing }
-func (failing) AppendLines(string, []string) error { return errFailing }
+func (failing) ReadFile(string) ([]byte, error)       { return nil, errFailing }
+func (failing) Stat(string) (fs.FileInfo, error)      { return nil, errFailing }
+func (failing) Lstat(string) (fs.FileInfo, error)     { return nil, errFailing }
+func (failing) RealPath(string) (string, error)       { return "", errFailing }
+func (failing) AppendLine(string, string) error       { return errFailing }
+func (failing) WriteLine(string, string) error        { return errFailing }
+func (failing) AppendLines(string, []string) error    { return errFailing }
+func (failing) Glob(string, string) ([]string, error) { return nil, errFailing }
+func (failing) IsFile(string) bool                    { return false }
+func (failing) MkdirAll(string) error                 { return errFailing }
+func (failing) WriteAtomic(string, []byte) error      { return errFailing }
+func (failing) Remove(string) error                   { return errFailing }
 
 // TestGetFMTextCallsNoStore: `get_fm - <key>` reads only the bytes given, with no state file and no
 // gone check, so a store that fails every call changes nothing.

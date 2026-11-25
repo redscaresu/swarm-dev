@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -169,6 +170,27 @@ func TestTableMatchesMarkers(t *testing.T) {
 	if err != nil || len(bad) != 0 {
 		t.Errorf("the table and %s differ (%v):\n%s", portedDir, err, strings.Join(bad, "\n"))
 	}
+}
+
+// If register stops refusing a name the table already holds, a second file that claims a name silently
+// replaces the first file's entry: this goes red. It registers into a copy of the real table, so the
+// real one stays as the inits left it.
+func TestRegisterPanicsOnAHeldName(t *testing.T) {
+	saved := entries
+	entries = maps.Clone(saved)
+	t.Cleanup(func() { entries = saved })
+	const held = "_require-trusted"
+	if _, ok := entries[held]; !ok {
+		t.Fatalf("the table does not hold %s, so this test checks nothing", held)
+	}
+	defer func() {
+		got, _ := recover().(string)
+		if want := "swarm: two entries register the name " + held; got != want {
+			t.Errorf("register of a held name panicked with %q, want %q", got, want)
+		}
+	}()
+	register(held, entry{run: func(*call) int { return 0 }})
+	t.Errorf("register of the held name %s returned, want a panic", held)
 }
 
 // If the check stops catching an entry with no marker or a marker with no entry, or counts a fixture

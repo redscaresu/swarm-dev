@@ -45,7 +45,6 @@ events_outcome	bin/lib/retro_incidents.py	py
 events_outcome	bin/lib/retro_reaped.py	py
 events_outcome	bin/lib/stall.py	py
 events_outcome	bin/lib/touches_rows.py	py
-events_outcome	bin/lib/lifecycle.sh:resend_pass	site
 events_outcome	tests/agent_liveness_test.sh	test
 events_outcome	tests/codex_rate_limit_test.sh	test
 events_outcome	tests/codex_retry_test.sh	test
