@@ -6,7 +6,8 @@
 #   site    an inline python3 -c or python3 - << heredoc in a file under bin/ or hooks/ that is not a .py
 #           file. <file>:<function>, the bash function holding the site, or (top) outside any.
 #   script  bash that runs bin/lib/<module>.py by its path with python3. <file>:<function>.
-#   test    a tests/*.sh with an inline python3 -c or heredoc site that imports it. The file.
+#   test    a tests/*.sh with an inline python3 -c or heredoc site that imports it, or that runs
+#           bin/lib/<module>.py by its path with python3. The file.
 # An import is `import X` or `from X import`, as Python's parser finds it. A module's own imports are its own py rows.
 # A site or script line in a comment, or inside another heredoc's body (text written to a file), is not counted.
 # tests/port_copies_test.sh states the rule in full and fails on an importer with no row, a row whose
@@ -113,4 +114,7 @@ touches_rows	bin/lib/flow_predictions.py	py
 touches_rows	bin/lib/port_touches.py	py
 touches_rows	bin/lib/board.sh:idle_now	script
 touches_rows	bin/lib/build.sh:touches_rows	script
+touches_rows	tests/board_state_test.sh	test
+touches_rows	tests/concurrency_check_test.sh	test
 touches_rows	tests/events_tail_flow_test.sh	test
+touches_rows	tests/idle_ready_test.sh	test

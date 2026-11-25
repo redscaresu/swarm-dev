@@ -9,9 +9,11 @@
 #           function holding the site, or (top) outside any.
 #   script  a python3 command on a line of such a file, outside a heredoc and not a comment, that runs
 #           bin/lib/<module>.py by its path. The importer is <file>:<function>.
-#   test    a tests/*.sh with a python3 -c or - << site whose code imports the module. The importer is the
-#           file. This file and tests/port_sites_test.sh are left out: their sites are scanner fixtures
-#           that import the stand-in modules of trees of their own. A .py file a test writes is not read.
+#   test    a tests/*.sh with a python3 -c or - << site whose code imports the module, or a python3 line
+#           that runs bin/lib/<module>.py by its path, as script reads it. The importer is the file. This
+#           file and tests/port_sites_test.sh are left out: their sites are scanner fixtures that import
+#           the stand-in modules of trees of their own. A .py file a test writes is not read, and a test
+#           that only copies or reads a module's file (lint_test.sh copies clock.py) is not counted.
 # A site or script line in a comment, or inside another heredoc's body (text written to a file, such as
 # outcome_scan_test.sh's fixtures for its scanner), is not counted: nothing runs it there.
 # A module's own file is no importer of it; what a module imports in turn is that module's own py row.
@@ -128,6 +130,15 @@ def functions(lines, skip):
     return names
 
 
+def runs(lines, body_lines):
+    """(line number, module) for each line, outside a heredoc body and not a comment, where python3 runs
+    bin/lib/<module>.py by its path."""
+    for n, line in enumerate(lines, 1):
+        m = SCRIPT.search(line)
+        if m and n not in body_lines and not line.lstrip().startswith("#"):
+            yield n, m.group(1)
+
+
 def read(rel):
     try:
         return open(os.path.join(root, rel), encoding="utf-8").read()
@@ -159,17 +170,16 @@ for rel in bash_files:
     lines = text.split("\n")
     where = functions(lines, body_lines)
     found |= {(mod, f"{rel}:{where[n]}", "site") for n, mods in got for mod in mods}
-    for n, line in enumerate(lines, 1):
-        m = SCRIPT.search(line)
-        if m and n not in body_lines and not line.lstrip().startswith("#"):
-            found.add((m.group(1), f"{rel}:{where[n]}", "script"))
+    found |= {(mod, f"{rel}:{where[n]}", "script") for n, mod in runs(lines, body_lines)}
 
 tests = os.path.join(root, "tests")
 for f in sorted(os.listdir(tests)) if os.path.isdir(tests) else []:
     rel = "tests/" + f
     text = read(rel) if f.endswith(".sh") and rel not in FIXTURES else None
     if text is not None:
-        found |= {(mod, rel, "test") for _, mods in sites(text)[0] for mod in mods}
+        got, body_lines = sites(text)
+        found |= {(mod, rel, "test") for _, mods in got for mod in mods}
+        found |= {(mod, rel, "test") for _, mod in runs(text.split("\n"), body_lines)}
 
 rows = {}
 for n, line in enumerate((read(LIST) or "").split("\n"), 1):
@@ -208,7 +218,7 @@ export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, as every
 HEAD_ROW='# module\timporter\tkind\n'
 
 # A tree with one importer of each kind, a lazy import, a site continued over two lines, a commented-out
-# site and a site in a heredoc that only writes a file, a row whose importer
+# site, a site in a heredoc that only writes a file and a test that runs a copy by its path, a row whose importer
 # stopped importing, an importer with no row, and a module whose file is gone while its row stays.
 t="${dir}/kinds"
 mkdir -p "${t}/bin/lib" "${t}/hooks" "${t}/tests" "${t}/docs/port"
@@ -228,8 +238,10 @@ printf '%s\n' \
   '}' > "${t}/hooks/x.sh"
 printf '%s\n' "python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e, report' \"\$LIB\"" \
   "cat > \"\$tmp/scanned.sh\" <<'FIXTURE'" "python3 -c 'import gh_cache'" 'FIXTURE' > "${t}/tests/t_test.sh"
+# shellcheck disable=SC2016 # the fixture is bash source text, written as it is
+printf '%s\n' 'out="$(python3 "${REPO}/bin/lib/touches_rows.py" --idle)"' > "${t}/tests/u_test.sh"
 # shellcheck disable=SC2059 # the format is the fixture's rows
-printf "${HEAD_ROW}clock\tbin/lib/a.py\tpy\nreport\tbin/lib/a.py\tpy\ngh_cache\thooks/x.sh:one\tsite\ntouches_rows\thooks/x.sh:one\tsite\ntouches_rows\thooks/x.sh:one\tscript\nevents_outcome\ttests/t_test.sh\ttest\nreport\tbin/lib/gone.py\tpy\nclock\thooks/x.sh:one\tsite\n" > "${t}/docs/port/copies.tsv"
+printf "${HEAD_ROW}clock\tbin/lib/a.py\tpy\nreport\tbin/lib/a.py\tpy\ngh_cache\thooks/x.sh:one\tsite\ntouches_rows\thooks/x.sh:one\tsite\ntouches_rows\thooks/x.sh:one\tscript\nevents_outcome\ttests/t_test.sh\ttest\nreport\tbin/lib/gone.py\tpy\nclock\thooks/x.sh:one\tsite\ntouches_rows\ttests/u_test.sh\ttest\n" > "${t}/docs/port/copies.tsv"
 check "the scan finds each kind, and names the module and importer of each problem" \
   "tests/t_test.sh imports report (test), and docs/port/copies.tsv has no row for it; add the row 'report\ttests/t_test.sh\ttest'
 docs/port/copies.tsv:8: bin/lib/gone.py no longer imports report (py); delete the row
