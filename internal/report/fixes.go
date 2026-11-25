@@ -40,12 +40,6 @@ const (
 // isWord is Python's Unicode \w: a letter, a number or an underscore, where RE2's \w is ASCII only.
 func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r) }
 
-// isSpace is Python's Unicode \s: Go's white space and the four separators \x1c to \x1f.
-func isSpace(r rune) bool { return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f') }
-
-// isDigit is Python's Unicode \d, a decimal digit of any script.
-func isDigit(r rune) bool { return unicode.IsDigit(r) }
-
 // foldExtra holds the two letters Python's re.I takes as an ASCII letter beside those whose lower case
 // it is (İ and the Kelvin sign): dotless ı as i, and long ſ as s.
 var foldExtra = map[rune]rune{'ı': 'i', 'ſ': 's'}
@@ -92,20 +86,20 @@ func patternAt(rs []rune, i int, pat pattern) (int, bool) {
 	return i, false
 }
 
-// span is one match: rs[start:end].
-type span struct{ start, end int }
+// match is one match: rs[start:end].
+type match struct{ start, end int }
 
 // findAll is finditer over rs for \b(?:pats...)\b: the leftmost matches, each search going on from
 // the end of the last match.
-func findAll(rs []rune, pats []pattern) []span {
-	var out []span
+func findAll(rs []rune, pats []pattern) []match {
+	var out []match
 	for i := 0; i < len(rs); i++ {
 		if !boundary(rs, i) {
 			continue
 		}
 		for _, pat := range pats {
 			if end, ok := patternAt(rs, i, pat); ok {
-				out = append(out, span{i, end})
+				out = append(out, match{i, end})
 				i = end - 1
 				break
 			}
@@ -122,8 +116,8 @@ func clauses(rs []rune) [][]rune {
 	for i := 0; i < len(rs); {
 		end := i + 1
 		switch {
-		case i > 0 && strings.ContainsRune(sentenceEnds, rs[i-1]) && isSpace(rs[i]):
-			for end < len(rs) && isSpace(rs[end]) {
+		case i > 0 && strings.ContainsRune(sentenceEnds, rs[i-1]) && pySpace(rs[i]):
+			for end < len(rs) && pySpace(rs[end]) {
 				end++
 			}
 		case rs[i] == ';' || rs[i] == '\n':
@@ -172,7 +166,7 @@ func endsNegated(rs []rune) bool {
 // negated is NEGATED.search over rs, the text before a fix verb: a negation, white space, and at most
 // one word and its white space before the verb ("doesn't fix", "not yet fixing").
 func negated(rs []rune) bool {
-	head := trimRight(rs, isSpace)
+	head := trimRight(rs, pySpace)
 	if len(head) == len(rs) {
 		return false
 	}
@@ -180,18 +174,18 @@ func negated(rs []rune) bool {
 		return true
 	}
 	word := trimRight(head, isWord)
-	before := trimRight(word, isSpace)
+	before := trimRight(word, pySpace)
 	return len(word) < len(head) && len(before) < len(word) && endsNegated(before)
 }
 
-// prRef is pr_ref: where in a clause PR n of repo is named, by its URL, as repo#n, or with bare as #n.
-type prRef struct {
+// prMention is pr_ref: where in a clause PR n of repo is named, by its URL, as repo#n, or with bare as #n.
+type prMention struct {
 	repo, n string
 	bare    bool
 }
 
 // at is the end of the PR named at i in rs, and whether one is, trying pr_ref's alternatives in order.
-func (r prRef) at(rs []rune, i int) (int, bool) {
+func (r prMention) at(rs []rune, i int) (int, bool) {
 	before := func(not string) bool { return i == 0 || !(isWord(rs[i-1]) || strings.ContainsRune(not, rs[i-1])) }
 	alts := []struct {
 		lit string
@@ -202,7 +196,7 @@ func (r prRef) at(rs []rune, i int) (int, bool) {
 		{"#" + r.n, r.bare && before(notBeforeBare)},
 	}
 	for _, a := range alts {
-		if end, ok := literalAt(rs, i, a.lit); a.ok && ok && (end == len(rs) || !isDigit(rs[end])) {
+		if end, ok := literalAt(rs, i, a.lit); a.ok && ok && (end == len(rs) || !pyDigit(rs[end])) {
 			return end, true
 		}
 	}
@@ -210,7 +204,7 @@ func (r prRef) at(rs []rune, i int) (int, bool) {
 }
 
 // starts is finditer over rs for the PR: the start of each match, each search going on from the last end.
-func (r prRef) starts(rs []rune) []int {
+func (r prMention) starts(rs []rune) []int {
 	var out []int
 	for i := 0; i < len(rs); i++ {
 		if end, ok := r.at(rs, i); ok {
@@ -233,7 +227,7 @@ func FixesPR(text, key, by string) bool {
 	if n == "" {
 		return false
 	}
-	ref := prRef{repo, n, byRepo == repo}
+	ref := prMention{repo, n, byRepo == repo}
 	for _, c := range clauses([]rune(text)) {
 		if len(findAll(c, notAFix)) > 0 {
 			continue
