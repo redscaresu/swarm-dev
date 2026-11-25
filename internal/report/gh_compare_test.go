@@ -27,22 +27,24 @@ const (
 	sleepScale = "0.01"
 )
 
-// shortBound is the bound of the case whose gh outlives it, in seconds.
-const shortBound = 1
+// shortBound is the bound of the case whose gh outlives it, in seconds: long enough for the stub to
+// start and log its call on a loaded machine, where one process start can take two seconds.
+const shortBound = 5
 
 // ghPythonSeconds bounds the python3 run. Its cases start a few hundred processes, which can take
 // half a minute on a slow machine.
 const ghPythonSeconds = 300
 
-// stubGh answers its nth call in $GH_STUB_DIR with the script rN, or the last one once n passes max,
-// after it logs the call's arguments, each in brackets, as one line of calls.
+// stubGh answers its nth call in $GH_STUB_DIR with the script rN, or the last one once n passes max.
+// It first logs the call's arguments, each in brackets, as one line of calls, with shell builtins
+// only, so the log is written before any program it starts could let a short bound pass.
 const stubGh = `#!/bin/sh
 d=$` + stubDirVar + `
+for a in "$@"; do printf '[%s]' "$a"; done >> "$d/calls"
+echo >> "$d/calls"
 n=$(cat "$d/count" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$d/count"
-for a in "$@"; do printf '[%s]' "$a"; done >> "$d/calls"
-echo >> "$d/calls"
 max=$(cat "$d/max")
 [ "$n" -le "$max" ] || n=$max
 exec /bin/sh "$d/r$n"
@@ -172,7 +174,7 @@ var ghCaseList = ghCases{
 			Steps: []step{api("x"), api("y"), {Args: []string{"run", "view", "--json", "a"}, Seconds: GHSeconds, Text: true}}},
 		{name: "the limit after a 5xx", answers: []string{badGate, `printf 'API rate limit already exceeded\n' >&2; exit 1`, answerOK},
 			Steps: []step{api("x"), api("y")}},
-		{name: "a sleep past a short bound", answers: []string{`exec sleep 10`},
+		{name: "a sleep past a short bound", answers: []string{`exec sleep 30`},
 			Steps: []step{{Args: []string{"api", "slow"}, Seconds: shortBound}}},
 	},
 	Searches: []*searchCase{
