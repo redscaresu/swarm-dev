@@ -165,7 +165,7 @@ func droppedRemoved(diff []byte) ([]droppedLine, error) {
 		case header || hasFile:
 			if m := droppedHunk.FindSubmatchIndex(line); m != nil {
 				header = false
-				oldLeft, newLeft = droppedHunkCount(line, m[2], m[3]), droppedHunkCount(line, m[4], m[5])
+				oldLeft, newLeft = droppedHunkCount(line, m[2], m[3]), droppedHunkCount(line, m[4], m[5]) // outcome-scan: ok m holds droppedHunk's submatch offsets in a line of git's remerge diff, not a row of events.tsv
 			}
 		}
 	}
