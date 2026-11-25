@@ -46,11 +46,11 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names epic_briefs plan_epic upgrade; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
-BIN_FLOOR=(); for t in agent_state command_names doc_check events_fixture events_tail_agents events_tail_flow events_tail_lead events_tail_merge events_tail_stall events lib_path loose_match outcome_scan removed roles skill timeouts port_sites port_swarm_names port_locks port_names port_fields; do BIN_FLOOR+=("tests/${t}_test.sh"); done
-HOOK_FLOOR=("${SHELL_FLOOR[@]}" tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
-SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
+BIN_FLOOR=(); for t in agent_state command_names doc_check events_fixture events_tail_agents events_tail_flow events_tail_lead events_tail_merge events_tail_stall events lib_path loose_match outcome_scan removed roles skill timeouts port_sites port_copies port_swarm_names port_locks port_names port_fields; do BIN_FLOOR+=("tests/${t}_test.sh"); done
+HOOK_FLOOR=("${SHELL_FLOOR[@]}" tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
+SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh tests/port_sites_test.sh tests/port_copies_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_names_test.sh tests/port_fields_test.sh)
 RULES_FLOOR=(tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh)
-TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh)
+TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh)
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
@@ -227,13 +227,13 @@ check "the gh shim selects the shell-scan and removed-name floor and the test th
 check "scripts/test.sh selects every test" "$(sel "echo 1 >> scripts/test.sh; ${commit}")" "${ALL}"
 check "the Makefile selects every test" "$(sel "echo 1 >> Makefile; ${commit}")" "${ALL}"
 check "a bin/lib file's top level selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
-check "a test selects itself and the five tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
+check "a test selects itself and the six tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
   "$(lines "${TEST_FLOOR[@]}" tests/x_test.sh)"
-check "a new untracked test selects itself and those five" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
-check "a test helper selects the test that names it, removed_test.sh, which greps every tests/*.sh, and port_tests_list_test.sh" \
-  "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
-check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, diff_run_hooks_test.sh, which runs the hook ones, removed_test.sh and port_tests_list_test.sh" \
-  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh)"
+check "a new untracked test selects itself and those six" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
+check "a test helper selects the test that names it, removed_test.sh, which greps every tests/*.sh, port_tests_list_test.sh and port_copies_test.sh" \
+  "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh)"
+check "a differential-run fixture file selects diff_run_test.sh, which loads every one by a glob, diff_run_hooks_test.sh, which runs the hook ones, removed_test.sh, port_tests_list_test.sh and port_copies_test.sh" \
+  "$(sel "echo x > tests/diff_fixtures_x.sh; ${commit}")" "$(lines tests/diff_run_test.sh tests/diff_run_hooks_test.sh tests/removed_test.sh tests/port_tests_list_test.sh tests/port_copies_test.sh)"
 check "an allow list entry selects diff_allow_test.sh, which parses every entry on disk" \
   "$(sel "mkdir -p scripts/allow/stage-1 && echo x > scripts/allow/stage-1/a.md; ${commit}")" tests/diff_allow_test.sh
 check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, command_names_test.sh, which greps it for a bare /swarm, binary_dispatch_test.sh, which runs the binary, and removed_test.sh, which greps it for a removed name, and no other" \
