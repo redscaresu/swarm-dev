@@ -8,8 +8,9 @@ shortest whole story lifecycles (the rows whose target is the slug or its PR, am
 and a close row). It stops when that comes to more than MAX_ROWS rows.
 
 The redaction is an allowlist (rules.md: never a denylist). It keeps the time, column 2 (the command),
-numbers, punctuation and words found in the plugin's own source (bin/, hooks/, scripts/), and swaps every
-other token, by class, for a stand-in that the same token always gets:
+numbers, punctuation and words found in the plugin's own source (bin/, hooks/, scripts/, and the .go files
+under cmd/ and internal/ that are no _test.go and sit in no testdata/ folder), and swaps every other token,
+by class, for a stand-in that the same token always gets:
   slug     zz + a-z. In column 3 (the target), every slug-shaped word but RESERVED, whatever its
            spelling. Elsewhere, a word that is no source word, and a target that is hyphenated or no
            source word. <word>-<target>, an agent's name such as conduct-<epic>, keeps its source word.
@@ -26,7 +27,9 @@ import sys
 
 MAX_ROWS = 400
 LIFECYCLES = 3
-SOURCE_DIRS = ("bin", "hooks", "scripts")
+SOURCE_DIRS = ("bin", "hooks", "scripts", "cmd", "internal")
+# Under these, only Go source counts: a test's or a fixture's words would loosen the allowlist.
+GO_DIRS = ("cmd", "internal")
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 # Targets the readers compare as text: `conduct --backlog`, and report's `backlog`.
 RESERVED = {"backlog"}
@@ -64,14 +67,22 @@ def letters(n):
     return s
 
 
+def source_file(d, name):
+    """Whether file <name> under source dir <d> is source: under GO_DIRS, a .go file and no _test.go."""
+    if name.startswith(".") or name.endswith(".pyc"):
+        return False
+    return d not in GO_DIRS or (name.endswith(".go") and not name.endswith("_test.go"))
+
+
 def vocabulary(root):
-    """Every word token in the plugin's source files."""
+    """Every word token in the plugin's source files; under GO_DIRS, no testdata/ folder is read."""
     words = set()
     for d in SOURCE_DIRS:
         for dirpath, dirs, files in os.walk(os.path.join(root, d)):
-            dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "__pycache__")
+            dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x != "__pycache__"
+                             and not (d in GO_DIRS and x == "testdata"))
             for f in files:
-                if f.startswith(".") or f.endswith(".pyc"):
+                if not source_file(d, f):
                     continue
                 with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
                     words.update(m.group() for m in TOKEN.finditer(fh.read()) if m.lastgroup == "word")
