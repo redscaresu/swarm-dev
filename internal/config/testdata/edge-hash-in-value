@@ -1,0 +1,3 @@
+# edge: a # inside a value cuts it there; loads
+board_dir = my#board
+repos_dir = /r#x # y

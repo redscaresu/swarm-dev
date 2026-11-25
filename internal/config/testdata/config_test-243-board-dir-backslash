@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:243, checked at tests/config_test.sh:244; site: board_dir-quotes
+board_dir = my\board

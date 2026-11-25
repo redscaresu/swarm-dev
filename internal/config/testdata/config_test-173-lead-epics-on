@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:173, checked at tests/config_test.sh:174; loads
+lead_epics = on
