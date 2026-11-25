@@ -4,23 +4,23 @@
 # read per poll between two waiters, two with the cache off; two that miss together make one read; a
 # fetcher killed before it writes, or one whose read fails, leaves the other to read for itself; a new
 # head is read from GitHub; a flip to green is seen within one poll, by a waiter out of step with the
-# other too; ci_gate head without SWARM_POLL_CACHE reads GitHub while a fresh entry is on disk; and a lock
-# older than the max age holds no one.
+# other too; a read the wait does not accept is not kept; a wait with the cache off (WAIT_PR_FRESH, as
+# merge's own wait sets it) or a max age of 0 reads GitHub while a fresh entry is on disk; a read slower
+# than the max age is not taken as fresh; and a lock older than the max age holds no one. Every case
+# drives swarm.sh wait-pr from outside.
 # gh is a stub on PATH: it logs "<epoch> <waiter> <args>" for every call to gh.log; pr view answers the
-# head in ${FX}/head; check runs are one check, pending until ${FX}/green exists. With ${FX}/hold, a
-# check-runs read writes "<its ci_gate's pid> <waiter> <its pid>" to ${FX}/arrived.<pid> and waits for
-# ${FX}/release (30 s at most); with ${FX}/fail, the first check-runs read fails with HTTP 502; with
-# ${FX}/short, check-runs answers one of a total_count of 2, a read ci_gate does not accept; with
-# ${FX}/slow, a check-runs read takes that many seconds. One
-# workflow, ci.yml (on: pull_request), always has a green pull_request run. python3 is a wrapper on PATH
-# that logs "<waiter>" to passes.log for each ci_gate head run, then runs the real python3.
+# head in ${FX}/head with the mergeable state UNKNOWN, so wait-pr reads the PR again before every pass,
+# and each waiter's pr view count is its passes; check runs are one check, pending until ${FX}/green
+# exists. With ${FX}/hold, a check-runs read writes "<the reading process's pid> <waiter> <its pid>" to
+# ${FX}/arrived.<pid> and waits for ${FX}/release (30 s at most); with ${FX}/fail, the first check-runs
+# read fails with HTTP 502; with ${FX}/short, check-runs answers one of a total_count of 2, a read the
+# wait does not accept; with ${FX}/slow, a check-runs read takes that many seconds. One workflow, ci.yml
+# (on: pull_request), always has a green pull_request run.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-GATE="$(dirname "${SWARM}")/lib/ci_gate.py"
-REAL_PY="$(command -v python3)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -39,14 +39,14 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$(date +%s) ${WAITER:--} $*" >> "${LOG}"
 a="$*"
 case "${a}" in
-  "pr view"*) echo "$(cat "${FX}/head") MERGEABLE main OPEN 1" ;;
+  "pr view"*) echo "$(cat "${FX}/head") UNKNOWN main OPEN 1" ;;
   *check-runs*)
     if [ -e "${FX}/hold" ]; then
-      # The ci_gate that made this read: an ancestor, past swarm.sh's gh shim.
+      # The process that made this read: the first ancestor that is not a gh run with these arguments,
+      # past swarm.sh's gh shim.
       g=${PPID}
       for _ in 1 2 3 4 5; do
-        case "$(ps -o command= -p "${g}")" in *ci_gate.py*) break ;; esac
-        g=$(ps -o ppid= -p "${g}" | tr -d ' ')
+        case "$(ps -o command= -p "${g}")" in *"${a}"*) g=$(ps -o ppid= -p "${g}" | tr -d ' ') ;; *) break ;; esac
       done
       echo "${g} ${WAITER:--} $$" > "${FX}/arrived.$$"
       for _ in $(seq 600); do [ ! -e "${FX}/release" ] || break; sleep 0.05; done
@@ -67,12 +67,7 @@ case "${a}" in
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-printf '#!/usr/bin/env bash\nLOG="%s"; REAL="%s"\n' "${ROOT}/passes.log" "${REAL_PY}" > "${ROOT}/bin/python3"
-cat >> "${ROOT}/bin/python3" <<'PY'
-case " $* " in *"/ci_gate.py head "*) echo "${WAITER:--}" >> "${LOG}" ;; esac
-exec "${REAL}" "$@"
-PY
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/python3"
+chmod +x "${ROOT}/bin/gh"
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
@@ -80,7 +75,7 @@ is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2'
 
 # fresh <head> — a cold start: no cache, no logs, the PR's head <head>, its check pending.
 fresh() {
-  rm -rf "${FX}" "${CACHE}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"; : > "${ROOT}/passes.log"
+  rm -rf "${FX}" "${CACHE}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   echo "$1" > "${FX}/head"
 }
 # reads [waiter] — the check-runs, status and workflow-runs reads in gh.log (of <waiter> alone, if named).
@@ -91,8 +86,8 @@ reads() {
   done
   echo "${out}"
 }
-# passes <waiter> — the ci_gate head runs <waiter> made.
-passes() { grep -cx "$1" "${ROOT}/passes.log" || true; }
+# passes <waiter> — the passes <waiter> made: its pr view reads, one before each pass (the PR is UNKNOWN).
+passes() { grep -cE "^[0-9]+ $1 pr view" "${ROOT}/gh.log" || true; }
 # await <seconds> <command>... — runs <command> every 0.1 s until it succeeds; fails after <seconds>.
 await() {
   local end=$((SECONDS + $1)); shift
@@ -117,13 +112,8 @@ start() {
 }
 # finish <pid> — waits for a waiter; sets rc to its exit.
 finish() { rc=0; wait "$1" || rc=$?; }
-# gate [VAR=value]... — ci_gate head on ${H}, run in the project, with its expected workflows kept in
-# ${FX}/memo; sets rc.
-gate() {
-  rc=0; echo '[[".github/workflows/ci.yml"], []]' > "${FX}/memo"
-  (cd "${P}" && exec env -u SWARM_POLL_CACHE -u SWARM_POLL_CACHE_SECONDS PATH="${ROOT}/bin:${PATH}" "$@" \
-    python3 "${GATE}" head o/r "${H}" main 7 1 "${FX}/memo" > "${ROOT}/out.gate" 2>&1) || rc=$?
-}
+# kept <path part> — the cache entries whose read names <path part>.
+kept() { grep -l -- "$1" "${CACHE}"/*.json 2>/dev/null | wc -l | tr -d ' '; }
 
 # --- Two waiters started together on one head, pending for two polls, then green: with the cache on
 # they make one read of each kind per poll between them, and both print green within a poll of the flip:
@@ -200,7 +190,7 @@ finish "${pa}"; rc_a=${rc}; finish "${pb}"; rc_b=${rc}
 rc_other=${rc_a}; rc_held=${rc_b}; [[ "${other}" == a ]] || { rc_other=${rc_b}; rc_held=${rc_a}; }
 is "killed fetcher: the other waiter ends green" 0 "${rc_other}"
 check "killed fetcher: its own waiter ends, not green (${rc_held})" test "${rc_held}" -ne 0
-check "killed fetcher: its ci_gate was the one killed" grep -q 'ci_gate failed (exit 137)' "${ROOT}/out.${held}"
+check "killed fetcher: its read was the one killed" grep -q 'failed (exit 137)' "${ROOT}/out.${held}"
 is "killed fetcher: the other waiter read check runs for itself" 1 "$(reads "${other}" | cut -d' ' -f1)"
 at=$(grep -E "^[0-9]+ ${other} .*/check-runs" "${ROOT}/gh.log" | head -1 | cut -d' ' -f1)
 check "killed fetcher: within one poll of the kill (read at ${at:-none}, killed at ${killed}, a poll is 20 s)" \
@@ -218,12 +208,14 @@ finish "${pa}"; rc_a=${rc}; finish "${pb}"; rc_b=${rc}
 is "failed read: both waiters end green, the failed one after a retry" "0 0" "${rc_a} ${rc_b}"
 check "failed read: the failed waiter retried" grep -q '^retrying after .*HTTP 502' "${ROOT}/out.${held}"
 is "failed read: the other waiter read check runs for itself" 1 "$(reads "${other}" | cut -d' ' -f1)"
-# The write itself, at once: a check-runs read gh answered but ci_gate did not accept keeps no entry.
+# The write itself, at once: a check-runs read gh answered but the wait did not accept keeps no entry,
+# though the cache was on for it (its folder made).
 fresh "${H}"; touch "${FX}/short"
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=60
-is "unaccepted read: ci_gate head fails (exit 3)" 3 "${rc}"
-check "unaccepted read: it says why" grep -q 'read 1 of 2' "${ROOT}/out.gate"
-is "unaccepted read: no check-runs entry is kept" 0 "$(grep -l check-runs "${CACHE}"/*.json 2>/dev/null | wc -l | tr -d ' ')"
+start a; finish "${LAST}"
+is "unaccepted read: the wait ends with an error (exit 2)" 2 "${rc}"
+check "unaccepted read: it says why" grep -q 'read 1 of 2' "${ROOT}/out.a"
+check "unaccepted read: the cache was on" test -d "${CACHE}"
+is "unaccepted read: no check-runs entry is kept" 0 "$(kept check-runs)"
 
 # --- A wait on a new head of the same PR, while the old head's entries are fresh (kept 19 s), reads GitHub
 # for it in its first pass.
@@ -237,46 +229,51 @@ is "new head: in one pass, nothing of the old head's taken for it" 1 "$(passes b
 is "new head: reads its check runs, status and workflow runs from GitHub" "1 1 1" \
   "$(grep -c "commits/${H2}/check-runs" "${ROOT}/gh.log") $(grep -c "commits/${H2}/status" "${ROOT}/gh.log") $(grep -c "head_sha=${H2}" "${ROOT}/gh.log")"
 
-# --- ci_gate head without SWARM_POLL_CACHE reads all three while a fresh entry for the head is on disk;
-# with it, the same call reads none of them.
+# --- A wait with the cache off reads all three while a fresh entry for the head is on disk: one with
+# WAIT_PR_FRESH (merge's own wait on a head it made), and one whose 1 s poll makes the max age 0. A wait
+# with the cache on, run between them, reads none of them, so the entries were fresh. Polls of 60 s keep
+# each entry 59 s, longer than three waits take on a slow, loaded machine.
 fresh "${H}"; touch "${FX}/green"
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=60
-is "direct: ci_gate head with the cache ends green" 0 "${rc}"
-is "direct: the first call reads all three" "1 1 1" "$(reads)"
-: > "${ROOT}/gh.log"; gate
-is "direct: without SWARM_POLL_CACHE it ends green" 0 "${rc}"
-is "direct: without SWARM_POLL_CACHE it reads all three, the entries fresh" "1 1 1" "$(reads)"
-: > "${ROOT}/gh.log"; gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=60
-is "direct: with SWARM_POLL_CACHE again it reads none of them" "0 0 0" "$(reads)"
-: > "${ROOT}/gh.log"; gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=0
-is "direct: SWARM_POLL_CACHE_SECONDS=0 is off, so it reads all three" "1 1 1" "$(reads)"
+start a SWARM_MERGE_POLL=60 SWARM_WAIT_PR_RETRY=60; finish "${LAST}"
+is "fresh entries: the first wait ends green" 0 "${rc}"
+is "fresh entries: the first wait reads all three" "1 1 1" "$(reads)"
+: > "${ROOT}/gh.log"; start b SWARM_MERGE_POLL=60 SWARM_WAIT_PR_RETRY=60 WAIT_PR_FRESH=1; finish "${LAST}"
+is "cache off: a wait with WAIT_PR_FRESH ends green" 0 "${rc}"
+is "cache off: a wait with WAIT_PR_FRESH reads all three, the entries fresh" "1 1 1" "$(reads)"
+: > "${ROOT}/gh.log"; start a SWARM_MERGE_POLL=60 SWARM_WAIT_PR_RETRY=60; finish "${LAST}"
+is "fresh entries: a wait with the cache on again reads none of them" "0 0 0" "$(reads)"
+: > "${ROOT}/gh.log"; start b SWARM_MERGE_POLL=1 SWARM_WAIT_PR_RETRY=60; finish "${LAST}"
+is "max age 0: a wait polling every 1 s ends green" 0 "${rc}"
+is "max age 0: a wait polling every 1 s reads all three" "1 1 1" "$(reads)"
 
-# --- A read slower than the max age is kept as old as it is, stamped with when it started: the next call
-# reads check runs again rather than take a snapshot from before it as fresh.
-fresh "${H}"; touch "${FX}/green"; echo 4 > "${FX}/slow"
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=3
+# --- A read slower than the max age is kept as old as it is, stamped with when it started: the next wait
+# reads check runs again rather than take a snapshot from before it as fresh. Polls of 16 s keep each
+# entry 15 s, and the first check-runs read takes 16.
+fresh "${H}"; touch "${FX}/green"; echo 16 > "${FX}/slow"
+start a SWARM_MERGE_POLL=16 SWARM_WAIT_PR_RETRY=16; finish "${LAST}"
 rm "${FX}/slow"; : > "${ROOT}/gh.log"
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=3
-is "slow read: the next call ends green" 0 "${rc}"
-is "slow read: the next call reads check runs again" 1 "$(reads | cut -d' ' -f1)"
+start b SWARM_MERGE_POLL=16 SWARM_WAIT_PR_RETRY=16; finish "${LAST}"
+is "slow read: the next wait ends green" 0 "${rc}"
+is "slow read: the next wait reads check runs again" 1 "$(reads | cut -d' ' -f1)"
 
 # --- A lock older than the max age holds no one, though its pid lives (a wait stopped with Ctrl-Z, a read
 # that hangs) or it holds no pid (its reader killed before it wrote one): the next read goes ahead at
-# once. The locks name a sleep this test starts, the first is empty, all are aged 60 s, and no entry is
-# left. Kept 10 s, a lock that held would hold each of the three reads that long.
+# once. The locks name a sleep this test starts, the first is empty, all are aged 300 s, and no entry is
+# left. Polls of 181 s keep each entry 180 s, so a lock that held would hold each of the three reads that
+# long, well past what one wait takes on a slow, loaded machine.
 fresh "${H}"; touch "${FX}/green"
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=10
-sleep 120 & live=$!; PIDS+=("${live}"); first=1
+start a SWARM_MERGE_POLL=181 SWARM_WAIT_PR_RETRY=181; finish "${LAST}"
+sleep 600 & live=$!; PIDS+=("${live}"); first=1
 for e in "${CACHE}"/*.json; do
   if [[ -n "${first}" ]]; then : > "${e%.json}.lock"; first=""; else echo "${live}" > "${e%.json}.lock"; fi
   rm "${e}"
 done
-perl -e '$t = time - 60; utime $t, $t, @ARGV' "${CACHE}"/*.lock
+perl -e '$t = time - 300; utime $t, $t, @ARGV' "${CACHE}"/*.lock
 : > "${ROOT}/gh.log"; t0=${SECONDS}
-gate SWARM_POLL_CACHE="${CACHE}" SWARM_POLL_CACHE_SECONDS=10; took=$((SECONDS - t0))
+start b SWARM_MERGE_POLL=181 SWARM_WAIT_PR_RETRY=181; finish "${LAST}"; took=$((SECONDS - t0))
 kill "${live}" 2>/dev/null || true
-is "stale lock: ci_gate head ends green" 0 "${rc}"
+is "stale lock: the wait ends green" 0 "${rc}"
 is "stale lock: reads all three from GitHub" "1 1 1" "$(reads)"
-check "stale lock: waits on no lock (${took}s; a lock that held would hold each read 10 s)" test "${took}" -le 8
+check "stale lock: waits on no lock (${took}s; a lock that held would hold each read 180 s)" test "${took}" -le 120
 
 if [[ ${fails} -eq 0 ]]; then echo "all wait-pr poll-cache tests passed"; else echo "${fails} wait-pr poll-cache test(s) failed"; exit 1; fi
