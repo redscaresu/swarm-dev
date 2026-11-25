@@ -105,7 +105,7 @@ func (a *Appender) Append(now time.Time, command, target, outcome string, fields
 		if i := strings.IndexAny(f, columnBreaks); i >= 0 {
 			cutAt = f[:i]
 		}
-		fmt.Fprintln(a.stderr, "append_event: left out "+cutAt+leftOut)
+		_, _ = fmt.Fprintln(a.stderr, "append_event: left out "+cutAt+leftOut)
 	}
 	last := cleanOutcome(outcome)
 	if len(kept) > 0 {
