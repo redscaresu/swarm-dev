@@ -165,7 +165,7 @@ func droppedRemoved(diff []byte) ([]droppedLine, error) {
 		case header || hasFile:
 			if m := droppedHunk.FindSubmatchIndex(line); m != nil {
 				header = false
-				oldLeft, newLeft = droppedCount(line, m[2], m[3]), droppedCount(line, m[4], m[5])
+				oldLeft, newLeft = droppedHunkCount(line, m[2], m[3]), droppedHunkCount(line, m[4], m[5])
 			}
 		}
 	}
@@ -190,10 +190,10 @@ func droppedRunOf(text []byte, c byte, size int) bool {
 	return bytes.Equal(head, run) || bytes.Equal(head, append(run, ' '))
 }
 
-// droppedCount is a hunk count: the digits line[start:end] holds, or 1 where droppedHunk's group did
+// droppedHunkCount is a hunk count: the digits line[start:end] holds, or 1 where droppedHunk's group did
 // not take part (start < 0). Python's int has no limit, so a count past the largest int is taken as
 // that, which no diff that fits in memory can tell apart.
-func droppedCount(line []byte, start, end int) int {
+func droppedHunkCount(line []byte, start, end int) int {
 	if start < 0 {
 		return 1
 	}
