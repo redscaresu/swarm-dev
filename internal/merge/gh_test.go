@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -170,6 +171,39 @@ func TestGraphqlPassesGhsErrOn(t *testing.T) {
 	_, err := hostCalls{&fakeHost{result: failed(1, "HTTP 502: Bad Gateway\n")}}.graphql(context.Background(), "q", intVar("n", 7))
 	if want := "gh api graphql -F n=7 -f query=q: HTTP 502: Bad Gateway"; err == nil || err.Error() != want || !isErr(err) {
 		t.Errorf("graphql error = %v (an Err: %v); want the Err %q", err, isErr(err), want)
+	}
+}
+
+// The wants are python3's: ci_gate.py's own values and RUN_ID's group on these URLs (the PR shows the
+// run). merge.sh reads ci_gate's exits by number (MAIN_CI_*, BEHIND_UNLISTED), so once the switch
+// lands, a value that drifts from ci_gate.py's misreads a verdict: this goes red.
+func TestConstantsAreCiGatePys(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		got, want int
+	}{
+		{"READ_TRIES", readTries, 3}, {"CI_OK", ciOK, 0}, {"CI_RED", ciRed, 1}, {"CI_TIMEOUT", ciTimeout, 2},
+		{"CI_ERROR", ciError, 3}, {"CI_COVERED", ciCovered, 4}, {"UNLISTED", unlistedExit, 4}, {"COMPARE_FILES", compareFiles, 300},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %d, want ci_gate.py's %d", c.name, c.got, c.want)
+		}
+	}
+	if want := []string{"success", "skipped", "neutral"}; !slices.Equal(okConclusions, want) {
+		t.Errorf("OK = %q, want ci_gate.py's %q", okConclusions, want)
+	}
+	for url, want := range map[string]string{
+		"https://github.com/o/r/actions/runs/45531168111/job/138926552045":         "45531168111",
+		"see https://github.com/o/r/pull/3; https://github.com/o/r/actions/runs/7": "7",
+		"https://github.com/o/r/runs/9":                                            "",
+	} {
+		got := ""
+		if m := runID.FindStringSubmatch(url); m != nil {
+			got = m[1]
+		}
+		if got != want {
+			t.Errorf("RUN_ID's run id in %q = %q, want %q", url, got, want)
+		}
 	}
 }
 

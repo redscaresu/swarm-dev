@@ -39,19 +39,12 @@ func stub(t *testing.T, script string) {
 	t.Setenv("PATH", dir+stubPath)
 }
 
-// sleeper puts a gh first on PATH that is the system's sleep itself, so the process Run starts is the
-// one that sleeps and nothing else holds its output.
+// sleeper puts a gh first on PATH that execs sleep, so the process Run starts is the one that
+// sleeps and nothing else holds its output. A symlink named gh will not do: a multi-call sleep, such
+// as uutils' on Linux, refuses to run under another name.
 func sleeper(t *testing.T) {
 	t.Helper()
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	if err := os.Symlink(sleep, filepath.Join(dir, "gh")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
+	stub(t, "exec sleep "+sleepSeconds)
 }
 
 // want is what a test expects of a GhResult; noStart says only whether NoStart is set.
@@ -84,10 +77,12 @@ func TestRunClosesStdin(t *testing.T) {
 	if _, err := w.WriteString("the caller's stdin\n"); err != nil {
 		t.Fatal(err)
 	}
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	old := os.Stdin
 	os.Stdin = r
-	t.Cleanup(func() { os.Stdin = old; r.Close() })
+	t.Cleanup(func() { os.Stdin = old; _ = r.Close() })
 	check(t, Host{}.Run(context.Background()), want{})
 }
 
@@ -130,7 +125,7 @@ func TestRunKillsGhAtTheDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), ctxEnds)
 	defer cancel()
 	start := time.Now()
-	got := Host{}.Run(ctx, sleepSeconds)
+	got := Host{}.Run(ctx)
 	if took := time.Since(start); took > killBound {
 		t.Errorf("Run took %s for a gh that sleeps %s s past a %s deadline; want under %s", took, sleepSeconds, ctxEnds, killBound)
 	}
@@ -145,7 +140,7 @@ func TestRunKillsGhOnCancel(t *testing.T) {
 	stop := time.AfterFunc(ctxEnds, cancel)
 	defer stop.Stop()
 	start := time.Now()
-	got := Host{}.Run(ctx, sleepSeconds)
+	got := Host{}.Run(ctx)
 	if took := time.Since(start); took > killBound {
 		t.Errorf("Run took %s for a gh that sleeps %s s, cancelled after %s; want under %s", took, sleepSeconds, ctxEnds, killBound)
 	}
