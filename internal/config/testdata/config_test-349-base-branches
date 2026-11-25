@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:349; loads
+base_branches = dev main
