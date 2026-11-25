@@ -21,6 +21,13 @@ This is the one folder under `docs/` for contributors. The rest of `docs/` is fo
   Its test is [tests/port_sites_test.sh](../../tests/port_sites_test.sh).
   The test fails on a site with no row.
   A PR that adds an inline site adds its row.
+- [copies.tsv](copies.tsv) lists what still imports each of the five Python modules that keep a copy beside their Go: clock, events_outcome, report, touches_rows and gh_cache.
+  Its test is [tests/port_copies_test.sh](../../tests/port_copies_test.sh).
+  The test finds every importer by the rule in its header: a `bin/lib` Python file, an inline site in `bin/` or `hooks/`, bash that runs the module's file, or a test that imports it or runs its file.
+  It fails on an importer with no row, and on a row whose importer no longer imports.
+  It also fails on a row whose module's file is gone, and on a module file with no row left.
+  A port that removes an importer deletes its row in the same PR.
+  The PR that deletes a module's last row deletes its file too.
 - [swarm-names.tsv](swarm-names.tsv) lists every `SWARM_` name that a file under `bin/`, `hooks/`, `cmd/` or `internal/` names.
   Its test is [tests/port_swarm_names_test.sh](../../tests/port_swarm_names_test.sh).
   The test fails on a name with no row, on a row no file names, and on a row whose files differ from the files that name it.
