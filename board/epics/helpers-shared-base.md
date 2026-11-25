@@ -21,7 +21,7 @@ A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent'
 - [go-entries-per-file](../stories/go-entries-per-file.md)
 - [go-clock-compare](../stories/go-clock-compare.md)
 - [shared-copies-list](../stories/shared-copies-list.md)
-- [shared-gh-cache-call](../stories/shared-gh-cache-call.md)
+- shared-gh-cache-call: answered by the user on 2026-11-24 (a sixth module; non-fix-cache-binary cleared), so it left the board
 - [shared-patches](../stories/shared-patches.md)
 
 **Out of scope:**
@@ -38,5 +38,4 @@ A child of [helpers-shared](helpers-shared.md), split on 2026-11-23. The parent'
 - go-entries-per-file: [cmd/swarm/frame.go:entries, cmd/swarm/frame_test.go:TestRegister, docs/port/README.md:§ Two forms, AGENTS.md:§ Working on this repository]
 - go-clock-compare: [internal/clock/compare_test.go]
 - shared-copies-list: [docs/port/copies.tsv, tests/port_copies_test.sh, docs/port/tests.tsv:port_copies row, docs/port/README.md:§ What each list holds, scripts/test-map.tsv:port_copies row]
-- shared-gh-cache-call: []
 - shared-patches: []
