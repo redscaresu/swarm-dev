@@ -613,6 +613,65 @@ conductor_busy() {
   return 0
 }
 
+# unpushed_work <slug> — succeed, printing what would be lost, when clearing <slug>'s build
+# (clear_build) would delete work origin does not have: commits on story/<slug>, or on its worktree's
+# HEAD, that no branch on origin reaches, or tracked files changed in the worktree, staged or not.
+# Untracked files do not count. Origin's branches are read from origin itself (ls-remote), never the
+# clone's remote-tracking refs, which can name a branch origin no longer has. A branch whose tip this
+# clone lacks (origin's main moved on since the last fetch, a merge GitHub made on story/<slug>) may
+# still reach those commits, so when the count is not 0 those branches are fetched and it counts
+# again; a close with nothing unpushed in a clone that is current fetches nothing. When origin or the
+# worktree cannot be read, or that fetch fails, what is pushed is not known, and it succeeds too (fail
+# closed). It fails when nothing would be lost, or the story's repo is not found (clear_build then
+# clears nothing).
+unpushed_work() {
+  local slug="$1" src wt tips="" head heads refs n=0 dirty=0
+  src="$(repo_dir "$(fm_gone "${BOARD}/stories/$1.md" repo)")" || return 1
+  wt="$(worktree_for "${src}" "${slug}")"
+  ! head="$(git -C "${src}" rev-parse -q --verify "refs/heads/story/${slug}")" || tips="${head}"
+  if [[ -d "${wt}" ]]; then
+    if ! head="$(git -C "${wt}" rev-parse -q --verify HEAD)" \
+       || ! dirty="$(git -C "${wt}" status --porcelain --untracked-files=no)"; then
+      echo "its worktree could not be read by git"; return 0
+    fi
+    tips+=" ${head}"; dirty="$(grep -c . <<< "${dirty}" || true)"
+  fi
+  if [[ -n "${tips# }" ]]; then
+    heads="$(git -C "${src}" ls-remote --heads origin 2>/dev/null)" \
+      || { echo "origin's branches could not be read, so whether its commits are pushed is not known"; return 0; }
+    n="$(unpushed_count "${src}" "${tips}" "${heads}")" \
+      || { echo "git could not count its commits against origin's"; return 0; }
+    if [[ "${n}" != 0 ]]; then
+      refs="$(missing_heads "${src}" "${heads}")"
+      if [[ -n "${refs}" ]]; then
+        # shellcheck disable=SC2086 # one ref per word
+        git -C "${src}" fetch -q origin ${refs} 2>/dev/null \
+          || { echo "origin's branches this clone lacks could not be fetched, so whether its commits are pushed is not known"; return 0; }
+        n="$(unpushed_count "${src}" "${tips}" "${heads}")" \
+          || { echo "git could not count its commits against origin's"; return 0; }
+      fi
+    fi
+  fi
+  [[ "${n}" != 0 || "${dirty}" != 0 ]] || return 1
+  echo "${n} commit(s) origin does not have, ${dirty} tracked file(s) changed and not committed"
+}
+
+# unpushed_count <repo> <tips> <heads> — how many commits <tips> (SHAs) reach that none of <heads>
+# (ls-remote's lines) does, over the heads <repo> has: rev-list cannot name a commit it lacks.
+unpushed_count() {
+  local have
+  have="$(awk 'NF { print $1 }' <<< "$3" | git -C "$1" cat-file --batch-check | awk '$2 == "commit" { print "^" $1 }')"
+  # shellcheck disable=SC2086 # one SHA per word
+  printf '%s\n' $2 ${have} | git -C "$1" rev-list --count --stdin
+}
+
+# missing_heads <repo> <heads> — the refs of <heads> (ls-remote's lines) whose tip <repo> lacks, one
+# per line.
+missing_heads() {
+  awk 'NR == FNR { if ($2 == "missing") m[$1]; next } ($1 in m) { print $2 }' \
+    <(awk 'NF { print $1 }' <<< "$2" | git -C "$1" cat-file --batch-check) - <<< "$2"
+}
+
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
 # A conductor (conduct-<name>, no story of that name) that conductor_busy finds busy is refused before
 # anything closes, the refusal naming why (BUSY_WHY).
@@ -634,8 +693,11 @@ conductor_busy() {
 # open or merged PR on story/<name> logs an idle-no-pr incident (record_incident, its slug= <name>), the one place it is logged, unless
 # the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible);
 # with escalate_ladder set, that close then steps the build up (ladder_step no-pr) instead, if it can.
+# Before any of that clears a build, once the pane has closed, work origin does not have (unpushed_work)
+# keeps the worktree and branch: stderr names them and what is unpushed, and nothing is counted, held,
+# handed on or cleared.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc open="" heads=""
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc open="" heads="" lost src
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -685,6 +747,16 @@ close_agent() {
   # worktree, so nothing is counted, held, handed on or cleared.
   if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
     [[ -n "${CLOSE_REFUSED}" ]] || echo "${NOT_CLOSED/<name>/$1}"   # a refusal said why (close_panes)
+    return 0
+  fi
+  # Each path below that clears the build (clear_build) first checks for work origin does not have,
+  # once the builder has stopped: with any, the worktree and branch stay and only the pane closed.
+  if [[ "${cause}" == impossible || ${counted} == 1 ]] && lost="$(unpushed_work "$1")"; then
+    src="$(repo_dir "$(fm_gone "${f}" repo)")"
+    # restart_build starts only a ready story's builder with no hold (held_by:), so only that one is told to.
+    why=""
+    [[ "$(fm "${f}" status)" != ready || -n "$(get_fm "${f}" held_by)" ]] || why=", and swarm.sh restart $1 starts its builder there again"
+    echo "swarm: $1: kept its worktree $(worktree_for "${src}" "$1") and branch story/$1 in ${src}: ${lost}. So this close closed its pane only, and nothing was counted, held, handed on or cleared. Push the work${why}, or remove the worktree and branch by hand once the work is not wanted" >&2
     return 0
   fi
   if [[ "${cause}" == impossible ]]; then

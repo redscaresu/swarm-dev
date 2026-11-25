@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:246, checked at tests/config_test.sh:247; site: commit_trailers
+commit_trailers = Refs: #123

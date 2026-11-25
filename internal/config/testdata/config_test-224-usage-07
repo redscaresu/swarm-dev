@@ -1,0 +1,3 @@
+# written at tests/config_test.sh:224, checked at tests/config_test.sh:225; site: usage_warn_percent
+# usage
+usage_warn_percent = 07

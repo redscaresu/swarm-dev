@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:103, checked at tests/config_test.sh:104; site: non-negative
+sonnet_share = -1
