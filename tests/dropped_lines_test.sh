@@ -572,6 +572,74 @@ M="$(printf '%s\n' one two "${OWN}" three "${BASE0[@]:3:4}" "${OWN}" "${OWN}" "$
 check "a dropped line the head holds more copies of than the base, short of what it owes: it prints" \
   "${M:0:7} f: ${OWN}"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
+# The bytes a dropped line and its file's name print as. git hands over bytes; the scan reads them as
+# bytes and decodes only what it prints.
+# dropin <name> <file> <line> — new_repo <name>, with BASE0 in <file> as well when it is not f: main
+# replaces its three with three-main and <line>, pr with three-pr, and pr's merge of main keeps three-pr
+# and three-main, dropping <line>; prints the merge's SHA, the repo being ${tmp}/<name>
+dropin() {
+  local d; d="$(new_repo "$1")"
+  if [[ "$2" != f ]]; then printf '%s\n' "${BASE0[@]}" | put "${d}" "$2"; git -C "${d}" branch -f pr main; fi
+  lines three-main "$3" | put "${d}" "$2"; on "${d}" pr; lines three-pr | put "${d}" "$2"
+  git -C "${d}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+  lines three-pr three-main > "${d}/$2"; git -C "${d}" add -A; git -C "${d}" commit -q --no-edit; git -C "${d}" rev-parse HEAD
+}
+FFFD=$'\xef\xbf\xbd' NBSP=$'\xc2\xa0' EACUTE=$'\xc3\xa9'   # U+FFFD, U+00A0 and é in UTF-8
+M="$(dropin bytectl f $'a\x01b\x7fc')"
+check "a dropped line holding bytes 01 and 7f: it prints with both taken off" \
+  "${M:0:7} f: abc"$'\n'"exit 1" "$(scan "${tmp}/bytectl" main pr)"
+# 299 ASCII characters, two é (two bytes each) and nine more: the cut keeps 300 characters, one é whole.
+A299="$(printf 'a%.0s' $(seq 299))"
+M="$(dropin bytelong f "${A299}${EACUTE}${EACUTE}bbbbbbbbb")"
+check "a dropped line of 310 characters: it prints cut to 300 characters, not bytes, one é kept whole" \
+  "${M:0:7} f: ${A299}${EACUTE}"$'\n'"exit 1" "$(scan "${tmp}/bytelong" main pr)"
+# Invalid UTF-8 prints one U+FFFD per maximal invalid subpart, as Python's utf-8 'replace' gives.
+M="$(dropin bytee282 f $'\xe2\x82A')"
+check "a dropped line of bytes e2 82 then A: it prints one U+FFFD then A" \
+  "${M:0:7} f: ${FFFD}A"$'\n'"exit 1" "$(scan "${tmp}/bytee282" main pr)"
+M="$(dropin byteff f $'\xff\xfeA')"
+check "a dropped line of bytes ff fe then A: it prints two U+FFFD then A" \
+  "${M:0:7} f: ${FFFD}${FFFD}A"$'\n'"exit 1" "$(scan "${tmp}/byteff" main pr)"
+M="$(dropin byteed f $'\xed\xa0\x80A')"
+check "a dropped line of bytes ed a0 80 (a surrogate) then A: it prints three U+FFFD then A" \
+  "${M:0:7} f: ${FFFD}${FFFD}${FFFD}A"$'\n'"exit 1" "$(scan "${tmp}/byteed" main pr)"
+# A name git quotes in the diff's header (`"a/q\"t\tx"`) prints unquoted, its tab taken off as a control
+# character; a name with a space, after which git's header puts a tab, prints with no tab; and with
+# core.quotePath=false a name with é is in the header as is, and prints so.
+M="$(dropin bytequoted $'q"t\tx' main-added)"
+check "a dropped line of a file whose name git quotes (a double quote and a tab): the name prints unquoted" \
+  "${M:0:7} q\"tx: main-added"$'\n'"exit 1" "$(scan "${tmp}/bytequoted" main pr)"
+M="$(dropin bytespace 'a b.md' main-added)"
+check "a dropped line of a file whose name holds a space: the name prints with no trailing tab" \
+  "${M:0:7} a b.md: main-added"$'\n'"exit 1" "$(scan "${tmp}/bytespace" main pr)"
+M="$(dropin byteeacute "${EACUTE}.md" main-added)"
+check "a dropped line of a file whose name holds é: the name prints as is" \
+  "${M:0:7} ${EACUTE}.md: main-added"$'\n'"exit 1" "$(scan "${tmp}/byteeacute" main pr)"
+# Only ASCII whitespace is blank, and only ASCII whitespace splits words, as on bytes.
+M="$(dropin bytenbsp f "${NBSP}")"
+check "a dropped line of only U+00A0: it is not blank, and prints" \
+  "${M:0:7} f: ${NBSP}"$'\n'"exit 1" "$(scan "${tmp}/bytenbsp" main pr)"
+M="$(extend bytenbspjoin "${ROW}" -- "${ROW// /${NBSP}}")"
+check "a dropped line whose words a head line joins with U+00A0: that line does not extend it, and it prints" \
+  "${M:0:7} f: ${ROW}"$'\n'"exit 1" "$(scan "${tmp}/bytenbspjoin" main pr)"
+# A dropped last line with no newline at the end of the file: main appends last-main with none. Each side's
+# file counts its last line though no newline ends it. The diff's `\ No newline` line after it can be
+# followed only by + lines, which the scan never prints, so how the scan counts that line changes nothing.
+R="$(new_repo bytenoeol)"; { lines three-main; printf last-main; } | put "${R}" f
+on "${R}" pr; lines three-pr | put "${R}" f
+M="$(lines three-pr three-main | merge "${R}" main -)"
+check "a dropped last line with no newline at the end of the file: it prints" \
+  "${M:0:7} f: last-main"$'\n'"exit 1" "$(scan "${R}" main pr)"
+check "the same merge's remerge diff ends f on that line with no newline (the case's own premise)" \
+  "-last-main"$'\n'"\\ No newline at end of file" \
+  "$(git -C "${R}" show --remerge-diff --format= "${M}" | grep -A1 -x -- '-last-main')"
+# Two spare head lines extend the first dropped line, and only the first of them, in the head file's order,
+# extends the second: the first dropped line takes it, so the second prints. The other spare line sorts
+# before it, so taking the lines in sorted order would clear both.
+M="$(extend byteorder 'flow prints cost' 'flow prints panes' -- 'then flow prints cost panes' 'flow prints cost and time')"
+check "two spare head lines extend a dropped line: it takes the first in the head file's order, and the next dropped line prints" \
+  "${M:0:7} f: flow prints panes"$'\n'"exit 1" "$(scan "${tmp}/byteorder" main pr)"
+
 # --own <path>, the PR's own story file: a story PR deletes it, and a line the base added to it after the
 # branch was cut (#1002's `fix: true`, which held #1003, #1006 and #1008) goes with the file.
 # story_repo <name> — new_repo <name> with board/stories/s.md and t.md on main before pr branches off; pr
