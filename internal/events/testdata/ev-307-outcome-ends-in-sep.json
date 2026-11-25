@@ -1,0 +1,13 @@
+{
+  "comment": "tests/events_test.sh:307 (ev): an outcome ending in EVENT_SEP is written without it",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "die: no story ~~ "
+      ]
+    }
+  ]
+}

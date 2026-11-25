@@ -1,0 +1,15 @@
+{
+  "comment": "tests/events_test.sh:304 (ev): append_event with fields writes one row of 5 fields; its column 5 is the outcome, EVENT_SEP, then the fields",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "ok (round 2)",
+        "round=2",
+        "verdict=pass"
+      ]
+    }
+  ]
+}

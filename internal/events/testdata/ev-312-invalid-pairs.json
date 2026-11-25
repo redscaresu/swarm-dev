@@ -1,0 +1,17 @@
+{
+  "comment": "tests/events_test.sh:312 (ev): an invalid pair is left out, the line still written with the valid ones; each invalid pair is named on stderr",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "ok",
+        "Round=2",
+        "v=a b",
+        "good=1",
+        "empty="
+      ]
+    }
+  ]
+}

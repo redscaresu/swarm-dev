@@ -1,0 +1,18 @@
+{
+  "comment": "a field holding an LF is left out, its warning cut at the LF",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok",
+        "k=a\nb",
+        "j=v"
+      ]
+    }
+  ]
+}

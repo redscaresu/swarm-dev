@@ -1,0 +1,14 @@
+{
+  "comment": "no plugin.json gives no version=",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok",
+        "k=v"
+      ]
+    }
+  ]
+}

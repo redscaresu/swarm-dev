@@ -1,0 +1,16 @@
+{
+  "comment": "a version ending in two LFs keeps the text before them",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.0\n\n"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "comment": "tests/events_test.sh:314 (ev): a call whose every pair is invalid writes the outcome alone",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "ok",
+        "Bad=1"
+      ]
+    }
+  ]
+}

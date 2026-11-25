@@ -1,0 +1,17 @@
+{
+  "comment": "an outcome ending in EVENT_SEP",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "done ~~ ",
+        "k=v"
+      ]
+    }
+  ]
+}

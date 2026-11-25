@@ -1,0 +1,17 @@
+{
+  "comment": "a plugin.json that plugin_version refuses (a number) gives no version=",
+  "pane": "w:me",
+  "manifest": {
+    "version": 3
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok",
+        "k=v"
+      ]
+    }
+  ]
+}

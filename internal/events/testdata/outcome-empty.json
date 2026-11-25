@@ -1,0 +1,17 @@
+{
+  "comment": "an empty outcome is ok",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "",
+        "k=v"
+      ]
+    }
+  ]
+}

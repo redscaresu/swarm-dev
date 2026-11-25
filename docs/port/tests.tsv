@@ -16,6 +16,7 @@
 # epic: on a text row, the epic that adds the go_check. On any other row, the first port epic in stage order that deletes code the test reaches: a helper it names, a function it calls, or a command it runs.
 # A new test that reaches inside gets its row in the same PR. A row stays when its test stops reaching or does not exist yet, because the list is the record.
 # agreed by the user on 2026-11-20: every mark and owner as proposed (story port-tests-agree).
+internal/events/bash_compare_test.go	lib,text	rewrite-from-outside	retired-with: bash-retired	bash-retired
 internal/plugin/bash_compare_test.go	text	rewrite-from-outside	retired-with: bash-retired	bash-retired
 tests/agent_liveness_test.sh	lib,py	rewrite-from-outside		helpers-shared
 tests/agent_state_test.sh	py,text	rewrite-from-outside	a Go check fails a read of herdr's agent status outside the allowlisted places, so a Claude agent's state still comes from its session	helpers-panes

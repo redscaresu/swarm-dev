@@ -1,0 +1,16 @@
+{
+  "comment": "a version holding an LF inside gives no version=",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.\n0"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok"
+      ]
+    }
+  ]
+}

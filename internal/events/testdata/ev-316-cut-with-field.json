@@ -1,0 +1,14 @@
+{
+  "comment": "tests/events_test.sh:316 (ev): an outcome ending in EVENT_SEP short of its last space loses it, so the tail starts at its own",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "die: foo ~~",
+        "round=2"
+      ]
+    }
+  ]
+}
