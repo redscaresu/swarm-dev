@@ -3,6 +3,7 @@ kind: code
 status: blocked
 epic: helpers-ci-gate-core
 depends_on: [ci-gate-go-entry]
+needs: ci-gate-go-entry: the _ci-gate entry and internal/merge/cigate.go deps that the signal functions are passed through.
 touches: [internal/layers/imports_test.go:allowedStd exception, internal/layers/testdata/imports:signals fixtures, cmd/swarm/signals.go, cmd/swarm/signals_test.go, internal/merge/cigate.go:deps, cmd/swarm/cigate.go:signals, AGENTS.md:Go layers rule, docs/port/README.md:bridge exception]
 estimate_lines: 220
 risk: high
