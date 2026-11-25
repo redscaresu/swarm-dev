@@ -13,6 +13,11 @@ const trustedArgs = 3
 // checked. Any other value, the empty one included, walks the ancestors.
 const trustedInGit = "git"
 
+func init() {
+	// bash's require_trusted runs it in place of the Python helper it replaced.
+	register("_require-trusted", entry{needsFrame: true, run: requireTrusted})
+}
+
 // requireTrusted is the _require-trusted entry, which bash's require_trusted (bin/lib/agents.sh) runs
 // as `binary_run _require-trusted <root> <config> <git|>`. It reads <config>, a .claude.json, through
 // the store, prints nothing, and exits with trust.Decide's code: 0 when Claude Code trusts <root> (or
