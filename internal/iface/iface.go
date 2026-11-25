@@ -1,11 +1,15 @@
 // Package iface holds the four interfaces the rules packages take in place of starting a process or
 // touching a file: the agent runner, the code host, the repo and the store. Each has exactly one
-// implementation, under internal/adapter/. The store's types sit here beside Store.
+// implementation, under internal/adapter/. The types an interface's methods take or give sit here
+// beside it.
 //
 // Each interface holds only the methods a ported command calls: a port adds the ones it needs.
 package iface
 
-import "io/fs"
+import (
+	"context"
+	"io/fs"
+)
 
 // AgentRunner starts, reads and stops the agents. herdr is its one implementation
 // (internal/adapter/herdr).
@@ -13,7 +17,32 @@ type AgentRunner interface{}
 
 // CodeHost reads and changes pull requests, checks and merges. gh is its one implementation
 // (internal/adapter/gh).
-type CodeHost interface{}
+type CodeHost interface {
+	// Run runs gh from PATH with args, stdin closed, and gives what it wrote and how it ended. It reads
+	// gh's output to its end, which a process gh started can hold open after gh exits. When ctx ends
+	// before that, gh is killed, the reading stops and the result is cut short. The context is the
+	// caller's bound: one with a deadline bounds the run, and one with none, as ci_gate.py's calls have,
+	// leaves gh to end on its own unless the caller cancels it.
+	Run(ctx context.Context, args ...string) GhResult
+}
+
+// GhResult is what one gh run gave. At most one of NoStart, CutShort and Signal is set; when none is,
+// gh exited with Exit.
+type GhResult struct {
+	// Stdout and Stderr hold every byte gh wrote to each, bytes that are not UTF-8 included. A run cut
+	// short holds what Run had read when ctx ended.
+	Stdout, Stderr []byte
+	// Exit is gh's exit code, or -1 when gh did not exit: NoStart, CutShort or Signal then says why.
+	Exit int
+	// Signal is the number of the signal that killed gh, or 0 when none did. The kill that cuts a run
+	// short sets CutShort, not Signal.
+	Signal int
+	// NoStart is why gh could not start, such as no gh on PATH, or nil when it started.
+	NoStart error
+	// CutShort reports that ctx ended before gh and its output did, so gh was killed and Run stopped
+	// reading then, or that ctx had already ended, so gh never started.
+	CutShort bool
+}
 
 // Repo reads and changes the git repository and its worktrees. git is its one implementation
 // (internal/adapter/git).
