@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:209, checked at tests/config_test.sh:210; loads
+builder_subagent_model = claude-haiku-5-5

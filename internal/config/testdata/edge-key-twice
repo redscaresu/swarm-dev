@@ -1,0 +1,4 @@
+# edge: a key set twice, the later line wins; loads
+merge = agent
+stall_minutes = 5
+merge = human

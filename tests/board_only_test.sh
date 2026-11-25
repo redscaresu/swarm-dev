@@ -41,12 +41,13 @@ esac
 STUB
 chmod +x "${tmp}/bin/gh"
 
-# main: base0 has a story, a board README, a script, plugin.json and ci_gate.py; base adds the gate.
+# main: base0 has a story, a board README, a script, plugin.json and the checkout's bin/lib, which the
+# gate reads CI through; base adds the gate.
 git init -q -b main "${G}"
-mkdir -p "${G}/board/stories" "${G}/bin/lib" "${G}/.claude-plugin" "${G}/scripts"
+mkdir -p "${G}/board/stories" "${G}/bin" "${G}/.claude-plugin" "${G}/scripts"
 echo story > "${G}/board/stories/a.md"; echo readme > "${G}/board/stories/README.md"; echo 'echo x' > "${G}/bin/x.sh"
 echo '{"name": "p", "version": "1.0.0", "description": "d"}' > "${G}/.claude-plugin/plugin.json"
-cp "${REPO}/bin/lib/ci_gate.py" "${G}/bin/lib/"
+cp -R "${REPO}/bin/lib" "${G}/bin/"; rm -rf "${G}/bin/lib/__pycache__"
 git -C "${G}" add -A; git -C "${G}" commit -qm base0
 BASE0="$(git -C "${G}" rev-parse HEAD)"
 cp "${GATE}" "${G}/scripts/"

@@ -1,0 +1,4 @@
+# written at tests/config_test.sh:638; loads
+board_dir = ../elsewhere/board
+repos_dir = ../repos
+goal = 5

@@ -166,31 +166,46 @@ check "v0.28.0: B's branch had main merged in at its head" grep -qxF "api -X PUT
 is "v0.28.0: B's new head, with main merged in, merges, and B's old head does not" "0|8 ${H3}|no" \
   "${rc}|$(sed -n 's/^pr merge \([0-9]*\) .*--match-head-commit \([0-9a-f]*\)$/\1 \2/p' "${ROOT}/gh.log")|$(grep -qF -- "--match-head-commit ${H2}" "${ROOT}/gh.log" && echo yes || echo no)"
 
-# --- ci_gate.py's on_board, the one matcher behind and fixed judge a path by, called directly, and
-# merge.sh's on_board_paths, both on merge.sh's own board_paths (board_rel saying where the board is):
-# retros/*.md is a glob, so a retro file is on the board's paths and a script beside it is not;
-# Board.base is that file alone, not Board.base.py; and a board folder named with a * stays literal.
-# py_on <board rel> <path>... — <path>=True or <path>=False for each, as on_board judges it.
-py_on() {
-  local paths
-  paths="$(BOARD_IN_REPO=1 REL="$1" bash -c 'board_rel() { printf %s "${REL}"; }; . "$1/bin/lib/merge.sh" && board_paths' _ "${REPO}")"
-  shift
-  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import ci_gate
-board = [b for b in sys.argv[2].split("\n") if b]
-print(" ".join("%s=%s" % (p, ci_gate.on_board(p, board)) for p in sys.argv[3:]))' "${REPO}/bin/lib" "${paths}" "$@"
+# --- The board's paths, as merge reads them live (board_paths, board_rel saying where the board is),
+# judge what the base gained: retros/*.md is a glob, so a retro file is on the board's paths and a script
+# beside it is not; Board.base is that file alone, not Board.base.py; and a board folder named with a *
+# stays literal. Each path is driven through swarm.sh merge on a base that gained it alone, the board at
+# the root (board_dir = .) and at notes*/, story s moved there: a path on the board merges the head as it
+# is, and one off it merges the base in first.
+# board_gained <board_dir> <rel> <path> <True|False> — that merge, checked.
+board_gained() {
+  local name="board ${3} (board at '${2}')"
+  fresh "board_dir = $1"; mkdir -p "${P}/$2stories"; mv "${S}" "${P}/$2stories/s.md"; gained 1 "$3"
+  if [[ "$4" == True ]]; then
+    merge "${URL}"
+    is "${name}: on the board, exits 0" 0 "${rc}"
+    check "${name}: on the board, merges the head as it is" merged
+    check "${name}: on the board, merges no base in" not_said "base merged:"
+  else
+    updates; merge "${URL}"; merged_in "${name}: off the board"
+  fi
+  rm -rf "${P}/$2stories"
 }
-# sh_on <board rel> <path>... — the same, as on_board_paths judges it.
+not_said() { ! said "$1"; }
+for c in "retros/v1.0.0.md True" "retros/x.sh False" "Board.base.py False" "Board.base True" "stories/a.md True"; do
+  read -r path want <<< "${c}"; board_gained . "" "${path}" "${want}"
+done
+for c in "notes*/retros/v1.0.0.md True" "notes-x/retros/v1.0.0.md False" "notes-other/Board.base False" \
+  "notes*/Board.base True" "notes*/retros/x.sh False"; do
+  read -r path want <<< "${c}"; board_gained 'notes*' 'notes*/' "${path}" "${want}"
+done
+
+# merge.sh's on_board_paths on the same paths, called directly.
+# sh_on <board rel> <path>... — <path>=True or <path>=False for each, as on_board_paths judges it.
 sh_on() {
   BOARD_IN_REPO=1 REL="$1" bash -c 'board_rel() { printf %s "${REL}"; }; . "$1/bin/lib/merge.sh"; shift; out=()
     for p in "$@"; do if on_board_paths "${p}"; then out+=("${p}=True"); else out+=("${p}=False"); fi; done; echo "${out[*]}"' _ "${REPO}" "${@:2}"
 }
 WANT="retros/v1.0.0.md=True retros/x.sh=False Board.base.py=False Board.base=True stories/a.md=True"
-for m in py_on sh_on; do
-  is "${m}, a board at the root: a retro file is on the board's paths; a script beside it and Board.base.py are not" \
-    "${WANT}" "$("${m}" "" retros/v1.0.0.md retros/x.sh Board.base.py Board.base stories/a.md)"
-  is "${m}, a board folder named notes*: its * is literal, and only the retro glob's * matches" \
-    "notes*/retros/v1.0.0.md=True notes-x/retros/v1.0.0.md=False notes-other/Board.base=False notes*/Board.base=True notes*/retros/x.sh=False" \
-    "$("${m}" 'notes*/' 'notes*/retros/v1.0.0.md' notes-x/retros/v1.0.0.md notes-other/Board.base 'notes*/Board.base' 'notes*/retros/x.sh')"
-done
+is "sh_on, a board at the root: a retro file is on the board's paths; a script beside it and Board.base.py are not" \
+  "${WANT}" "$(sh_on "" retros/v1.0.0.md retros/x.sh Board.base.py Board.base stories/a.md)"
+is "sh_on, a board folder named notes*: its * is literal, and only the retro glob's * matches" \
+  "notes*/retros/v1.0.0.md=True notes-x/retros/v1.0.0.md=False notes-other/Board.base=False notes*/Board.base=True notes*/retros/x.sh=False" \
+  "$(sh_on 'notes*/' 'notes*/retros/v1.0.0.md' notes-x/retros/v1.0.0.md notes-other/Board.base 'notes*/Board.base' 'notes*/retros/x.sh')"
 
 finish "merge base-moved"
