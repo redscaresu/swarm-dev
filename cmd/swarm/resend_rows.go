@@ -20,7 +20,7 @@ const resendRowsUsage = "_resend-rows takes <events> <resent> <briefs> <panes> <
 const markerGlob = "*.unsent"
 
 func init() {
-	// resend_pass (bin/lib/lifecycle.sh) will run it in place of its inline Python program.
+	// resend_pass (bin/lib/lifecycle.sh) runs it for its rows.
 	register("_resend-rows", entry{needsFrame: true, run: resendRows})
 }
 

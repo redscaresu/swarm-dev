@@ -25,7 +25,6 @@ bin/lib/lifecycle.sh	archive_session	report	1	helpers-shared
 bin/lib/lifecycle.sh	prompt_lines	panes	1	helpers-panes
 bin/lib/lifecycle.sh	prompt_lines	report	1	helpers-panes
 bin/lib/lifecycle.sh	prompt_lines	session_mtime	1	helpers-panes
-bin/lib/lifecycle.sh	resend_pass	events_outcome	1	helpers-shared
 bin/lib/lifecycle.sh	resend_pass	panes	1	helpers-panes
 bin/lib/lifecycle.sh	restart_took	panes	1	helpers-panes
 bin/lib/lifecycle.sh	restart_took	report	1	helpers-panes

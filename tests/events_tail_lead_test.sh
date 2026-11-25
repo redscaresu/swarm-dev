@@ -195,6 +195,10 @@ tell_stuck() (
 # tell_resend — resend_pass for zzst, idle in w:p1 with a clear box; prints what it recorded in LEAD_RESENT.
 tell_resend() (
   with_lib
+  # resend_pass picks its rows through binary_run _resend-rows, which needs swarm.sh's die and settings.
+  # shellcheck source=bin/lib/binary.sh
+  source "${REPO}/bin/lib/binary.sh"
+  die() { echo "$*" >&2; exit 1; }; DIE_FILE=""; DIE_LEVEL=-1; CONFIG_KEYS=""
   PATH="${ROOT}/bin:${PATH}"
   LEAD_AGENTS_OK=1; LEAD_AGENTS='{"result":{"agents":[{"name":"zzst","pane_id":"w:p1","agent_status":"idle"}]}}'
   own_panes() { echo w:p1; }; conductor_name() { echo conduct-backlog; }; resend_busy() { return 1; }

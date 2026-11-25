@@ -2,6 +2,7 @@
 # fixture fx_<name> in a tests/diff_fixtures_<area>.sh file, and a name with none is red. A port epic
 # adds the commands it ports, each on a line of its own.
 next
+resend_delivery
 status
 trusted_git
 usage

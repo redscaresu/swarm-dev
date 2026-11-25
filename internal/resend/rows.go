@@ -1,7 +1,7 @@
 // Package resend holds the row program of resend_pass (bin/lib/lifecycle.sh): from herdr's agent list,
 // events.tsv, the lead's resent file and the .unsent markers, it picks the idle agents whose pane the
-// pass reads this poll, and the markers that go. It is the Go copy of the pass's inline Python, which
-// cmd/swarm's _resend-rows entry runs in its place. It reads what the entry hands it and touches no file:
+// pass reads this poll, and the markers that go. It is the Go port of the pass's inline Python program,
+// and cmd/swarm's _resend-rows entry runs it for the pass. It reads what the entry hands it and touches no file:
 // Rows returns the markers to remove, and the entry removes them.
 package resend
 

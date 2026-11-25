@@ -25,6 +25,7 @@
 # the newest close, and a review line restarts it.
 # One wait --lead poll with a resend and a prompt candidate reads the process list (ps -A -ww) for
 # resend_pass and prompt_lines once, plus resend_pass's re-check before its Enter; the next poll reads it again.
+# resend_pass with SWARMDEV_BIN naming a missing file returns 0 and reads no pane.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -493,6 +494,45 @@ stale="$(
   poll_ps && echo "${NO_AGENT_PS}"
 )"
 check "a poll's resend_pass drops the last poll's process list" "${stale}" "this poll"
+
+# resend_pass picks its rows with the binary's _resend-rows entry. With SWARMDEV_BIN naming a missing
+# file, binary_run's die ends only the $(...) around it: the pass returns 0 and reads no pane. The same
+# pass with the run's own binary reads the idle builder's pane, its brief unsent, so the project has a row.
+N="${ROOT}/nobin"; NL="${ROOT}/nobin.log"; NR="lqnr$$"
+mkdir -p "${N}/.swarm/state" "${N}/.swarm/lead"
+printf 'w:p1 %s\n' "${NR}" > "${N}/.swarm/state/tab"
+printf '2026-10-26T00:00:00Z\tstory\t%s\t-\tok\n' "${NR}" > "${N}/.swarm/events.tsv"
+# Its herdr logs each call and reads the paste from every pane.
+mkdir -p "${ROOT}/nobin-bin"
+# shellcheck disable=SC2016 # the stub expands $* and $1 $2
+printf '#!/bin/sh\necho "herdr $*" >> "%s"\n[ "$1 $2" != "agent read" ] || exec cat "%s"\necho %s\n' \
+  "${NL}" "${ROOT}/ps-p1.txt" "'{\"result\":{}}'" > "${ROOT}/nobin-bin/herdr"
+chmod +x "${ROOT}/nobin-bin/herdr"
+# nobin_pass [binary] — resend_pass's exit and how many panes it read, with SWARMDEV_BIN naming [binary],
+# or unset (a checkout builds its own) when it is empty.
+nobin_pass() (
+  PROJECT_DIR="${N}"; STATE_DIR="${N}/.swarm/state"; SWARM_HOME="${REPO}"; BOARD="${N}/docs"; AGENT_NAME_MAX=32; CFG_step_up_findings=3; CFG_top_rung_rounds=2
+  # shellcheck source=bin/lib/agents.sh
+  source "${REPO}/bin/lib/agents.sh"
+  # shellcheck source=bin/lib/lifecycle.sh
+  source "${REPO}/bin/lib/lifecycle.sh"
+  # within, which times each pane read. Not followed: merge.sh's own fails would shadow this test's for shellcheck.
+  # shellcheck source=/dev/null
+  source "${REPO}/bin/lib/merge.sh"
+  # shellcheck source=bin/lib/binary.sh
+  source "${REPO}/bin/lib/binary.sh"
+  die() { echo "$*" >&2; exit 1; }; DIE_FILE=""; DIE_LEVEL=-1; CONFIG_KEYS=""
+  conductor_name() { echo conduct-backlog; }
+  if [[ -n "$1" ]]; then export SWARMDEV_BIN="$1"; else unset SWARMDEV_BIN; fi
+  PATH="${ROOT}/nobin-bin:${PATH}"; : > "${NL}"
+  LEAD_AGENTS_OK=1; LEAD_AGENTS="{\"result\":{\"agents\":[{\"name\":\"${NR}\",\"pane_id\":\"w:p1\",\"agent_status\":\"idle\"}]}}"
+  local rc=0; resend_pass > /dev/null 2>&1 || rc=$?
+  echo "${rc} $(grep -c '^herdr agent read ' "${NL}" || true)"
+)
+check "resend_pass with SWARMDEV_BIN naming a missing file returns 0 and reads no pane" \
+  "$(nobin_pass "${ROOT}/no-such-binary")" "0 0"
+# shellcheck disable=SC2031 # the run's own SWARMDEV_BIN; nobin_pass sets it only in its subshell
+check "resend_pass with the run's binary reads the idle builder's pane" "$(nobin_pass "${SWARMDEV_BIN:-}")" "0 1"
 
 [[ ${fails} -eq 0 ]] || { echo "${section}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

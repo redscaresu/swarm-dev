@@ -4835,88 +4835,10 @@ resend_pass() {
   backlog="$(conductor_name backlog)"
   # events.tsv's size as rows reads it: a line added before an Enter may be a newer delivery.
   size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))
-  rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" SWARM_BRIEFS="${PROJECT_DIR}/.swarm/briefs" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
-import glob, json, os, re, sys
-sys.path.insert(0, os.environ["SWARM_LIB"]); from events_outcome import outcome
-e = os.environ
-own = set(e["SWARM_PANES"].split())
-# agent_name: lower case, any other byte a dash, s before a name that does not start with a letter, the cut.
-def name(x):
-    x = re.sub(rb"[^a-z0-9_-]", b"-", x.encode().lower()).decode()
-    return (x if re.match("[a-z]", x) else "s" + x)[:int(e["SWARM_NAME_MAX"])]
-# The brief stem and role an .unsent marker takes for a start: none for an agent started by name.
-def stem(c, t):
-    if c == "agent": return "-", "-"
-    s, r = (("review-" + t, "review") if c == "review-agent" else ("conduct-" + t.lstrip("-"), "conductor") if c == "conduct" else (t, "builder"))
-    return (s, r) if re.fullmatch("[a-z0-9-]+", s) else ("-", "-")
-# A tell takes the role of the last start line of its agent, else of the name it was told by.
-def told(n, t):
-    if n == e["SWARM_BACKLOG"]: return "conduct-backlog", "conductor"
-    r = "conductor" if t.startswith("conduct-") else "review" if t.startswith("review-") else "builder"
-    return (t, r) if re.fullmatch("[a-z0-9-]+", t) else ("-", "-")
-# herdr lists an agent with no status too: that one is still listed.
-listed = {(a["name"], a["pane_id"]): a.get("agent_status") or "-" for a in json.loads(sys.stdin.read())["result"]["agents"]
-          if a.get("name") and a.get("pane_id") in own}
-idle = {n: p for (n, p), s in listed.items() if s == "idle"}
-# Each .unsent marker: kept for an idle agent, whose pane is read below; gone once its agent took a turn
-# (working, blocked or done) or herdr no longer lists it in its pane.
-marked = {}
-for path in glob.glob(os.path.join(glob.escape(e["SWARM_BRIEFS"]), "*.unsent")):
-    try:
-        f = open(path, encoding="utf-8").readline().split()
-    except OSError:
-        continue
-    if len(f) < 2:
-        continue
-    s = listed.get((f[0], f[1]), "gone")
-    if s == "idle":
-        marked[f[0]] = os.path.basename(path)[:-len(".unsent")]
-    elif s in ("gone", "working", "blocked", "done"):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-newest, alike, started = {}, {}, {}
-try:
-    for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
-        f = l.rstrip("\n").split("\t")
-        if len(f) != 5:
-            continue
-        c, t = f[1], f[2]
-        if c in ("story", "escalate", "step-up", "step-up:resume", "restart", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
-        elif c == "review-agent": n = name("review-" + t)
-        elif c == "conduct": n = e["SWARM_BACKLOG"] if t in ("--backlog", "backlog") else name("conduct-" + t)
-        else: continue
-        if n not in idle:
-            continue
-        if c.startswith("tell"):
-            sr = started.get(n) or told(n, t)
-        else:
-            sr = started[n] = stem(c, t)
-        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it,
-        # in the words of sent_note: another thing that could not be read (its pane) says nothing about the brief.
-        o = outcome(f)
-        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "reply to the brief could not be read")):
-            k = (n, f[0], c)
-            alike[k] = alike.get(k, 0) + 1
-            newest[n] = (f[0], c, alike[k]) + sr
-        elif not c.startswith("tell"):
-            # A start that failed before sending may still have opened the pane and recorded its session
-            # (record_agent comes before deliver_prompt): whatever is in the box is not an older brief.
-            newest[n] = None
-except OSError:
-    pass
-try:
-    seen = set(open(sys.argv[2], encoding="utf-8").read().splitlines())
-except OSError:
-    seen = set()
-# mode: new, a line not yet checked; after, the first read after its Enter; - for a marked agent alone.
-for n in sorted(set(idle) & (set(n for n, v in newest.items() if v) | set(marked))):
-    t, c, k, g, r = newest.get(n) or ("-",) * 5
-    key = "\t".join((n, t, c, str(k)))
-    mode = "-" if not newest.get(n) else "new" if key not in seen else "after" if key + "\tresent" in seen and key + "\trechecked" not in seen else "-"
-    if mode != "-" or n in marked:
-        print("\t".join((idle[n], n, t, c, str(k), g, r, mode, marked.get(n, "-"))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  # The binary's _resend-rows entry (cmd/swarm/resend_rows.go) picks the rows and removes the markers that
+  # go: one process start. With no binary, its die ends only this $(...), so the pass does nothing this poll.
+  rows="$(binary_run _resend-rows "${EVENTS_LOG}" "${LEAD_RESENT}" "${PROJECT_DIR}/.swarm/briefs" "$(own_panes)" \
+    "${backlog}" "${AGENT_NAME_MAX}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   [[ -n "${rows}" ]] || return 0
   # An upgrade restarts agents in its own process and logs them only at its end, as no_agent_lines skips them.
   [[ ! -f "${UPGRADE_PID}" ]] || [[ -z "$(upgrade_holder)" ]] || return 0

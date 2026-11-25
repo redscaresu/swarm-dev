@@ -16,11 +16,9 @@ SWARM_AGENT_KINDS	handoff	bin/lib/board.sh bin/lib/build.sh bin/lib/flow_idle_sl
 SWARM_AGENT_NAME_MAX	handoff	bin/lib/flow_lead_queue.py bin/lib/reports.sh
 SWARM_AGENT_SHELL	seam	bin/lib/agents.sh
 SWARM_ANY	handoff	bin/lib/agents.sh
-SWARM_BACKLOG	handoff	bin/lib/lifecycle.sh
 SWARM_BACKLOG_CONDUCTOR	handoff	bin/lib/board.sh bin/lib/flow_idle_slots.py bin/lib/outcomes_join.py bin/lib/reports.sh bin/lib/touches_rows.py
 SWARM_BASE_MOVED_WAIT	seam	bin/lib/merge.sh
 SWARM_BOARD	handoff	bin/lib/flow_holds.py bin/lib/flow_idle_slots.py bin/lib/flow_reviewers.py bin/lib/reports.sh
-SWARM_BRIEFS	handoff	bin/lib/lifecycle.sh
 SWARM_CLOSE_IDLE_POLL	seam	bin/lib/lifecycle.sh
 SWARM_CLOSE_IDLE_SECONDS	seam	bin/lib/lifecycle.sh
 SWARM_CODEX_GRACE	seam	bin/swarm.sh
@@ -69,7 +67,6 @@ SWARM_MERGE_POLL_MAX	setting	bin/lib/merge.sh
 SWARM_MERGE_READ_WAIT	seam	bin/lib/merge.sh
 SWARM_META	handoff	bin/lib/outcomes_join.py bin/lib/reports.sh
 SWARM_NAME	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/lifecycle.sh bin/lib/merge.sh
-SWARM_NAME_MAX	handoff	bin/lib/lifecycle.sh
 SWARM_NON_FIX_WAIT	seam	bin/lib/board.sh
 SWARM_NOTE_HERDR_WAIT	setting	bin/lib/merge.sh
 SWARM_NOTE_WAKE_SECS	setting	bin/lib/agents.sh
