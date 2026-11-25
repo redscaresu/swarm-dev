@@ -502,3 +502,101 @@ func TestRemoveDeletesAFileOrLinkAndNeverAFolder(t *testing.T) {
 		t.Errorf("Remove(%s) of a removed file = %v, want an error wrapping fs.ErrNotExist", file, err)
 	}
 }
+
+// If CreateExclusive opened without O_EXCL, a second lock taker would truncate the first one's pid
+// and both would hold the lock; if it lost the error's fs.ErrExist, the taker could not tell "held"
+// from "cannot be made"; if it wrote nothing, a waiter would read no pid: this goes red. A dangling
+// symlink and a folder count as there, as they do for Python's O_EXCL open.
+func TestCreateExclusiveFailsOnAnExistingPathAndWritesOtherwise(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "k.lock")
+	if err := (Files{}).CreateExclusive(path, []byte("123")); err != nil {
+		t.Fatalf("CreateExclusive(%s) = %v, want nil", path, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "123" {
+		t.Errorf("%s holds %q, %v; want %q", path, got, err, "123")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&^exclusiveMode != 0 {
+		t.Errorf("%s mode: %v, %v; want no bit past %v", path, info.Mode(), err, os.FileMode(exclusiveMode))
+	}
+	dang, folder := filepath.Join(root, "dang"), filepath.Join(root, "d")
+	if err := os.Symlink(filepath.Join(root, "gone"), dang); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{path, dang, folder} {
+		if err := (Files{}).CreateExclusive(p, []byte("456")); !errors.Is(err, fs.ErrExist) {
+			t.Errorf("CreateExclusive(%s) over what is there = %v, want an error wrapping fs.ErrExist", p, err)
+		}
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "123" {
+		t.Errorf("%s holds %q, %v after a second CreateExclusive; want the first's %q", path, got, err, "123")
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "d,dang,k.lock" {
+		t.Errorf("%s holds %q; want d,dang,k.lock, and no target made for the dangling link", root, got)
+	}
+}
+
+// If RemoveDir took a folder that holds a file (os.RemoveAll), or a file (os.Remove), main_ci's
+// tidy-up would delete another wait's record or a file it never named: this goes red.
+func TestRemoveDirTakesOnlyAnEmptyFolder(t *testing.T) {
+	root := t.TempDir()
+	empty, full, file := filepath.Join(root, "empty"), filepath.Join(root, "full"), filepath.Join(root, "f")
+	for _, d := range []string{empty, full} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{file, filepath.Join(full, "rec.json")} {
+		if err := os.WriteFile(f, []byte("kept"), fileMode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (Files{}).RemoveDir(empty); err != nil {
+		t.Errorf("RemoveDir(%s) = %v, want nil", empty, err)
+	}
+	for _, p := range []string{full, file} {
+		if err := (Files{}).RemoveDir(p); err == nil {
+			t.Errorf("RemoveDir(%s) = nil, want an error: it is not an empty folder", p)
+		}
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "f,full" {
+		t.Errorf("%s holds %q; want f,full", root, got)
+	}
+	if got := dirNames(t, full); strings.Join(got, ",") != "rec.json" {
+		t.Errorf("%s holds %q; want rec.json", full, got)
+	}
+	if err := (Files{}).RemoveDir(empty); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("RemoveDir(%s) of a removed folder = %v, want an error wrapping fs.ErrNotExist", empty, err)
+	}
+}
+
+// If Alive took a refused signal for a dead process, a lock another user's process holds would be
+// broken; if it signalled 0 or less, it would ask about a process group; if it passed a pid past
+// pid_t to the syscall, the pid would wrap to another one, here this test's own: this goes red.
+func TestAliveIsTrueForARunningPidAndFalseOtherwise(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
+	defer cancel()
+	child := exec.CommandContext(ctx, "true")
+	if err := child.Run(); err != nil {
+		t.Fatalf("true: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		pid  int
+		want bool
+	}{
+		{"this test's pid", os.Getpid(), true},
+		{"pid 1, which root owns unless the test runs as root", 1, true},
+		{"a child that has exited and been waited for", child.Process.Pid, false},
+		{"0, this process's group", 0, false},
+		{"-1, every process the test may signal", -1, false},
+		{"this test's pid plus 2^32, which a cut to pid_t would turn into this test's", os.Getpid() + 1<<32, false},
+	} {
+		if got := (Files{}).Alive(c.pid); got != c.want {
+			t.Errorf("Alive(%d), %s = %v, want %v", c.pid, c.name, got, c.want)
+		}
+	}
+}

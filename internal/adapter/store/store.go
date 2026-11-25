@@ -1,13 +1,14 @@
 // Package store is the one implementation of iface.Store: the files under .swarm/, the board's
 // files and the files bin/swarm.sh hands the binary (the die file and the fields file), and a file
 // bash names in an argument, such as .claude.json. It reads, lists, writes and removes them itself and
-// runs no program.
+// runs no program. It also says whether a pid runs, for a lock's holder.
 package store
 
 import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,10 @@ const fileMode = 0o600
 
 // appendMode is the mode AppendLine makes a file with, before the umask, as bash's >> makes it.
 const appendMode = 0o666
+
+// exclusiveMode is the mode CreateExclusive makes a file with, before the umask, as poll_cache.py's
+// lock opens its lock file.
+const exclusiveMode = 0o644
 
 // dirMode is the mode AppendLine and MkdirAll make a folder with, before the umask, as mkdir -p and
 // Python's os.makedirs make it.
@@ -317,4 +322,49 @@ func (Files) Remove(path string) error {
 		return &fs.PathError{Op: "remove", Path: path, Err: err}
 	}
 	return nil
+}
+
+// CreateExclusive makes path holding data, as poll_cache.py's lock makes a lock file: an open with
+// O_CREAT|O_EXCL, 0644 before the umask, then one write. The open fails when path is there in any
+// form, a dangling symlink too, with an error wrapping fs.ErrExist, and leaves it as it was. When
+// the write or the close fails it removes path again and returns that error, joined with the
+// remove's error if that fails too.
+func (Files) CreateExclusive(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, exclusiveMode)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			if rerr := os.Remove(path); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// RemoveDir deletes the folder path when it is empty, as Python's os.rmdir does, and never a file
+// or a folder that holds anything. It returns the os error, so errors.Is tells fs.ErrNotExist apart.
+func (Files) RemoveDir(path string) error {
+	if err := syscall.Rmdir(path); err != nil {
+		return &fs.PathError{Op: "rmdir", Path: path, Err: err}
+	}
+	return nil
+}
+
+// Alive reports whether process pid runs, as ci_gate.py's alive does: a signal 0 that finds it, or
+// is refused because another user owns it. It is false for a pid of 0 or less, which kill would
+// take as a process group, and for one past the largest pid_t, which Python's os.kill refuses with
+// an OverflowError and Go's syscall would cut down to another pid.
+func (Files) Alive(pid int) bool {
+	if pid <= 0 || pid > math.MaxInt32 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

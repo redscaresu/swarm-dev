@@ -20,8 +20,8 @@ type CodeHost interface{}
 type Repo interface{}
 
 // Store reads and writes .swarm/, the board's files and the files bin/swarm.sh hands the binary. It
-// also reads a file bash names in an argument, such as .claude.json. internal/adapter/store is its one
-// implementation.
+// also reads a file bash names in an argument, such as .claude.json, and says whether a lock's
+// holder still runs. internal/adapter/store is its one implementation.
 type Store interface {
 	// ReadFile returns all of path's bytes, or the error the read returned.
 	ReadFile(path string) ([]byte, error)
@@ -50,6 +50,14 @@ type Store interface {
 	WriteAtomic(path string, data []byte) error
 	// Remove deletes the file or symlink path, never a folder, returning the os error.
 	Remove(path string) error
+	// CreateExclusive makes path holding data, or fails with an error wrapping fs.ErrExist when
+	// path is there, as an open with O_CREAT|O_EXCL does. When the write fails it removes path again.
+	CreateExclusive(path string, data []byte) error
+	// RemoveDir deletes the folder path when it is empty, never a file, returning the os error.
+	RemoveDir(path string) error
+	// Alive reports whether process pid runs, one another user owns too; false for a pid of 0 or
+	// less, which would name a process group.
+	Alive(pid int) bool
 	// WriteLine makes path hold line and a newline, and nothing else.
 	WriteLine(path, line string) error
 	// AppendLines adds each line, with a newline, to the end of path, making the file if it is missing.

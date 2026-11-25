@@ -80,7 +80,7 @@ SWARM_PANE	handoff	bin/lib/merge.sh
 SWARM_PANES	handoff	bin/lib/agents.sh bin/lib/board.sh bin/lib/build.sh bin/lib/lifecycle.sh
 SWARM_PANE_LIST	handoff	bin/lib/agents.sh
 SWARM_POLL_CACHE	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.py
-SWARM_POLL_CACHE_AGE	handoff	bin/lib/merge.sh bin/lib/poll_cache.py
+SWARM_POLL_CACHE_AGE	handoff	bin/lib/merge.sh bin/lib/poll_cache.py internal/merge/pollcache.go
 SWARM_POLL_CACHE_SECONDS	handoff	bin/lib/ci_gate.py bin/lib/merge.sh bin/lib/poll_cache.py
 SWARM_PR	setting	bin/lib/build.sh bin/swarm.sh
 SWARM_PROJECT	setting	bin/lib/agents.sh bin/lib/build.sh bin/lib/lifecycle.sh bin/lib/merge.sh bin/lib/reports.sh bin/swarm.sh cmd/swarm/bridge.go hooks/lead-session.sh hooks/lead-stop.sh
