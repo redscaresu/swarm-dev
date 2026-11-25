@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:94, checked at tests/config_test.sh:95; loads
+stall_minutes = 45
