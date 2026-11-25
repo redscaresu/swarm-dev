@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:163, checked at tests/config_test.sh:164; site: merge_admin-merge_protected
+merge_admin = yes

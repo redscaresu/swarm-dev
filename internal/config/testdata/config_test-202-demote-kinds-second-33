@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:202, checked at tests/config_test.sh:203; site: demote_kinds
+demote_kinds = duplicate-code,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

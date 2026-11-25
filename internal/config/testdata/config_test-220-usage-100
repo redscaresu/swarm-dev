@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:220, checked at tests/config_test.sh:221; loads
+usage_warn_percent = 100

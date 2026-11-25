@@ -2,9 +2,12 @@
 // touching a file: the agent runner, the code host, the repo and the store. Each has exactly one
 // implementation, under internal/adapter/. The store's types sit here beside Store.
 //
-// Store has the two methods the frame's handoff needs and ReadFile, which _require-trusted reads
-// .claude.json with. The other three have none yet: each port adds the methods it needs.
+// Store has the two methods the frame's handoff needs, ReadFile, which _require-trusted reads
+// .claude.json with, and the stat, real-path and append methods the board-store ports read and
+// write files with. The other three have none yet: each port adds the methods it needs.
 package iface
+
+import "io/fs"
 
 // AgentRunner starts, reads and stops the agents. herdr is its one implementation
 // (internal/adapter/herdr).
@@ -24,6 +27,17 @@ type Repo interface{}
 type Store interface {
 	// ReadFile returns all of path's bytes, or the error the read returned.
 	ReadFile(path string) ([]byte, error)
+	// Stat returns path's file info, following a symlink. Its error wraps fs.ErrNotExist or
+	// fs.ErrPermission where the stat failed for that reason.
+	Stat(path string) (fs.FileInfo, error)
+	// Lstat returns path's file info without following a last symlink. Its error wraps as Stat's does.
+	Lstat(path string) (fs.FileInfo, error)
+	// RealPath returns the physical path `cd <dir> && pwd -P` prints, failing for a missing path or a file.
+	// It does not fail for a folder the caller may not enter, and gives a leading // as one slash.
+	RealPath(dir string) (string, error)
+	// AppendLine makes path's parent folders as mkdir -p does, then adds line and a newline to the end
+	// of path in one write, making the file 0666 before the umask if it is missing.
+	AppendLine(path, line string) error
 	// WriteLine makes path hold line and a newline, and nothing else.
 	WriteLine(path, line string) error
 	// AppendLines adds each line, with a newline, to the end of path, making the file if it is missing.

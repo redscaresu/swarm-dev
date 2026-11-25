@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:360, checked at tests/config_test.sh:361; site: base_branches
+base_branches = dev;main
