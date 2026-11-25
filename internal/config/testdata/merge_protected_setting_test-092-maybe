@@ -1,0 +1,3 @@
+# written at tests/merge_fixture.sh:282 (fresh), checked at tests/merge_protected_setting_test.sh:92; site: merge_admin-merge_protected
+merge = agent
+merge_protected = maybe

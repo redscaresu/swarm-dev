@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:141, checked at tests/config_test.sh:142; loads
+escalate_ladder = opus,fable

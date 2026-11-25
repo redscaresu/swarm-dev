@@ -1,0 +1,3 @@
+# edge: ~user and a ~ past the start are not expanded; loads
+board_dir = ~user/b
+repos_dir = /x/~/y
