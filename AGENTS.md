@@ -176,7 +176,7 @@ cmd/swarm/            the Go command, the wiring layer: the table of entries by 
                       wrapper-fixture in frame.go is for the wrapper's tests
                       bridge.go runs a form still in bash as `bash bin/swarm.sh _<name>`
 internal/iface/       the four interfaces the rules packages take (agent runner, code host, repo, store),
-                      the store's methods for the frame's files and for reading a file, and the store's types
+                      the store's methods for the frame's files and for reading, stating, resolving and appending to a file, and the store's types
 internal/adapter/     the one implementation of each: herdr/, gh/, git/ (each runs its program from PATH)
                       and store/ (.swarm/, the board's files, the frame's die and fields files, and a file
                       bash names, such as .claude.json)

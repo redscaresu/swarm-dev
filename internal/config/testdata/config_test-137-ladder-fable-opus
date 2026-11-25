@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:137, checked at tests/config_test.sh:138 (its order check is outside load_config); loads
+escalate_ladder = fable,opus

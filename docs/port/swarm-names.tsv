@@ -124,6 +124,7 @@ SWARM_UPGRADE_WORKER	handoff	bin/lib/lifecycle.sh bin/swarm.sh
 SWARM_USAGE_EVERY	setting	bin/lib/lifecycle.sh
 SWARM_WAITS	internal	bin/lib/panes.py
 SWARM_WAIT_PR_GRACE	setting	bin/lib/merge.sh
+SWARM_WAIT_PR_POLL_MAX	seam	bin/lib/merge.sh
 SWARM_WAIT_PR_RETRY	seam	bin/lib/merge.sh
 SWARM_WAIT_SLICE	handoff	bin/lib/agents.sh
 SWARM_WAIT_STARTED	seam	bin/lib/agents.sh

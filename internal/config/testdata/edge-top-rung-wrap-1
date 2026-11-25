@@ -1,0 +1,2 @@
+# edge: top_rung_rounds wraps past 2^64 to 1; site: top_rung_rounds
+top_rung_rounds = 18446744073709551617

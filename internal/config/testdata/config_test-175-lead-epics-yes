@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:175, checked at tests/config_test.sh:176; site: lead_epics
+lead_epics = yes
