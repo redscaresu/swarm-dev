@@ -26,6 +26,12 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the PR's base
           persist-credentials: false
+      # Before the gate: the base's copy of board-only.sh may build and run the swarm binary, which needs Go.
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Gate a board-only or version-only PR
         id: gate
         env:
@@ -64,6 +70,12 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the PR's base
           persist-credentials: false
+      # Before the gate: the base's copy of board-only.sh may build and run the swarm binary, which needs Go.
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Gate a board-only or version-only PR
         id: gate
         env:
@@ -73,13 +85,6 @@ jobs:
         run: |
           git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
           bash "${RUNNER_TEMP}/board-only.sh"
-      # make test builds ./cmd/swarm before any test file starts, and fails the shard without go.
-      - name: Set up Go from go.mod
-        if: steps.gate.outputs.board_only != 'true'
-        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: false
       - name: Run this shard's tests/*_test.sh (make test)
         if: steps.gate.outputs.board_only != 'true'
         env:
@@ -109,6 +114,12 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the PR's base
           persist-credentials: false
+      # Before the gate: the base's copy of board-only.sh may build and run the swarm binary, which needs Go.
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Gate a board-only or version-only PR
         id: gate
         env:

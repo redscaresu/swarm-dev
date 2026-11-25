@@ -38,6 +38,12 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the PR's base, and the base and v0.31.2 trees are worktrees
           persist-credentials: false
+      # Before the gate: the base's copy of board-only.sh may build and run the swarm binary, which needs Go.
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Gate a board-only or version-only PR
         id: gate
         env:

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # board_only_test.sh — scripts/board-only.sh on a fixture git repo: board-only for board/ paths only
 # (not a board README), fast-path for a version-only plugin.json bump on main's latest, green commit,
-# and the full suite for anything else, a change to the gate's own files included. Then ci.yml: only the
-# gated jobs may read checks and statuses, each one's checkout fetches the base, every step after the
-# gate runs only when the gate says no, shellcheck covers the script (by name or by a glob, expanded
-# from the repo root), and the test job passes only when every test-shard did. Last, the gate step run
-# as ci.yml has it: the base's copy of the gate judges the PR, or the PR's when the base has none. gh is
+# and the full suite for anything else, a change to the gate's own files included. Then the five
+# workflows that run the gate (ci.yml, diff-run.yml, go.yml, macos.yml, speed.yml): the seven gated jobs
+# are the only ones that run it or read checks and statuses, each one's checkout fetches the base, Go is
+# set up once, before the gate, every step after the gate runs only when the gate says no (a conjunct,
+# never under ||), the seven gate steps run the same commands, shellcheck covers the script (by name or
+# by a glob, expanded from the repo root), and the test job passes only when every test-shard did. Last,
+# the gate step run as ci.yml has it: the base's copy of the gate judges the PR, or the PR's when the base has none. gh is
 # a stub on PATH answering main's latest commit from ${FX}/tip and each commit's check runs from
 # ${FX}/<sha>.checks.
 set -euo pipefail
@@ -128,30 +130,45 @@ check "plugin.json that is not JSON on the PR runs everything" says false
 branch missing 'git rm -q .claude-plugin/plugin.json'
 check "plugin.json deleted on the PR runs everything" says false
 
-# ci.yml: the gate step's id and the output key the gate really writes.
+# The workflows that run the gate: the gate step's id and the output key the gate really writes.
 git -C "${G}" checkout -q board
 key="$(gate)"; key="${key%%=*}"
 check "the gate writes one output key" [ "${key}" = board_only ]
-if python3 - "${REPO}/.github/workflows/ci.yml" "${key}" "${tmp}/step.sh" "${REPO}" <<'PY'
+if python3 - "${REPO}" "${key}" "${tmp}/step.sh" <<'PY'
 import glob, os, re, sys
-path, key, out, repo = sys.argv[1:5]
-top, jobs, section, job, fails = {}, {}, None, None, 0
-for raw in open(path).read().split("\n"):
-    if not raw.strip() or raw.lstrip().startswith("#"):
-        continue
-    if not raw.startswith(" "):
-        section = raw.split(":")[0]
-        top[section] = []
-    elif section != "jobs":
-        top[section].append(raw.strip())
-    elif re.match(r"  \S", raw):
-        job = jobs.setdefault(raw.strip().rstrip(":"), {"head": [], "steps": []})
-    elif raw.startswith("      - "):
-        job["steps"].append([raw[8:]])
-    elif raw.startswith("        ") and job["steps"]:
-        job["steps"][-1].append(raw[8:])
-    else:
-        job["head"].append(re.sub(r"\s+#.*$", "", raw.strip()))
+repo, key, out = sys.argv[1:4]
+fails = 0
+
+# The jobs that run the gate, by workflow file. Every job in these files that runs it is listed here.
+GATED = {
+    "ci.yml": ("shellcheck", "test-shard", "plugin-validate"),
+    "diff-run.yml": ("diff-run",),
+    "go.yml": ("go-checks",),
+    "macos.yml": ("macos-tests",),
+    "speed.yml": ("speed",),
+}
+GATE_RUN = 'git show "${BASE_SHA}:scripts/board-only.sh"'
+
+def parse(path):
+    """A workflow's top-level sections and its jobs, each a head and a list of steps."""
+    top, jobs, section, job = {}, {}, None, None
+    for raw in open(path).read().split("\n"):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw.startswith(" "):
+            section = raw.split(":")[0]
+            top[section] = []
+        elif section != "jobs":
+            top[section].append(raw.strip())
+        elif re.match(r"  \S", raw):
+            job = jobs.setdefault(raw.strip().rstrip(":"), {"head": [], "steps": []})
+        elif raw.startswith("      - "):
+            job["steps"].append([raw[8:]])
+        elif raw.startswith("        ") and job["steps"]:
+            job["steps"][-1].append(raw[8:])
+        else:
+            job["head"].append(re.sub(r"\s+#.*$", "", raw.strip()))
+    return top, jobs
 
 def check(name, ok):
     global fails
@@ -173,45 +190,76 @@ def field(step, k):
             return "\n".join(block)
     return None
 
-GATED = ("shellcheck", "test-shard", "plugin-validate")
-check("the workflow grants only contents: read", top.get("permissions") == ["contents: read"])
-check("gitleaks gets no checks or statuses",
-      "gitleaks" in jobs and not {"checks: read", "statuses: read"} & set(jobs["gitleaks"]["head"]))
-runs = []
-for name in GATED:
-    job = jobs.get(name, {"head": [], "steps": []})
-    check("%s: grants contents, checks and statuses read" % name,
-          {"contents: read", "checks: read", "statuses: read"} <= set(job["head"]))
-    steps = job["steps"]
-    gates = [i for i, s in enumerate(steps) if 'git show "${BASE_SHA}:scripts/board-only.sh"' in (field(s, "run") or "")]
-    check("%s: one gate step runs the base's copy" % name, len(gates) == 1)
-    if len(gates) != 1:
-        continue
-    g = gates[0]
-    gid = field(steps[g], "id")
-    runs.append(field(steps[g], "run"))
-    check("%s: the gate step has an id" % name, bool(gid))
-    check("%s: a checkout before the gate fetches the base" % name,
-          any((field(s, "uses") or "").startswith("actions/checkout@")
-              and re.search(r"^\s*fetch-depth:\s*0\b", "\n".join(s), re.M) for s in steps[:g]))
-    want = "steps.%s.outputs.%s != 'true'" % (gid, key)
-    rest = steps[g + 1:]
-    check("%s: there are steps after the gate" % name, bool(rest))
-    for s in rest:
-        check("%s: '%s' runs only when %s" % (name, field(s, "name"), want), field(s, "if") == want)
+def is_gate(step):
+    return GATE_RUN in (field(step, "run") or "")
+
+def sets_go(step):
+    return (field(step, "uses") or "").startswith("actions/setup-go@")
+
+def says_no(cond, want):
+    """True when an if: runs only on the gate's no: <want> is one of its && conjuncts, and no || is in it."""
+    m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", cond or "")
+    expr = m.group(1) if m else (cond or "")
+    return "||" not in expr and want in [c.strip() for c in expr.split("&&")]
+
+runs, wfs = [], {}
+for wf, names in GATED.items():
+    top, jobs = parse(os.path.join(repo, ".github", "workflows", wf))
+    wfs[wf] = jobs
+    check("%s: the workflow grants only contents: read" % wf, top.get("permissions") == ["contents: read"])
+    check("%s: the jobs that run the gate are %s" % (wf, ", ".join(names)),
+          sorted(n for n, j in jobs.items() if any(is_gate(s) for s in j["steps"])) == sorted(names))
+    for name, job in jobs.items():
+        if name not in names:
+            check("%s %s: gets no checks or statuses" % (wf, name),
+                  not {"checks: read", "statuses: read"} & set(job["head"]))
+    for name in names:
+        job, at = jobs.get(name, {"head": [], "steps": []}), "%s %s" % (wf, name)
+        check("%s: grants contents, checks and statuses read" % at,
+              {"contents: read", "checks: read", "statuses: read"} <= set(job["head"]))
+        steps = job["steps"]
+        gates = [i for i, s in enumerate(steps) if is_gate(s)]
+        check("%s: one gate step runs the base's copy" % at, len(gates) == 1)
+        if len(gates) != 1:
+            continue
+        g = gates[0]
+        gid = field(steps[g], "id")
+        runs.append(field(steps[g], "run"))
+        check("%s: the gate step has an id" % at, bool(gid))
+        check("%s: a checkout before the gate fetches the base" % at,
+              any((field(s, "uses") or "").startswith("actions/checkout@")
+                  and re.search(r"^\s*fetch-depth:\s*0\b", "\n".join(s), re.M) for s in steps[:g]))
+        # Go before the gate, on every run: the base's copy of the gate may build and run the binary.
+        early = [s for s in steps[:g] if sets_go(s)]
+        check("%s: one step before the gate sets Go up" % at, len(early) == 1)
+        for s in early:
+            body = "\n".join(s)
+            check("%s: '%s' runs on every run, reads go.mod and pins setup-go by SHA with cache: false" % (at, field(s, "name")),
+                  field(s, "if") is None and re.match(r"actions/setup-go@[0-9a-f]{40}(\s|$)", field(s, "uses")) is not None
+                  and re.search(r"^\s*go-version-file:\s*go\.mod\s*$", body, re.M) is not None
+                  and re.search(r"^\s*cache:\s*false\s*$", body, re.M) is not None)
+        late = ["'%s'" % field(s, "name") for s in steps[g + 1:] if sets_go(s)]
+        check("%s: no step after the gate sets Go up%s" % (at, ": " + ", ".join(late) if late else ""), not late)
+        want = "steps.%s.outputs.%s != 'true'" % (gid, key)
+        rest = steps[g + 1:]
+        check("%s: there are steps after the gate" % at, bool(rest))
+        for s in rest:
+            check("%s: '%s' runs only when %s, never under ||" % (at, field(s, "name"), want), says_no(field(s, "if"), want))
+jobs = wfs["ci.yml"]
 agg = jobs.get("test", {"head": [], "steps": []})
-check("test: needs every test-shard, runs always and passes only on their success",
+check("ci.yml test: needs every test-shard, runs always and passes only on their success",
       {"needs: test-shard", "if: always()"} <= set(agg["head"])
       and any("${{ needs.test-shard.result }}" in "\n".join(s) and field(s, "run") == "'[ \"${RESULT}\" = success ]'"
               for s in agg["steps"]))
-check("the three gate steps run the same commands", len(runs) == len(GATED) and len(set(runs)) == 1)
+total = sum(len(n) for n in GATED.values())
+check("the %d gate steps run the same commands" % total, len(runs) == total and len(set(runs)) == 1)
 def shellchecked(run):
     """The repo paths a shellcheck step's command covers, its globs expanded from the repo root as bash would."""
     words = (run or "").split()
     if words[:1] != ["shellcheck"]:
         return set()
     return {os.path.relpath(f, repo) for w in words[1:] for f in glob.glob(os.path.join(repo, w))}
-check("shellcheck: the shellcheck step covers scripts/board-only.sh",
+check("ci.yml shellcheck: the shellcheck step covers scripts/board-only.sh",
       any("scripts/board-only.sh" in shellchecked(field(s, "run")) for s in jobs.get("shellcheck", {}).get("steps", [])))
 open(out, "w").write(runs[0] + "\n" if runs else "exit 1\n")
 sys.exit(fails > 0)
