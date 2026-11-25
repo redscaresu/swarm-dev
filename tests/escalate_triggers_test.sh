@@ -115,6 +115,8 @@ fresh() {
   "${GIT[@]}" -C "${P}" worktree add -q -b story/s1 "${WT}" origin/main
   echo work > "${WT}/work.txt"; "${GIT[@]}" -C "${WT}" add work.txt
   GIT_COMMITTER_DATE="@${OLD}" "${GIT[@]}" -C "${WT}" commit -qm work
+  # Pushed: a close that clears a build keeps one with a commit origin does not have (unpushed_work).
+  git -C "${WT}" push -q origin story/s1
   printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
@@ -278,9 +280,7 @@ for ladder in sonnet,opus,fable ""; do
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
     # With the ladder off a step-up lock means nothing: a close goes on and counts the attempt.
-    # s1's work is pushed first: a close keeps a build with a commit origin does not have.
     fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
-    git -C "${WT}" push -q origin story/s1
     out="$(run close s1)" && rc=0 || rc=$?
     check "ladder '${ladder}': a held step-up lock does not stop a close" "0|no|1" \
       "${rc}|$(grep -q 'another step-up' <<< "${out}" && echo yes || echo no)|$(attempts)"
