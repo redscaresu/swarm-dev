@@ -16,10 +16,10 @@ import (
 	"github.com/redscaresu/swarm-dev/internal/adapter/git"
 )
 
-// pythonBound bounds one run of the Python side, and setupBound one git call that sets a case up.
+// gitPythonBound bounds one run of the Python side, and gitSetupBound one git call that sets a case up.
 const (
-	pythonBound = 60 * time.Second
-	setupBound  = 30 * time.Second
+	gitPythonBound = 60 * time.Second
+	gitSetupBound  = 30 * time.Second
 )
 
 // pyGit runs each step of argv[2] through report.py (argv[1] is bin/lib) and prints the results as one
@@ -54,10 +54,10 @@ type gitStep struct {
 	Seconds int      `json:"seconds"`
 }
 
-// stubScript is a git that answers by its last argument, run as git -C <root> <args>. A config call
+// gitStubScript is a git that answers by its last argument, run as git -C <root> <args>. A config call
 // prints $STUB_SSH with CRLF, or fails when it is empty. env prints only the variables it names, never
 // the whole environment, which holds the session's credentials.
-const stubScript = `#!/bin/sh
+const gitStubScript = `#!/bin/sh
 last=
 for a; do last=$a; done
 if [ "$3" = config ]; then
@@ -86,9 +86,9 @@ latin) printf 'caf\351\n' >&2; exit 1 ;;
 esac
 `
 
-// runPyGit runs steps through report.py and gives its JSON, decoded. Its stdin carries a line, so a
+// runGitPython runs steps through report.py and gives its JSON, decoded. Its stdin carries a line, so a
 // quiet_git that let git read stdin shows it.
-func runPyGit(t *testing.T, steps []gitStep) []any {
+func runGitPython(t *testing.T, steps []gitStep) []any {
 	t.Helper()
 	lib, err := filepath.Abs(filepath.Join("..", "..", "bin", "lib"))
 	if err != nil {
@@ -98,7 +98,7 @@ func runPyGit(t *testing.T, steps []gitStep) []any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pythonBound)
+	ctx, cancel := context.WithTimeout(context.Background(), gitPythonBound)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "python3", "-c", pyGit, lib, string(arg))
 	cmd.Stdin = strings.NewReader("leak\n")
@@ -117,9 +117,9 @@ func runPyGit(t *testing.T, steps []gitStep) []any {
 	return got
 }
 
-// runGo runs steps through the Go, with a fresh Git, and gives the results as JSON decodes them, so
-// they compare with runPyGit's.
-func runGo(t *testing.T, steps []gitStep) []any {
+// runGitGo runs steps through the Go, with a fresh Git, and gives the results as JSON decodes them, so
+// they compare with runGitPython's.
+func runGitGo(t *testing.T, steps []gitStep) []any {
 	t.Helper()
 	g := NewGit(git.Repo{})
 	var out []any
@@ -162,7 +162,7 @@ func runGo(t *testing.T, steps []gitStep) []any {
 // realGit runs the git on PATH in dir for a case's setup, and fails the test if it fails.
 func realGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), setupBound)
+	ctx, cancel := context.WithTimeout(context.Background(), gitSetupBound)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -170,29 +170,29 @@ func realGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// compare runs steps on both sides and fails on any difference, naming the case.
-func compare(t *testing.T, name string, steps []gitStep) {
+// compareGit runs steps on both sides and fails on any difference, naming the case.
+func compareGit(t *testing.T, name string, steps []gitStep) {
 	t.Helper()
-	py, goes := runPyGit(t, steps), runGo(t, steps)
+	py, goes := runGitPython(t, steps), runGitGo(t, steps)
 	t.Logf("%s: %#v", name, py)
 	if !reflect.DeepEqual(py, goes) {
 		t.Errorf("%s: report.py and the Go differ\n  py %#v\n  go %#v", name, py, goes)
 	}
 }
 
-// repoVars are the variables that point git at a repository other than -C's. A test run from a git
+// gitRepoVars are the variables that point git at a repository other than -C's. A test run from a git
 // hook inherits GIT_DIR and GIT_INDEX_FILE, which would aim the setup's init and commit at the real
 // repository.
-var repoVars = []string{
+var gitRepoVars = []string{
 	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
 	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES",
 }
 
-// isolate keeps the user's and the system's git config and any repository the caller points git at out,
+// isolateGit keeps the user's and the system's git config and any repository the caller points git at out,
 // and reads text as UTF-8 on both sides, as every UTF-8 locale does. It sets GIT_TERMINAL_PROMPT to 1,
 // so a QuietGit that dropped its own 0 shows.
-func isolate(t *testing.T) {
-	for _, v := range repoVars {
+func isolateGit(t *testing.T) {
+	for _, v := range gitRepoVars {
 		t.Setenv(v, "") // puts the caller's value back after the test
 		if err := os.Unsetenv(v); err != nil {
 			t.Fatal(err)
@@ -208,10 +208,10 @@ func isolate(t *testing.T) {
 }
 
 // If report.py's git_fetch gave the first stderr line, the missing remote's would differ. If
-// BatchSSH dropped core.sshCommand, the order it tries them in or its cache, or QuietGit dropped the
-// batch ssh, the ssh steps would differ. Every case runs the real git.
+// BatchSSH dropped core.sshCommand or its cache, or QuietGit dropped the batch ssh, the ssh steps
+// would differ. Every case runs the real git.
 func TestGitCompareRealRepo(t *testing.T) {
-	isolate(t)
+	isolateGit(t)
 	tmp := t.TempDir()
 	upstream, clone, ssh := filepath.Join(tmp, "upstream"), filepath.Join(tmp, "clone"), filepath.Join(tmp, "fake-ssh")
 	realGit(t, tmp, "init", "-q", upstream)
@@ -222,10 +222,10 @@ func TestGitCompareRealRepo(t *testing.T) {
 	}
 	overSSH := []string{"fetch", "-q", "ssh://git@example.invalid/x.git"}
 
-	compare(t, "a missing remote", []gitStep{{Op: "fetch", Root: clone, Args: []string{"nosuch"}}})
-	compare(t, "a fetch that works", []gitStep{{Op: "fetch", Root: clone, Args: []string{"origin"}}})
-	compare(t, "no ssh set", []gitStep{{Op: "ssh", Root: clone}})
-	compare(t, "core.sshCommand set, then changed", []gitStep{
+	compareGit(t, "a missing remote", []gitStep{{Op: "fetch", Root: clone, Args: []string{"nosuch"}}})
+	compareGit(t, "a fetch that works", []gitStep{{Op: "fetch", Root: clone, Args: []string{"origin"}}})
+	compareGit(t, "no ssh set", []gitStep{{Op: "ssh", Root: clone}})
+	compareGit(t, "core.sshCommand set, then changed", []gitStep{
 		{Op: "config", Root: clone, Args: []string{"core.sshCommand", ssh + " -v"}},
 		{Op: "ssh", Root: clone},
 		{Op: "quiet", Root: clone, Args: overSSH, Seconds: FetchSeconds},
@@ -234,21 +234,23 @@ func TestGitCompareRealRepo(t *testing.T) {
 		{Op: "config", Root: clone, Args: []string{"--unset", "core.sshCommand"}},
 	})
 	t.Setenv(sshCommand, ssh+" -x")
-	compare(t, "GIT_SSH_COMMAND set", []gitStep{
+	compareGit(t, "GIT_SSH_COMMAND set", []gitStep{
 		{Op: "ssh", Root: clone},
 		{Op: "quiet", Root: clone, Args: overSSH, Seconds: FetchSeconds},
 		{Op: "fetch", Root: clone, Args: overSSH[2:]},
 	})
 }
 
-// If QuietGit dropped GIT_TERMINAL_PROMPT=0, the closed stdin or the batch ssh, the env step's
-// output would differ; if it dropped the bound, the sleep would run out its 5 s and exit 0. If the
-// adapter stopped reading when git exited, late would lose the line git's child writes after; if it
-// read on past the bound, linger would give git's 0, not report.py's 124. The other steps pin GitFetch's last line, its "exit N" and Python's text mode, newlines and errors.
+// If QuietGit dropped GIT_TERMINAL_PROMPT=0 or the batch ssh, or the adapter gave git a stdin, the
+// env step's output would differ; if QuietGit dropped the bound, the sleep would run out its 5 s and
+// exit 0. If BatchSSH tried core.sshCommand before GIT_SSH_COMMAND, the env step with both set would
+// name the wrong ssh. If the adapter stopped reading when git exited, late would lose the line git's
+// child writes after; if it read on past the bound, linger would give git's 0, not report.py's 124.
+// The other steps pin GitFetch's last line, its "exit N" and Python's text mode, newlines and errors.
 func TestGitCompareStub(t *testing.T) {
-	isolate(t)
+	isolateGit(t)
 	stubs := t.TempDir()
-	if err := os.WriteFile(filepath.Join(stubs, "git"), []byte(stubScript), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(stubs, "git"), []byte(gitStubScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -258,15 +260,15 @@ func TestGitCompareStub(t *testing.T) {
 	}
 	fetch := func(arg string) gitStep { return gitStep{Op: "fetch", Root: root, Args: []string{arg}} }
 
-	compare(t, "no ssh set", []gitStep{quiet("env", FetchSeconds)})
+	compareGit(t, "no ssh set", []gitStep{quiet("env", FetchSeconds)})
 	t.Setenv("STUB_SSH", "  cfg-ssh -v ")
-	compare(t, "core.sshCommand set", []gitStep{quiet("env", FetchSeconds)})
+	compareGit(t, "core.sshCommand set", []gitStep{quiet("env", FetchSeconds)})
 	t.Setenv(sshCommand, "user-ssh -x")
-	compare(t, "GIT_SSH_COMMAND set", []gitStep{quiet("env", FetchSeconds)})
-	compare(t, "past the bound", []gitStep{quiet("sleep", 1)})
-	compare(t, "a child holds the output past the bound", []gitStep{quiet("linger", 2)})
-	compare(t, "a child writes after git exits, inside the bound", []gitStep{quiet("late", FetchSeconds)})
-	compare(t, "output", []gitStep{
+	compareGit(t, "GIT_SSH_COMMAND set", []gitStep{quiet("env", FetchSeconds)})
+	compareGit(t, "past the bound", []gitStep{quiet("sleep", 1)})
+	compareGit(t, "a child holds the output past the bound", []gitStep{quiet("linger", 2)})
+	compareGit(t, "a child writes after git exits, inside the bound", []gitStep{quiet("late", FetchSeconds)})
+	compareGit(t, "output", []gitStep{
 		fetch("spaces"), fetch("silent"), fetch("signal"), fetch("latin"), quiet("latin", FetchSeconds),
 	})
 }
@@ -278,7 +280,7 @@ func TestGitComparePythonSpace(t *testing.T) {
 cs = range(0x110000)
 print(json.dumps([[c for c in cs if chr(c).isspace()], [c for c in cs if len(("a" + chr(c) + "b").splitlines()) == 2]]))
 `
-	ctx, cancel := context.WithTimeout(context.Background(), pythonBound)
+	ctx, cancel := context.WithTimeout(context.Background(), gitPythonBound)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "python3", "-c", script).Output()
 	if err != nil {

@@ -85,7 +85,9 @@ func (g *Git) BatchSSH(root string) (string, error) {
 
 // QuietGit runs git <args> in root so that it never prompts, even when a partial clone fetches on
 // demand: no stdin, no terminal prompt (GIT_TERMINAL_PROMPT=0) and ssh in batch mode (BatchSSH).
-// It stops git after seconds, and then gives exit 124 and "over <seconds> s" on stderr.
+// It stops git after seconds, and then gives exit 124 and "over <seconds> s" on stderr. seconds must
+// be positive: with zero or less QuietGit gives the repo's error, where report.py's quiet_git starts
+// git, stops it at once and gives exit 124.
 func (g *Git) QuietGit(root string, seconds int, args ...string) (Completed, error) {
 	ssh, err := g.BatchSSH(root)
 	if err != nil {
