@@ -1,0 +1,16 @@
+{
+  "comment": "a version ending in one LF keeps the text before it, as $( ) strips it",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.0\n"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok"
+      ]
+    }
+  ]
+}

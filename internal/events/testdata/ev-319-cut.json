@@ -1,0 +1,13 @@
+{
+  "comment": "tests/events_test.sh:319 (ev): outcome() and fields() read each row exactly: die: foo with no fields",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "die: foo ~~"
+      ]
+    }
+  ]
+}

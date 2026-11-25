@@ -1,0 +1,16 @@
+{
+  "comment": "a cr in the target column",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "a\rb",
+        "ok"
+      ]
+    }
+  ]
+}

@@ -38,7 +38,7 @@ SWARM_FIELD	handoff	bin/lib/agents.sh
 SWARM_FINDING_REVIEWERS	handoff	bin/lib/report.py bin/lib/reports.sh bin/lib/retro_report.py
 SWARM_FIX_MAIN_LOG_SECONDS	setting	bin/lib/lifecycle.sh bin/lib/merge.sh
 SWARM_FLOW_SECTIONS	handoff	bin/lib/reports.sh
-SWARM_FORBID_PROJECT	seam	bin/swarm.sh hooks/lead-stop.sh hooks/merge-guard.sh
+SWARM_FORBID_PROJECT	seam	bin/swarm.sh hooks/lead-stop.sh hooks/merge-guard.sh internal/events/events.go
 SWARM_GH_CACHE	setting	bin/lib/board.sh bin/lib/gh_cache.py bin/lib/reports.sh
 SWARM_GH_CALLER	handoff	bin/gh-shim/gh bin/lib/agents.sh bin/lib/lifecycle.sh bin/swarm.sh hooks/lead-session.sh
 SWARM_GH_FRESH	handoff	bin/lib/board.sh bin/lib/gh_cache.py bin/lib/merge.sh bin/lib/reports.sh

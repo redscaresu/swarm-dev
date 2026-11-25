@@ -1,0 +1,28 @@
+{
+  "comment": "tests/events_test.sh:362 (evv): append_event with a field writes that field, then version=, after the outcome; version= is read once per process",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "ok (round 2)",
+        "round=2"
+      ]
+    },
+    {
+      "args": [
+        "x",
+        "t",
+        "ok (round 2)",
+        "round=2"
+      ],
+      "manifest": {
+        "version": "9.9.9"
+      }
+    }
+  ]
+}

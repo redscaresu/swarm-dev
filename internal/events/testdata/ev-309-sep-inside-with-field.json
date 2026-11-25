@@ -1,0 +1,14 @@
+{
+  "comment": "tests/events_test.sh:309 (ev): outcome() and fields() read each row exactly: a b with k=v",
+  "pane": "w:me",
+  "calls": [
+    {
+      "args": [
+        "x",
+        "t",
+        "a ~~ b",
+        "k=v"
+      ]
+    }
+  ]
+}

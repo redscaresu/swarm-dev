@@ -1,0 +1,16 @@
+{
+  "comment": "an empty HERDR_PANE_ID is -",
+  "pane": "",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok"
+      ]
+    }
+  ]
+}

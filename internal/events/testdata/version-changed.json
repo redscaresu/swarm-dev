@@ -1,0 +1,26 @@
+{
+  "comment": "plugin.json changed between two appends in one process: both lines keep the first version",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "one",
+        "t",
+        "ok"
+      ]
+    },
+    {
+      "args": [
+        "two",
+        "t",
+        "ok"
+      ],
+      "manifest": {
+        "version": "2.0"
+      }
+    }
+  ]
+}

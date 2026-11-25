@@ -1,0 +1,16 @@
+{
+  "comment": "a version holding a space gives no version=",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1 0"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok"
+      ]
+    }
+  ]
+}

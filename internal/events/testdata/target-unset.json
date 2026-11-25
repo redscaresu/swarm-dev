@@ -1,0 +1,14 @@
+{
+  "comment": "no target argument is -, and no outcome is ok",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c"
+      ]
+    }
+  ]
+}

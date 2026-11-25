@@ -1,0 +1,17 @@
+{
+  "comment": "a cr in the outcome column",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "a\rb",
+        "k=v"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "comment": "an empty field is left out with a warning",
+  "pane": "w:me",
+  "manifest": {
+    "version": "1.2.3"
+  },
+  "calls": [
+    {
+      "args": [
+        "c",
+        "t",
+        "ok",
+        "",
+        "k=v"
+      ]
+    }
+  ]
+}
