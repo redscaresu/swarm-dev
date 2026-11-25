@@ -8,6 +8,7 @@
 # until or while condition or followed on its line by `&& return` or `|| return`; a bash `set -C` (noclobber)
 # create; O_EXCL; flock( or lockf(; and os.Mkdir or os.Link in Go. A lock function is a function that holds a
 # primitive; a take site is a primitive or a call to a lock function in a file of the same language. A
+# method's line in a top-level Go interface type is its declaration, so it is no call. A
 # primitive's expr is the path it takes, as written; a call's is the call, the function and its arguments.
 # Whitespace is collapsed. These are heuristics: a lock taken some other way is not found.
 #
@@ -150,7 +151,7 @@ function call_text(s,    i, c, d) {
 function site(i, expr) { if (expr != "") { NS++; SF[NS] = F[i]; SFN[NS] = FN[i]; SX[NS] = trim(expr); LOCKFN[LG[i], FN[i]] = 1 } }
 function emit(i, expr) { if (expr != "") print F[i] "\t" FN[i] "\t" trim(expr) }
 
-FNR == 1 { lg = lang_of(FILENAME, $0); cur = "-"; sp = 0; hd = ""; open = ""; cont = 0 }
+FNR == 1 { lg = lang_of(FILENAME, $0); cur = "-"; sp = 0; hd = ""; open = ""; cont = 0; ifc = 0 }
 lg == "" { next }
 {
   t = $0
@@ -179,7 +180,10 @@ lg == "" { next }
   } else {
     if (match(t, /^func[ \t]+(\([^)]*\)[ \t]*)?[A-Za-z_][A-Za-z0-9_]*/)) { s = substr(t, RSTART, RLENGTH); sub(/.*[ \t)]/, "", s); cur = s }
     FN[N] = cur
-    if (t ~ /^\}/) cur = "-"
+    # IFC: the line is inside a top-level interface type, whose method lines declare and never call.
+    if (t ~ /^type[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+interface[ \t]*\{[ \t]*$/) ifc = 1
+    else if (t ~ /^\}/) { cur = "-"; ifc = 0 }
+    IFC[N] = ifc
   }
 }
 
@@ -237,7 +241,7 @@ END {
   for (i = 1; i <= N; i++) {
     t = L[i]
     if (LG[i] == "go" ? t ~ /^[ \t]*\/\// : t ~ /^[ \t]*#/) continue
-    if (LG[i] == "sh" && DATA[i]) continue
+    if ((LG[i] == "sh" && DATA[i]) || (LG[i] == "go" && IFC[i])) continue
     m = (LG[i] == "sh") ? "" : t
     for (k in LOCKFN) {
       split(k, kp, SUBSEP); if (kp[1] != LG[i] || kp[2] == "-" || !index(t, kp[2])) continue
@@ -329,6 +333,9 @@ func Take(p string) error {
 	return os.Link(tmp, p+".pid")
 }
 func use() { _ = Take(dir) }
+type Taker interface {
+	Take(p string) error
+}
 GO
 printf 'func T(t *testing.T) { os.Mkdir("x", 0o755) }\n' > "${F}/internal/x/x_test.go"
 printf '{"mkdir": "x"}\n' > "${F}/hooks/hooks.json"

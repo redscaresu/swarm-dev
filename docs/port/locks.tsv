@@ -64,3 +64,5 @@
 .swarm/first-green/<owner>+<repo>#<n>	mkdir	never: the marker stays, so each PR logs one first-green; it is removed only when that line cannot be written	bin/lib/merge.sh	wait_pr	first_green "${repo}" "${n}" "${branch}" "${head}"	1
 .swarm/poll-cache/<key>.lock	o-excl	a dead pid, or held past the cache's max age: released by the next reader, which takes it then	bin/lib/poll_cache.py	lock	path	1
 .swarm/poll-cache/<key>.lock	o-excl	a dead pid, or held past the cache's max age: released by the next reader, which takes it then	bin/lib/poll_cache.py	through	lock(lk)	1
+.swarm/poll-cache/<key>.lock	o-excl	a dead pid, or held past the cache's max age: released by the next reader, which takes it then	internal/merge/pollcache_lock.go	lock	CreateExclusive(path, []byte(strconv.Itoa(pid)))	1
+<caller's path>	o-excl	never: the create fails while the path is there, with an error wrapping fs.ErrExist; its caller breaks a stale lock	internal/adapter/store/store.go	CreateExclusive	path	1
