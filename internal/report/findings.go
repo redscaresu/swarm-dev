@@ -1,5 +1,3 @@
-// Package report holds the Go copies of bin/lib/report.py's readers, rule for rule. findings.go is
-// finding_rows and fixed_rows, the readers of .swarm/findings.tsv. No caller runs them yet.
 package report
 
 import (
@@ -8,11 +6,13 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/redscaresu/swarm-dev/internal/iface"
 	"github.com/redscaresu/swarm-dev/internal/pytext"
 )
+
+// The readers of .swarm/findings.tsv in bin/lib/report.py (finding_rows and fixed_rows), rule for rule.
+// No caller runs them yet.
 
 // reviewersVar names the reviewers log-finding takes, space-separated. A row whose sixth column is
 // none of them, and not unknownReviewer, is dropped.
@@ -119,10 +119,4 @@ func pad(f []string, width int) []string {
 	}
 	row = append(row, make([]string, emptyCols)...)
 	return row[:min(len(row), width)]
-}
-
-// pySpace is what Python's str.split() with no argument splits at: Go's unicode.IsSpace and the
-// four separators U+001C to U+001F, which Python counts as whitespace and Go does not.
-func pySpace(r rune) bool {
-	return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f')
 }

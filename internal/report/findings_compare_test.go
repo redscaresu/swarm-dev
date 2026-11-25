@@ -258,8 +258,9 @@ func writeCases(t *testing.T, dir string, cs []findingsCase) ([]string, []byte) 
 	return paths, in.Bytes()
 }
 
-// runPython reads every case with report.py and returns one result line per case.
-func runPython(t *testing.T, in []byte) []string {
+// runFindingsPython reads every case with report.py, under python3 -I so no PYTHONPATH or user site
+// reaches it, and returns one result line per case.
+func runFindingsPython(t *testing.T, in []byte) []string {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Fatalf("the comparison needs python3 on PATH, as report.py does: %v", err)
@@ -270,13 +271,13 @@ func runPython(t *testing.T, in []byte) []string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pythonTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "python3", "-c", pythonFindings, lib)
+	cmd := exec.CommandContext(ctx, "python3", "-I", "-c", pythonFindings, lib)
 	cmd.Stdin = bytes.NewReader(in)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("python3: %v\n%s", err, stderr.String())
+		t.Fatalf("python3 -I over report.py: %v\n%s", err, stderr.String())
 	}
 	var lines []string
 	sc := bufio.NewScanner(bytes.NewReader(out))
@@ -293,7 +294,7 @@ func runPython(t *testing.T, in []byte) []string {
 func TestFindingsMatchPython(t *testing.T) {
 	cs := findingsCases()
 	paths, in := writeCases(t, t.TempDir(), cs)
-	want := runPython(t, in)
+	want := runFindingsPython(t, in)
 	if len(want) != len(cs) {
 		t.Fatalf("python3 gave %d results for %d cases", len(want), len(cs))
 	}
