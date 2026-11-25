@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:110, checked at tests/config_test.sh:111; site: non-negative
+escalate_after = two

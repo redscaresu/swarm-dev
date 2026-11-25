@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:237, checked at tests/config_test.sh:238; site: commit_trailers
+commit_trailers = Ann <a@x.io>

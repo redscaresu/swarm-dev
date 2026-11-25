@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:212, checked at tests/config_test.sh:213; loads
+fallback_reviewer = sonnet

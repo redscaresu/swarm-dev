@@ -1,0 +1,5 @@
+# edge: CRLF line ends; loads
+merge = agent
+stall_minutes = 45
+# c
+
