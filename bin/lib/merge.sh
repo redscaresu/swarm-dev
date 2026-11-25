@@ -41,7 +41,7 @@ BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, m
 BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 PULL_FORWARD_WAIT=120   # how long pull_forward's fetch into a builder's worktree, and its tell to the builder, may each take
 DROPPED_FETCH_WAIT=120  # how long dropped-lines' fetch of a PR's head and base may take (SWARM_DROPPED_FETCH_WAIT, for tests)
-DROPPED_GIT_MIN=2.36    # the oldest git with show --remerge-diff, which dropped_lines.py reads
+DROPPED_GIT_MIN=2.36    # the oldest git with show --remerge-diff, which the binary's _dropped-lines check reads
 PR_COMMITS_MAX=250      # the most commits GitHub lists for one PR (pulls/<n>/commits): dropped_hold sees no further
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 MERGE_LOCK_WAIT=900     # how long a direct merge waits for another into the same repo and base to finish its merge (SWARM_MERGE_LOCK_WAIT, for tests)
@@ -866,7 +866,7 @@ base_accepted_from() {
 # dropped_lines [--story <slug>] <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits
 # dropped, read only: it changes nothing on the board, and main logs nothing for it. --story names the
 # PR's own story: when the board is in the project's repo and gh names that repo <owner/repo>
-# (origin_repo), dropped_lines.py gets that story's file there (<board>/stories/<slug>.md) as
+# (origin_repo), _dropped-lines gets that story's file there (<board>/stories/<slug>.md) as
 # `--own <path>`, and counts no line of it when <head> deletes it, as a story PR does (v0.31.2's holds
 # on #1003, #1006 and #1008, each a line a board PR added to the file). A story PR in another repo, or
 # one gh cannot name the project's repo for, counts that file as any other. It stops unless gh lists <head>
@@ -879,10 +879,13 @@ base_accepted_from() {
 # to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
 # GitHub's web editor).
 # With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it asks
-# merged_parent about each merge left, passes dropped_lines.py each second parent and squash it names as
-# `--merged <sha>:<squash>`, so a stacked build's merge of a merged parent's branch is scanned against
-# the squashes of the PRs that hold that branch, and prints dropped_lines.py's lines and exits with its
-# code: 0 none, 1 lines dropped (only with a `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
+# merged_parent about each merge left, and runs the check on the fetched PR: `binary_run _dropped-lines`
+# (cmd/swarm/dropped.go, internal/merge's Dropped), one process start. It passes the check each second
+# parent and squash merged_parent names as `--merged <sha>:<squash>`, so a stacked build's merge of a
+# merged parent's branch is scanned against the squashes of the PRs that hold that branch, and prints
+# the check's lines and exits with its code: 0 none, 1 lines dropped (only with a `<sha7> <file>: <text>`
+# line printed), 2 cannot check. An exit 1 with no such line (the check's error or panic, one line on
+# stderr) and any other code die. Every other stop, a die or a set -e one, exits
 # 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
 dropped_lines() {
   local story="" repo n head base url src shas out tip merges m p sha ver rc=0 keep=() args=() own=()
@@ -921,15 +924,15 @@ dropped_lines() {
     p="$(merged_parent "${repo}" "${m}")" || die "dropped-lines: ${p}"
     for sha in ${p}; do args+=(--merged "${sha}"); done   # <second parent>:<squash>, one per merged PR
   done
-  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" ${own[@]+"${own[@]}"} "${args[@]}")" || rc=$?
+  rc=0; out="$(binary_run _dropped-lines "${src}" "${tip}" "${head}" ${own[@]+"${own[@]}"} "${args[@]}")" || rc=$?
   case ${rc} in
     0) [[ -z "${out}" ]] || echo "${out}" ;;
-    1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: dropped_lines.py exited 1 with no dropped line: ${out:-it printed nothing}"
+    1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: _dropped-lines exited 1 with no dropped line: ${out:-it printed nothing}"
        echo "${out}"
        # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
        DROPPED_FOUND=1; exit 1 ;;
     2) echo "${out}"; exit 2 ;;
-    *) die "dropped-lines: dropped_lines.py exited ${rc}: ${out:-it printed nothing}" ;;
+    *) die "dropped-lines: _dropped-lines exited ${rc}: ${out:-it printed nothing}" ;;
   esac
 }
 
@@ -937,9 +940,9 @@ dropped_lines() {
 # merge of a parent's branch whose PR has merged (dropped_lines), read in the clone and against the base
 # pr_fetch fetched (DROPPED_DIR, DROPPED_TIP): <merge> has two parents, neither on the fetched base, and gh
 # lists a merged PR that holds the second parent whose merge commit (merge_commit_sha, the parent's squash)
-# is on the fetched base. One line per such PR, as stacked PRs share commits; dropped_lines.py checks the
-# merge against those squashes.
-# Nothing for any other merge, which dropped_lines.py scans or refuses as before. gh's
+# is on the fetched base. One line per such PR, as stacked PRs share commits; the _dropped-lines check
+# reads the merge against those squashes.
+# Nothing for any other merge, which the check scans or refuses as before. gh's
 # commits/<sha>/pulls is GitHub's record of the PRs whose commits hold <sha>, a merged PR's commits too,
 # so no branch name or story is guessed at. When gh fails or does not answer within BASE_MOVED_WAIT, it
 # prints why and returns 1.
@@ -991,7 +994,7 @@ pr_fetch() {
 }
 
 # remerge_git — print git's version, and succeed when it is DROPPED_GIT_MIN or newer, the first with
-# git show --remerge-diff (dropped_lines.py's read, and base_merges_only's).
+# git show --remerge-diff (the _dropped-lines check's read, and base_merges_only's).
 remerge_git() {
   local ver
   ver="$(git version 2>/dev/null)" || ver=""; ver="${ver#git version }"; ver="${ver%% *}"
@@ -1094,7 +1097,7 @@ dropped_hold() {
       set -e; dropped_lines ${story[@]+"${story[@]}"} "${repo}" "${n}" "${head}" "${base}" ) > "${tmp}" 2> "${tmp}.err" &
     rc=0; wait $! || rc=$?
     lines="$(grep -E '^[0-9a-f]{7} .+: ' "${tmp}" || true)"
-    # The why: its die line, else the last line it printed (dropped_lines.py's reason).
+    # The why: its die line, else the last line it printed (the _dropped-lines check's reason).
     why="$(awk 'index($0, "swarm: ") == 1 { l = substr($0, 8) } END { print l }' "${tmp}.err")"
     [[ -n "${why}" ]] || why="$(awk 'NF { l = $0 } END { print l }' "${tmp}")"
     rm -f "${tmp}" "${tmp}.err"

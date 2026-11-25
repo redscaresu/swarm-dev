@@ -315,7 +315,7 @@ func TestDroppedShort(t *testing.T) {
 
 // If sides took the first parent as the base side in both orders, read --merged for a merge with a
 // parent on the base, or lost a stop, these would differ. Each stop's text is the Python's format
-// string (dropped_lines.py's sides).
+// string (the Python helper's sides).
 func TestDroppedSides(t *testing.T) {
 	r := droppedNewRepo(t)
 	a := r.commit("A", "a.txt", "a\n")

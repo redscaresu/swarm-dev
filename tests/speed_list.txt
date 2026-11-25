@@ -1,6 +1,7 @@
 # speed_list.txt — the commands tests/speed_run.sh times, one fixture name a line: each names a
 # fixture fx_<name> in a tests/diff_fixtures_<area>.sh file, and a name with none is red. A port epic
 # adds the commands it ports, each on a line of its own.
+dropped_entry_scan
 next
 status
 trusted_git

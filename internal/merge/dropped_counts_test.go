@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Every want below is what dropped_lines.py's own Counter, owed, missing, extends and extended
+// Every want below is what the Python helper's own Counter, owed, missing, extends and extended
 // give for the same input, run by hand with python3 on 2026-11-24; the PR that added this file has
 // the runs.
 

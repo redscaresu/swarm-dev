@@ -22,3 +22,4 @@ trusted_not_object python3
 trusted_nan python3
 trusted_nested python3
 trusted_deep python3
+dropped_entry_scan python3 sed perl curl

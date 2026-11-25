@@ -1,8 +1,8 @@
 package merge
 
-// The remerge diff's removed lines, and the text the dropped-lines check prints, as
-// bin/lib/dropped_lines.py reads them: its unquote, removed and clean, and the cut its scan makes.
-// Nothing runs this yet; dropped-go-scan's check is built on it.
+// The remerge diff's removed lines, and the text the dropped-lines check prints, as the Python helper
+// it replaced read them (bin/lib's dropped_lines, as tag v0.32.0 has it): its unquote, removed and
+// clean, and the cut its scan made. dropped.go's check is built on them.
 
 import (
 	"bytes"

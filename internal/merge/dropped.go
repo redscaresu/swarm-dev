@@ -1,8 +1,10 @@
 package merge
 
-// The dropped-lines check from its arguments to its lines and exit code, ported from
-// bin/lib/dropped_lines.py: its main block and scan, built on dropped_diff.go's removed lines and
-// text, dropped_counts.go's counting rules and dropped_reads.go's git reads. Nothing runs it yet.
+// The dropped-lines check from its arguments to its lines and exit code, ported from the Python
+// helper it replaced (bin/lib's dropped_lines, as tag v0.32.0 has it): its main block and scan, built
+// on dropped_diff.go's removed lines and text, dropped_counts.go's counting rules and dropped_reads.go's
+// git reads. The binary's _dropped-lines entry (cmd/swarm/dropped.go) runs it for dropped_lines in
+// bin/lib/merge.sh.
 
 import (
 	"bytes"
@@ -15,7 +17,7 @@ import (
 	"github.com/redscaresu/swarm-dev/internal/iface"
 )
 
-// droppedUsage is the check's usage stop, the text swarm.sh _dropped-lines gives the Python.
+// droppedUsage is the check's usage stop. It names swarm.sh _dropped-lines, the entry that runs it.
 const droppedUsage = "usage: swarm.sh _dropped-lines <repo-dir> <base> <head> [--own <path>] [--merged <sha>:<squash>]... [<merge sha>...]"
 
 const (

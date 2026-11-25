@@ -9,7 +9,7 @@ import (
 	"github.com/redscaresu/swarm-dev/internal/iface"
 )
 
-// The git reads of the dropped-lines check, ported from bin/lib/dropped_lines.py: git, ancestor,
+// The git reads of the dropped-lines check, ported from the Python helper it replaced: git, ancestor,
 // sides, and scan's read, renamed and named. Each read gives the stop the Python would print, as a
 // *droppedStop, where the Python calls stop.
 
