@@ -86,9 +86,9 @@ latin) printf 'caf\351\n' >&2; exit 1 ;;
 esac
 `
 
-// runPython runs steps through report.py and gives its JSON, decoded. Its stdin carries a line, so a
+// runPyGit runs steps through report.py and gives its JSON, decoded. Its stdin carries a line, so a
 // quiet_git that let git read stdin shows it.
-func runPython(t *testing.T, steps []gitStep) []any {
+func runPyGit(t *testing.T, steps []gitStep) []any {
 	t.Helper()
 	lib, err := filepath.Abs(filepath.Join("..", "..", "bin", "lib"))
 	if err != nil {
@@ -118,7 +118,7 @@ func runPython(t *testing.T, steps []gitStep) []any {
 }
 
 // runGo runs steps through the Go, with a fresh Git, and gives the results as JSON decodes them, so
-// they compare with runPython's.
+// they compare with runPyGit's.
 func runGo(t *testing.T, steps []gitStep) []any {
 	t.Helper()
 	g := NewGit(git.Repo{})
@@ -173,7 +173,7 @@ func realGit(t *testing.T, dir string, args ...string) {
 // compare runs steps on both sides and fails on any difference, naming the case.
 func compare(t *testing.T, name string, steps []gitStep) {
 	t.Helper()
-	py, goes := runPython(t, steps), runGo(t, steps)
+	py, goes := runPyGit(t, steps), runGo(t, steps)
 	t.Logf("%s: %#v", name, py)
 	if !reflect.DeepEqual(py, goes) {
 		t.Errorf("%s: report.py and the Go differ\n  py %#v\n  go %#v", name, py, goes)
