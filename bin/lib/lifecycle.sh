@@ -617,11 +617,15 @@ conductor_busy() {
 # (clear_build) would delete work origin does not have: commits on story/<slug>, or on its worktree's
 # HEAD, that no branch on origin reaches, or tracked files changed in the worktree, staged or not.
 # Untracked files do not count. Origin's branches are read from origin itself (ls-remote), never the
-# clone's remote-tracking refs, which can name a branch origin no longer has. When origin or the
-# worktree cannot be read, what is pushed is not known, and it succeeds too (fail closed). It fails
-# when nothing would be lost, or the story's repo is not found (clear_build then clears nothing).
+# clone's remote-tracking refs, which can name a branch origin no longer has. A branch whose tip this
+# clone lacks (origin's main moved on since the last fetch, a merge GitHub made on story/<slug>) may
+# still reach those commits, so when the count is not 0 those branches are fetched and it counts
+# again; a close with nothing unpushed in a clone that is current fetches nothing. When origin or the
+# worktree cannot be read, or that fetch fails, what is pushed is not known, and it succeeds too (fail
+# closed). It fails when nothing would be lost, or the story's repo is not found (clear_build then
+# clears nothing).
 unpushed_work() {
-  local slug="$1" src wt tips="" head heads have n=0 dirty=0
+  local slug="$1" src wt tips="" head heads refs n=0 dirty=0
   src="$(repo_dir "$(fm_gone "${BOARD}/stories/$1.md" repo)")" || return 1
   wt="$(worktree_for "${src}" "${slug}")"
   ! head="$(git -C "${src}" rev-parse -q --verify "refs/heads/story/${slug}")" || tips="${head}"
@@ -635,21 +639,37 @@ unpushed_work() {
   if [[ -n "${tips# }" ]]; then
     heads="$(git -C "${src}" ls-remote --heads origin 2>/dev/null)" \
       || { echo "origin's branches could not be read, so whether its commits are pushed is not known"; return 0; }
-    # origin's story/<slug> may be past this clone (a merge GitHub made on it): fetched when this
-    # clone lacks its tip, so the commits under it count as pushed.
-    head="$(awk -v r="refs/heads/story/${slug}" '$2 == r { print $1 }' <<< "${heads}")"
-    if [[ -n "${head}" ]] && ! git -C "${src}" cat-file -e "${head}^{commit}" 2>/dev/null; then
-      git -C "${src}" fetch -q origin "refs/heads/story/${slug}" 2>/dev/null \
-        || { echo "origin's story/${slug} could not be fetched, so whether its commits are pushed is not known"; return 0; }
-    fi
-    # Only origin's heads this clone has: one it lacks cannot reach a local commit it has not fetched.
-    have="$(awk 'NF { print $1 }' <<< "${heads}" | git -C "${src}" cat-file --batch-check | awk '$2 == "commit" { print "^" $1 }')"
-    # shellcheck disable=SC2086 # one SHA per word
-    n="$(printf '%s\n' ${tips} ${have} | git -C "${src}" rev-list --count --stdin)" \
+    n="$(unpushed_count "${src}" "${tips}" "${heads}")" \
       || { echo "git could not count its commits against origin's"; return 0; }
+    if [[ "${n}" != 0 ]]; then
+      refs="$(missing_heads "${src}" "${heads}")"
+      if [[ -n "${refs}" ]]; then
+        # shellcheck disable=SC2086 # one ref per word
+        git -C "${src}" fetch -q origin ${refs} 2>/dev/null \
+          || { echo "origin's branches this clone lacks could not be fetched, so whether its commits are pushed is not known"; return 0; }
+        n="$(unpushed_count "${src}" "${tips}" "${heads}")" \
+          || { echo "git could not count its commits against origin's"; return 0; }
+      fi
+    fi
   fi
   [[ "${n}" != 0 || "${dirty}" != 0 ]] || return 1
   echo "${n} commit(s) origin does not have, ${dirty} tracked file(s) changed and not committed"
+}
+
+# unpushed_count <repo> <tips> <heads> — how many commits <tips> (SHAs) reach that none of <heads>
+# (ls-remote's lines) does, over the heads <repo> has: rev-list cannot name a commit it lacks.
+unpushed_count() {
+  local have
+  have="$(awk 'NF { print $1 }' <<< "$3" | git -C "$1" cat-file --batch-check | awk '$2 == "commit" { print "^" $1 }')"
+  # shellcheck disable=SC2086 # one SHA per word
+  printf '%s\n' $2 ${have} | git -C "$1" rev-list --count --stdin
+}
+
+# missing_heads <repo> <heads> — the refs of <heads> (ls-remote's lines) whose tip <repo> lacks, one
+# per line.
+missing_heads() {
+  awk 'NR == FNR { if ($2 == "missing") m[$1]; next } ($1 in m) { print $2 }' \
+    <(awk 'NF { print $1 }' <<< "$2" | git -C "$1" cat-file --batch-check) - <<< "$2"
 }
 
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).

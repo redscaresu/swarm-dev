@@ -83,7 +83,8 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   The close then closes the pane only: nothing is counted, held, handed on or cleared.
   Push the work, or remove the worktree and branch by hand once the work is not wanted.
   For a story still `ready` with no hold (`held_by:`), the line adds that `swarm.sh restart <slug>` starts its builder there again.
-  When origin's `story/<slug>` is past this clone, the close fetches it first, so commits under its tip count as pushed.
+  A branch on origin whose tip this clone lacks, such as a `main` that moved on since the last fetch, can still hold those commits.
+  So when the count is not 0, the close fetches those branches and counts again; a clean close in a clone that is up to date fetches nothing.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block with the attempts' PRs (from the same `gh pr

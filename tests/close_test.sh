@@ -935,6 +935,18 @@ close un6 --drop
 is "close un6 --drop, in review with a commit not pushed, keeps its build and story and offers no restart" "worktree branch origin|1|0|review" \
   "$(left un6)|$(kept_line un6 '1 commit(s) origin does not have, 0 tracked file(s) changed and not committed')|$(grep -c 'swarm.sh restart' "${ROOT}/close.out")|$(fmv un6 status)"
 echo '[]' > "${ROOT}/prs.json"
+# un7 is cut from a base pushed to origin's main and commits nothing, and origin's main then moves on
+# (a merge on GitHub) while this clone never fetches it. No origin head this clone has reaches that
+# base, but origin's new main does: fetched, it counts as pushed, so the clean build clears.
+item un7 "status: ready" "kind: code"
+"${GIT[@]}" -C "${P}" commit -q --allow-empty -m "base of un7" && git -C "${P}" push -q origin HEAD:refs/heads/main
+"${GIT[@]}" -C "${P}" worktree add -q -b story/un7 "${ROOT}/proj-wt/un7"
+echo "w:p116 un7" > "${P}/.swarm/state/un7"; echo "un7 w:p116" >> "${ROOT}/agents"
+"${GIT[@]}" clone -q -b main "${ROOT}/origin.git" "${ROOT}/other-un7"
+"${GIT[@]}" -C "${ROOT}/other-un7" commit -q --allow-empty -m "merged on GitHub" && git -C "${ROOT}/other-un7" push -q origin main
+close un7
+is "close un7, clean on a base only origin's unfetched new main reaches, clears its build and counts it" "|0|1" \
+  "$(left un7)|$(grep -c 'kept its worktree' "${ROOT}/close.out")|$(attempts un7)"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
