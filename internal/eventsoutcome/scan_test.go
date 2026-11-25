@@ -30,7 +30,8 @@ import (
 // The scan flags every index expression whose index, and every slice expression whose start, go/types
 // gives as the integer constant outcomeCol, whatever the operand is and wherever it came from: a
 // strings.Split row, an encoding/csv record, a []string parameter, a struct's field. A named constant
-// equal to outcomeCol counts; a variable does not. It does not follow where a row comes from, so a
+// equal to outcomeCol counts; a variable does not. The one operand it passes is a string, whose [4]
+// is a byte of one value (a date's "-"), never a column. It does not follow where a row comes from, so a
 // read of another file's fifth column (findings.tsv, agents.tsv) ends its line with
 // `// outcome-scan: ok <reason>`, the reason naming the file it reads.
 
@@ -169,13 +170,14 @@ func fileFindings(fset *token.FileSet, root string, f *ast.File, info *types.Inf
 	ast.Inspect(f, func(n ast.Node) bool {
 		var at token.Pos
 		var col ast.Expr
+		var x ast.Expr // the operand
 		switch e := n.(type) {
 		case *ast.IndexExpr:
-			at, col = e.Lbrack, e.Index
+			at, col, x = e.Lbrack, e.Index, e.X
 		case *ast.SliceExpr:
-			at, col = e.Lbrack, e.Low
+			at, col, x = e.Lbrack, e.Low, e.X
 		}
-		if col == nil || !isOutcomeCol(info.Types[col].Value) {
+		if col == nil || !isOutcomeCol(info.Types[col].Value) || isString(info.Types[x].Type) {
 			return true
 		}
 		pos := fset.Position(at)
@@ -194,6 +196,15 @@ func fileFindings(fset *token.FileSet, root string, f *ast.File, info *types.Inf
 // isOutcomeCol reports whether v is the integer constant outcomeCol; a nil v is no constant.
 func isOutcomeCol(v constant.Value) bool {
 	return v != nil && v.Kind() == constant.Int && constant.Compare(v, token.EQL, constant.MakeInt64(outcomeCol))
+}
+
+// isString reports whether t is a string type, a named one too; a nil t is not.
+func isString(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	b, ok := types.Unalias(t).Underlying().(*types.Basic)
+	return ok && b.Info()&types.IsString != 0
 }
 
 // modulePackages is the import path of every package of the module with a non-test .go file, sorted,
@@ -281,6 +292,7 @@ func TestOutcomeScanFixtures(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		dir + "bad_bytes.go:8: f[4]",
 		dir + "bad_const.go:7: r[col]",
 		dir + "bad_csv.go:12: rec[4]",
 		dir + "bad_field.go:10: e.cols[4]",
