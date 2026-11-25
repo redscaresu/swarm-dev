@@ -1194,15 +1194,21 @@ spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"file
 spr; fx_at e1.md "${H1}" "status: draft"; touch "${FX}/contents.hang"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
 refused "a story PR changing an epic, its contents read hanging" "merge: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
 check "a story PR changing an epic, its contents read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
-# A file read that dies saying nothing (python3 crashed, or within could not start it) names the exit.
-granted merge; real_python="$(command -v python3)"
-cat > "${ROOT}/bin/python3" <<STUB
-#!/bin/sh
-case "\$1 \$2" in *ci_gate.py\ files-status) exit 7 ;; esac
-exec "${real_python}" "\$@"
+# A file read that dies saying nothing (it crashed, or within could not start it) names the exit. A gh
+# before the fixture's on PATH kills the process that asked for the PR's files at its head (compare
+# main...<head>): the first ancestor that is not a gh run with those arguments, past swarm.sh's gh shim.
+granted merge; mkdir -p "${ROOT}/kill"
+printf '#!/usr/bin/env bash\nreal="%s"; want="%s"\n' "${ROOT}/bin/gh" "api repos/o/r/compare/main...${H1}" > "${ROOT}/kill/gh"
+cat >> "${ROOT}/kill/gh" <<'STUB'
+[ "$*" = "${want}" ] || exec "${real}" "$@"
+g=${PPID}
+for _ in 1 2 3 4 5; do
+  case "$(ps -o command= -p "${g}")" in *"${want}"*) g=$(ps -o ppid= -p "${g}" | tr -d ' ') ;; *) break ;; esac
+done
+kill -9 "${g}"; exit 1
 STUB
-chmod +x "${ROOT}/bin/python3"; merge "${URL}"; rm -f "${ROOT}/bin/python3"
-refused "merge = human, a story PR whose file read dies saying nothing" "could not be read: ci_gate.py exited 7 and said nothing), so it waits on the user's merge"
+chmod +x "${ROOT}/kill/gh"; merge PATH="${ROOT}/kill:${ROOT}/bin:${PATH}" "${URL}"
+refused "merge = human, a story PR whose file read dies saying nothing" "exited 137 and said nothing), so it waits on the user's merge"
 # --board reads the board's repo through the same bounded lookup, and names gh's reason.
 epr e1; echo 'gh: HTTP 502' > "${FX}/origin.fail"; merge --board "${URL}"
 refused "--board, gh cannot name the board's repo" "--board: gh repo view failed (gh: HTTP 502)"

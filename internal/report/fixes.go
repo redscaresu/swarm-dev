@@ -40,12 +40,6 @@ const (
 // isWord is Python's Unicode \w: a letter, a number or an underscore, where RE2's \w is ASCII only.
 func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r) }
 
-// isSpace is Python's Unicode \s: Go's white space and the four separators \x1c to \x1f.
-func isSpace(r rune) bool { return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f') }
-
-// isDigit is Python's Unicode \d, a decimal digit of any script.
-func isDigit(r rune) bool { return unicode.IsDigit(r) }
-
 // foldExtra holds the two letters Python's re.I takes as an ASCII letter beside those whose lower case
 // it is (İ and the Kelvin sign): dotless ı as i, and long ſ as s.
 var foldExtra = map[rune]rune{'ı': 'i', 'ſ': 's'}
@@ -92,20 +86,20 @@ func patternAt(rs []rune, i int, pat pattern) (int, bool) {
 	return i, false
 }
 
-// runeSpan is one match: rs[start:end].
-type runeSpan struct{ start, end int }
+// match is one match: rs[start:end].
+type match struct{ start, end int }
 
 // findAll is finditer over rs for \b(?:pats...)\b: the leftmost matches, each search going on from
 // the end of the last match.
-func findAll(rs []rune, pats []pattern) []runeSpan {
-	var out []runeSpan
+func findAll(rs []rune, pats []pattern) []match {
+	var out []match
 	for i := 0; i < len(rs); i++ {
 		if !boundary(rs, i) {
 			continue
 		}
 		for _, pat := range pats {
 			if end, ok := patternAt(rs, i, pat); ok {
-				out = append(out, runeSpan{i, end})
+				out = append(out, match{i, end})
 				i = end - 1
 				break
 			}
@@ -122,8 +116,8 @@ func clauses(rs []rune) [][]rune {
 	for i := 0; i < len(rs); {
 		end := i + 1
 		switch {
-		case i > 0 && strings.ContainsRune(sentenceEnds, rs[i-1]) && isSpace(rs[i]):
-			for end < len(rs) && isSpace(rs[end]) {
+		case i > 0 && strings.ContainsRune(sentenceEnds, rs[i-1]) && pySpace(rs[i]):
+			for end < len(rs) && pySpace(rs[end]) {
 				end++
 			}
 		case rs[i] == ';' || rs[i] == '\n':
@@ -172,7 +166,7 @@ func endsNegated(rs []rune) bool {
 // negated is NEGATED.search over rs, the text before a fix verb: a negation, white space, and at most
 // one word and its white space before the verb ("doesn't fix", "not yet fixing").
 func negated(rs []rune) bool {
-	head := trimRight(rs, isSpace)
+	head := trimRight(rs, pySpace)
 	if len(head) == len(rs) {
 		return false
 	}
@@ -180,7 +174,7 @@ func negated(rs []rune) bool {
 		return true
 	}
 	word := trimRight(head, isWord)
-	before := trimRight(word, isSpace)
+	before := trimRight(word, pySpace)
 	return len(word) < len(head) && len(before) < len(word) && endsNegated(before)
 }
 
@@ -202,7 +196,7 @@ func (r prMention) at(rs []rune, i int) (int, bool) {
 		{"#" + r.n, r.bare && before(notBeforeBare)},
 	}
 	for _, a := range alts {
-		if end, ok := literalAt(rs, i, a.lit); a.ok && ok && (end == len(rs) || !isDigit(rs[end])) {
+		if end, ok := literalAt(rs, i, a.lit); a.ok && ok && (end == len(rs) || !pyDigit(rs[end])) {
 			return end, true
 		}
 	}

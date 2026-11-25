@@ -14,6 +14,11 @@
 # the budget asked about, else ${FX}/reset ("<epoch> <time>" of a spent budget's reset), else with
 # ${FX}/reset.in ("<seconds> <time>") a reset that many seconds after this read, else nothing,
 # ${HANG}s late with ${FX}/reset.hang.
+# With ${FX}/timeline (lines of "<until> <phase>"), wait-pr's clock is the sum of the pauses in sleeps.log:
+# while it is under a line's <until>, the first such line's phase answers the check-runs read with
+# ${FX}/checks.<phase>, and past every line ${FX}/checks does; each gh call logs "<phase> <clock>" to
+# ${FX}/phase.log (phase last past every line). With ${FX}/nosleep the sleep stub logs a pause and returns.
+# With ${FX}/stamp each check read logs the epoch second it came at to ${FX}/stamps.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -38,9 +43,15 @@ git -C "${P}" init -q
 # follows, so swarm.sh's start-up does not eat into it. Only the cases that run to a deadline or wait
 # out a pause pay for these.
 ROOM=7; SLACK=8; LATE=$((ROOM + SLACK)); HANG=$((LATE + 12)); PAUSE=${HANG}; PAST=$((ROOM + 3))
-printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; H="%s"; HANG="%s"\n' "${FX}" "${ROOT}/gh.log" "${H}" "${HANG}" > "${ROOT}/bin/gh"
+printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; H="%s"; HANG="%s"; SLEEPS="%s"\n' "${FX}" "${ROOT}/gh.log" "${H}" "${HANG}" "${ROOT}/sleeps.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
+phase=""
+if [ -e "${FX}/timeline" ]; then
+  clock=$(awk '{ s += $1 } END { print s + 0 }' "${SLEEPS}"); phase=last
+  while read -r until name; do if [ "${clock}" -lt "${until}" ]; then phase="${name}"; break; fi; done < "${FX}/timeline"
+  echo "${phase} ${clock}" >> "${FX}/phase.log"
+fi
 # fail <key> — count this read of <key>; on the nth, fail with ${FX}/<key>.<n>.err as stderr if there is one.
 fail() {
   n=$(( $(cat "${FX}/$1.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${FX}/$1.n"
@@ -52,7 +63,9 @@ case "$*" in
               echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main $(cat "${FX}/state" 2>/dev/null || echo OPEN) - $(cat "${FX}/ref" 2>/dev/null || echo feature)" ;;
   *check-runs*)
     fail checks; [ ! -e "${FX}/checks.hang" ] || sleep "${HANG}"
-    if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
+    [ ! -e "${FX}/stamp" ] || date +%s >> "${FX}/stamps"
+    if [ -n "${phase}" ] && [ "${phase}" != last ]; then cat "${FX}/checks.${phase}"
+    elif [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
   "api rate_limit"*) [ ! -e "${FX}/reset.hang" ] || sleep "${HANG}"
     case "$*" in *resources.graphql*) b=graphql ;; *) b=core ;; esac
     cat "${FX}/reset.${b}" 2>/dev/null || cat "${FX}/reset" 2>/dev/null \
@@ -61,10 +74,10 @@ case "$*" in
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-# sleep: logs each pause it is given to sleeps.log, then sleeps it, so a case can read wait-pr's pause
-# without waiting out a long one to time it.
+# sleep: logs each pause it is given to sleeps.log, then sleeps it (unless ${FX}/nosleep), so a case can
+# read wait-pr's pause without waiting out a long one to time it.
 # shellcheck disable=SC2016 # expanded when the stub runs
-printf '#!/bin/sh\necho "$*" >> "%s"\nexec /bin/sleep "$@"\n' "${ROOT}/sleeps.log" > "${ROOT}/bin/sleep"
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ ! -e "%s/nosleep" ] || exit 0\nexec /bin/sleep "$@"\n' "${ROOT}/sleeps.log" "${FX}" > "${ROOT}/bin/sleep"
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/sleep"
 
 fails=0
@@ -100,6 +113,48 @@ check "pending then green: prints the head SHA" said "head ${H}"
 check "pending then green: prints what it waits on" said "pending: test (in_progress)"
 check "pending then green: prints each check with its state" grep -qxF "  test (success)" "${ROOT}/out"
 check "pending then green: prints lint too" grep -qxF "  lint (success)" "${ROOT}/out"
+
+# --- Checks that stay queued (no runner has them) are read less often: each read that finds them all
+# queued and unchanged pauses twice the last, from the poll up to the cap (SWARM_WAIT_PR_POLL_MAX). Over
+# 10 polls of queued checks the wait makes no more gh calls than that schedule's reads would. Time is
+# the stub's clock (the pauses summed) and no pause is slept, so the counts do not hang on the machine.
+BPOLL=2; BCAP=8; QUEUED=$((10 * BPOLL))
+# schedule <poll> <cap> <window> — the schedule's reads in <window> seconds: one at 0, then one after each
+# pause, the first a poll and each next twice the last, up to cap.
+schedule() { local p="$1" t=0 n=0; while (( t < $3 )); do n=$((n + 1)); t=$((t + p)); p=$((p * 2 < $2 ? p * 2 : $2)); done; echo "${n}"; }
+# calls <phase> — the stub's gh calls in that phase of the timeline.
+calls() { grep -c "^$1 " "${FX}/phase.log" || true; }
+fresh; : > "${FX}/nosleep"; echo "${QUEUED} queued" > "${FX}/timeline"
+checks "${FX}/checks.queued" "$(run test queued)" "$(run lint queued)"
+wait_pr SWARM_MERGE_POLL="${BPOLL}" SWARM_WAIT_PR_POLL_MAX="${BCAP}"
+is "queued then green: exits 0" 0 "${rc}"
+# A read's calls are the last phase's, which is one read; while queued the head read is one more.
+per="$(calls last)"
+check "queued then green: gh calls while queued are within the back-off schedule's (${per} a read, plus the head read)" \
+  test "$(calls queued)" -le $((1 + per * $(schedule "${BPOLL}" "${BCAP}" "${QUEUED}")))
+is "queued then green: pauses double from the poll to the cap" "2 4 8 8" "$(paste -sd' ' "${ROOT}/sleeps.log")"
+# A check that leaves the queue brings the pause back to a poll, so a red one ends the wait within one
+# poll of turning red: test runs from 10 and is red from 17.
+fresh; : > "${FX}/nosleep"; printf '10 queued\n17 running\n' > "${FX}/timeline"
+checks "${FX}/checks.queued" "$(run test queued)" "$(run lint queued)"
+checks "${FX}/checks.running" "$(run test in_progress)" "$(run lint queued)"
+checks "${FX}/checks" "$(run test completed failure)" "$(run lint queued)"
+wait_pr SWARM_MERGE_POLL="${BPOLL}" SWARM_WAIT_PR_POLL_MAX="${BCAP}"
+is "queued, running, then red: exits 1" 1 "${rc}"
+check "queued, running, then red: names the red check" said "red: test (failure)"
+red_at="$(awk '$1 == "last" { print $2; exit }' "${FX}/phase.log")"
+check "queued, running, then red: reads it red within one poll (at ${red_at:-no read})" test "${red_at:-99}" -le $((17 + BPOLL))
+# A back-off pause that would reach the deadline is cut to a second before it, so the stretch before the
+# deadline still gets a read: the wait's last check read comes within a poll, and a second each way for
+# the whole-second clocks, of its end. At 15s, a read about 8s in would otherwise pause the 7s left.
+fresh; : > "${FX}/stamp"; checks "${FX}/checks" "$(run test queued)"
+wait_pr SWARM_MERGE_POLL=1 SWARM_WAIT_PR_POLL_MAX="${PAUSE}" --timeout 15
+ended="$(date +%s)"
+is "queued to the deadline: exits 2" 2 "${rc}"
+check "queued to the deadline: times out" said "timed out after"
+check "queued to the deadline: returns at the deadline" test "${took}" -ge 14 -a "${took}" -lt $((15 + SLACK))
+check "queued to the deadline: reads within a poll of it (last read $((ended - $(tail -1 "${FX}/stamps")))s before the end)" \
+  test $((ended - $(tail -1 "${FX}/stamps"))) -le 3
 
 # --- Red: exit 1, naming the check.
 fresh; checks "${FX}/checks" "$(run test completed failure)" "$(run lint completed success)"; wait_pr

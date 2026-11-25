@@ -1,0 +1,2 @@
+# written at tests/env_allowlist_test.sh:376, checked at tests/env_allowlist_test.sh:381; site: agent_env
+agent_env = PROVIDER_KEY bad-name

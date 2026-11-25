@@ -1,0 +1,3 @@
+# edge: no final newline; loads
+merge = agent
+stall_minutes = 45

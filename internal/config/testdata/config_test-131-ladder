@@ -1,0 +1,2 @@
+# written at tests/config_test.sh:131, checked at tests/config_test.sh:132; loads
+escalate_ladder = sonnet,opus,fable
