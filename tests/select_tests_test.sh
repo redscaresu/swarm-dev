@@ -56,7 +56,7 @@ mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" 
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh rules.md; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh tests/binary_dispatch_test.sh tests/nopy_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh tests/retro_test.sh tests/retro_findings_test.sh tests/retro_incidents_test.sh tests/retro_reaped_test.sh tests/retro_recurring_test.sh tests/handover_test.sh tests/build_test.sh tests/binary_dispatch_test.sh tests/nopy_test.sh tests/dropped_lines_test.sh tests/merge_rules_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo floor' > "${G}/tests/diff_run_test.sh"
 echo 'echo floor' > "${G}/tests/diff_run_hooks_test.sh"
 echo 'echo floor' > "${G}/tests/diff_allow_test.sh"
@@ -239,6 +239,9 @@ check "an allow list entry selects diff_allow_test.sh, which parses every entry 
 check "a Go file selects doc_check_test.sh, which checks the docs that name Go paths, the port tests that scan Go, command_names_test.sh, which greps it for a bare /swarm, binary_dispatch_test.sh, which runs the binary, removed_test.sh, which greps it for a removed name, and events_fixture_test.sh, whose redact.py takes its words from it, and no other" \
   "$(sel "mkdir -p cmd/swarm && echo 'package main' > cmd/swarm/main.go; ${commit}")" \
   "$(lines tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh tests/events_fixture_test.sh)"
+check "a dropped-lines Go file selects the tests that drive its check (dropped_lines_test.sh, merge_rules_test.sh and nopy_test.sh) beside the Go row's, as its row comes first" \
+  "$(sel "mkdir -p internal/merge && echo 'package merge' > internal/merge/dropped_diff.go; ${commit}")" \
+  "$(lines tests/dropped_lines_test.sh tests/merge_rules_test.sh tests/nopy_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh tests/binary_dispatch_test.sh tests/removed_test.sh tests/events_fixture_test.sh)"
 check "a marker under bin/ported/ selects the tests that read the markers, binary_dispatch_test.sh and the port list tests, and no other" \
   "$(sel "mkdir -p bin/ported && : > bin/ported/x; ${commit}")" \
   "$(lines tests/doc_check_test.sh tests/skill_test.sh tests/port_names_test.sh tests/events_test.sh tests/binary_dispatch_test.sh tests/port_sites_test.sh tests/port_swarm_names_test.sh tests/port_locks_test.sh tests/port_fields_test.sh)"

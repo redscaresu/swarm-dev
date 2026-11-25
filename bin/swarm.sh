@@ -828,9 +828,6 @@ dispatch() {
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
     dropped-lines) dropped_lines "$@" ;;
-    # _dropped-lines: the check dropped_lines runs on the fetched PR, from local git alone (bin/lib/dropped_lines.py);
-    # its lines and exit code (1 for a dropped line, 2 for a stop) are the helper's own; not logged
-    _dropped-lines) python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "$@" ;;
     wait-pr) wait_pr "$@" ;;
     board-pr) board_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;

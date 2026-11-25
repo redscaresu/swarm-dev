@@ -225,7 +225,7 @@ dropped_lines_cmd() {
 # dropped_lines_rule <PR URL> <head> <base> <findings file> — the review agent's check, before it reads
 # the diff, that the PR's own merges dropped no base line, each round on that round's head (round 1's is
 # <head>; review_next prints the command on its own), run in the background: its gh read, fetch and git
-# calls can outlast a foreground Bash call. dropped_lines.py counts the head's copies of each line a merge
+# calls can outlast a foreground Bash call. The _dropped-lines check counts the head's copies of each line a merge
 # dropped, so a line a later commit put back no longer prints. Each line of an exit 1 is a finding to fix
 # that round, restored by the builder in a commit of its own, and logged as finding_rule says with the kind
 # dropped-lines once a later round no longer prints it. A run killed or ending other
