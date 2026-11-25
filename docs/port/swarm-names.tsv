@@ -35,7 +35,7 @@ SWARM_ESCALATE_MODEL	handoff	bin/lib/outcomes_rows.py bin/lib/reports.sh
 SWARM_FALLBACK_MIN_SECONDS	seam	bin/swarm.sh
 SWARM_FEATURES	setting	bin/lib/reports.sh
 SWARM_FIELD	handoff	bin/lib/agents.sh
-SWARM_FINDING_REVIEWERS	handoff	bin/lib/report.py bin/lib/reports.sh bin/lib/retro_report.py
+SWARM_FINDING_REVIEWERS	handoff	bin/lib/report.py bin/lib/reports.sh bin/lib/retro_report.py internal/report/findings.go
 SWARM_FIX_MAIN_LOG_SECONDS	setting	bin/lib/lifecycle.sh bin/lib/merge.sh
 SWARM_FLOW_SECTIONS	handoff	bin/lib/reports.sh
 SWARM_FORBID_PROJECT	seam	bin/swarm.sh hooks/lead-stop.sh hooks/merge-guard.sh
