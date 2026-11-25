@@ -2,7 +2,11 @@
 // touching a file: the agent runner, the code host, the repo and the store. Each has exactly one
 // implementation, under internal/adapter/. The store's types sit here beside Store.
 //
-// Each interface holds only the methods a ported command calls: a port adds the ones it needs.
+// Store has the two methods the frame's handoff needs, ReadFile, which _require-trusted reads
+// .claude.json with, and the stat, real-path and append methods the board-store ports read and
+// write files with. The other three have none yet: each port adds the methods it needs.
+// Store's other methods list, write and remove files and make folders, and make a file only where
+// none is, remove an empty folder and check a pid, for the ports that need them.
 package iface
 
 import "io/fs"

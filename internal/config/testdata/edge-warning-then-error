@@ -1,0 +1,3 @@
+# edge: a removed key's warning before a later line's error; site: removed
+keep_panes = 1
+merge = maybe

@@ -28,8 +28,8 @@ const appendMode = 0o666
 // lock opens its lock file.
 const exclusiveMode = 0o644
 
-// dirMode is the mode AppendLine and MkdirAll make a folder with, before the umask, as mkdir -p and
-// Python's os.makedirs make it.
+// dirMode is the mode AppendLine makes a folder with, before the umask, as mkdir -p makes it.
+// MkdirAll makes its folders with it too, as Python's os.makedirs does.
 const dirMode = 0o777
 
 // tempPattern names WriteAtomic's temp file as Python's tempfile.mkstemp(suffix=".tmp") does: tmp, a

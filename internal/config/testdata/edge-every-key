@@ -1,0 +1,27 @@
+# edge: every key set at once; loads
+board_dir = board
+repos_dir = /r
+base_branches = dev main
+sign_commits = true
+merge = agent
+stall_minutes = 45
+queue_minutes = 15
+sonnet_share = 4
+risky_effort = high
+escalate_after = 0
+escalate_ladder = sonnet,opus,fable
+step_up_findings = 4
+top_rung_rounds = 3
+builder_subagent_model = haiku
+goal = 20
+codex_minutes = 12
+fallback_reviewer = opus[1m]
+lead = session
+merge_admin = on
+merge_protected = on
+review_verify = full
+demote_kinds = duplicate-code,efficiency
+lead_epics = on
+commit_trailers = Co-Authored-By: A <a@b>; Signed-off-by: B <b@c>
+agent_env = FOO_KEY BAR
+usage_warn_percent = 80

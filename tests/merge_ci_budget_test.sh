@@ -59,20 +59,46 @@ check "simulated wait: each read is three calls, and CI was read more than twice
 is "simulated wait: with nothing changing, the gap between reads grows to the cap" "${CAP}" "${sim_max}"
 is "simulated wait: once a run starts, the next read comes a poll later" "${POLL}" "${sim_after}"
 
-# --- merge hands ci_gate main its poll cap (SWARM_MERGE_POLL_MAX), and the folder of wait records for a
-# story's merge only: a --board merge waits on its own commit. A python3 spy logs ci_gate main's arguments.
+# --- merge hands its wait for CI on the base its poll cap (SWARM_MERGE_POLL_MAX), and keeps a record of
+# a story merge's wait under .swarm/main-waits while it waits; a --board merge waits on its own commit
+# and keeps none. Each merge runs in the background with CI on ${M} pending until the test flips it
+# green, once the wait has read it twice. A python3 spy logs ci_gate main's arguments, for the cap.
 mkdir -p "${ROOT}/spy"
 # shellcheck disable=SC2016 # expanded when the spy runs
 printf '#!/bin/sh\ncase "$1 $2" in *ci_gate.py\\ main) printf "[%%s]" "$@" >> "%s"; echo >> "%s" ;; esac\nexec "%s" "$@"\n' \
   "${ROOT}/spy.log" "${ROOT}/spy.log" "$(command -v python3)" > "${ROOT}/spy/python3"
 chmod +x "${ROOT}/spy/python3"
-fresh; : > "${ROOT}/spy.log"; merge PATH="${ROOT}/spy:${ROOT}/bin:${PATH}" SWARM_MERGE_POLL_MAX=7 "${URL}"
+# main_reads — the wait's reads of the check runs on ${M} so far.
+main_reads() { grep -c "commits/${M}/check-runs" "${ROOT}/gh.log" || true; }
+recorded() { compgen -G "${P}/.swarm/main-waits/*.json" > /dev/null; }
+# pending_merge [arg]... — merge [arg]... ${URL} in the background, CI on ${M} pending; once the wait has
+# read it twice (60 s at most), sets rec to the wait records then on disk ("none" for none, else each
+# record's repo, sha and pr), flips CI green, and waits for the merge; sets rc.
+pending_merge() {
+  rm -rf "${P}/.swarm/main-waits"; : > "${ROOT}/spy.log"; rm -f "${ROOT}/rc"
+  checks "${FX}/${M}.checks" "$(run test in_progress)"
+  ( merge PATH="${ROOT}/spy:${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0.2 SWARM_MERGE_POLL_MAX=0.4 SWARM_MERGE_CI_SECONDS=60 \
+      "$@" "${URL}"; echo "${rc}" > "${ROOT}/rc" ) &
+  local pm=$! i
+  for i in $(seq 600); do [[ $(main_reads) -lt 2 ]] || break; sleep 0.1; done
+  [[ ${i} -lt 600 ]] || echo "warning: the wait read CI on ${M:0:7} under twice in 60 s"
+  rec=none
+  if recorded; then
+    rec="$(cat "${P}/.swarm/main-waits/"*.json | python3 -I -c 'import json, sys
+print(" ".join("%s %s %s" % (r["repo"], r["sha"], r["pr"]) for r in map(json.loads, sys.stdin)))')"
+  fi
+  checks "${ROOT}/green" "$(run test completed success)"; mv "${ROOT}/green" "${FX}/${M}.checks"
+  wait "${pm}" || true; rc=$(cat "${ROOT}/rc" 2>/dev/null || echo none)
+}
+fresh; pending_merge
 is "a story merge: exits 0" 0 "${rc}"
-check "a story merge: ci_gate main gets the cap and the wait records' folder" grep -qF "[7][${P}/.swarm/main-waits]" "${ROOT}/spy.log" # vacuous-test: ok, the spy's bracketed arguments, not JSON
+is "a story merge: its pending wait keeps one record, of its repo, commit and PR" "o/r ${M} 7" "${rec}"
+check "a story merge: its wait gets the cap" grep -q '\]\[0\.4\]\[[^]]*\]$' "${ROOT}/spy.log"
 check "a wait leaves no record behind" bash -c "[ -z \"\$(ls -A '${P}/.swarm/main-waits' 2>/dev/null)\" ]"
-fresh; rm "${S}"; : > "${ROOT}/spy.log"; merge PATH="${ROOT}/spy:${ROOT}/bin:${PATH}" SWARM_MERGE_POLL_MAX=7 --board "${URL}"
+fresh; rm "${S}"; pending_merge --board
 is "a --board merge: exits 0" 0 "${rc}"
-check "a --board merge: ci_gate main gets the cap and no wait records' folder" grep -q '\[7\]\[\]$' "${ROOT}/spy.log"
+is "a --board merge: its pending wait keeps no record" none "${rec}"
+check "a --board merge: its wait gets the cap" grep -q '\]\[0\.4\]\[[^]]*\]$' "${ROOT}/spy.log"
 
 # --- Two merges' waits at once: A (${M}) merged first, B newer and holding it. A leaves the wait to
 # B and exits naming it; B's red prints fix-main: once, from B's merge alone.
