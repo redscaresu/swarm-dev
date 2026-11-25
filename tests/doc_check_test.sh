@@ -3,7 +3,8 @@
 # skills/ and templates/ (not AGENTS.md, the lead's, nor llms.txt), every `swarm.sh <command>` in
 # code must be one of swarm.sh's commands (tests/swarm_commands.sh: dispatch's arms, version and update,
 # which run before it, and the ported commands' markers under bin/ported/), every key in a
-# setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
+# setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS or of the Go config
+# package's settings (internal/config/keys.go, one `{name: "<key>", ...},` line each), and every repo path
 # in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
 # and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. The repo paths
 # include the Go tree, cmd/ and internal/, and every go.mod in code, bare or under a directory (go.sum
@@ -30,11 +31,12 @@ KNOWN="${REPO}/tests/doc_check_known.txt"
 LINE_CAP=150   # under the shortest line a replay of the docs' conflicts found hot (155 words)
 COMMANDS="$(swarm_commands "${REPO}")" || exit 1
 
-# doc_check <docs root> — one `file<TAB>text` line per stale reference in the docs under <docs root>,
-# checked against ${REPO}'s commands (COMMANDS), its bin/swarm.sh's CONFIG_KEYS and its tree. Fails, naming
-# it, when CONFIG_KEYS gives no setting.
+# doc_check <docs root> [<repo>] — one `file<TAB>text` line per stale reference in the docs under
+# <docs root>, checked against ${REPO}'s commands (COMMANDS), and against <repo>'s (default ${REPO}) tree
+# and settings: its bin/swarm.sh's CONFIG_KEYS and its internal/config/keys.go's keys, taken together.
+# Fails, naming it, when either gives no setting.
 doc_check() {
-  python3 - "${REPO}" "$1" "${COMMANDS}" <<'EOF'
+  python3 - "${2:-${REPO}}" "$1" "${COMMANDS}" <<'EOF'
 import glob, os, re, subprocess, sys
 repo, root = sys.argv[1], sys.argv[2]
 commands = set(sys.argv[3].split())
@@ -43,6 +45,13 @@ config_keys = re.search(r'^CONFIG_KEYS="([^"]*)"', src, re.M)
 keys = set(config_keys.group(1).split()) if config_keys else set()
 if not keys:
     sys.exit("FAIL doc_check: found no settings in CONFIG_KEYS of " + os.path.join(repo, "bin/swarm.sh"))
+# The Go config package's settings, one `{name: "<key>", ...},` line each. CONFIG_KEYS stays until bash
+# is retired; a key either one names is a setting.
+go_keys_path = os.path.join(repo, "internal/config/keys.go")
+go_keys = set(re.findall(r'^\s*\{name: "([^"]+)",', open(go_keys_path).read(), re.M))
+if not go_keys:
+    sys.exit("FAIL doc_check: found no settings in " + go_keys_path)
+keys |= go_keys
 ROOTS = r"(?:bin|cmd|commands|docs|hooks|internal|scripts|skills|templates|tests|\.claude-plugin|\.github)/"
 # OWN_PROTECTED's whole directories, each with its trailing slash: a doc may name one that does not
 # exist yet. Its form is an alternation of plain paths; any other form stops the check.
@@ -305,6 +314,40 @@ if [[ "${got}" == "${want}" ]]; then
   echo "ok   fixture docs: an unknown command, config key, link, path (Go ones too) and #anchor are each caught (AGENTS.md's and llms.txt's links too), and nothing else"
 else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
+fi
+
+# The Go settings: a copy of the files doc_check reads its settings and paths from, with docs of its own.
+# With keys.go's key lines gone, doc_check fails naming keys.go. With a key only keys.go has, a doc naming
+# it passes while an unknown key is still caught; every Go key is in CONFIG_KEYS today, so only this shows
+# the two lists are taken together.
+go_repo() {   # go_repo <dir> — <dir> holds a copy of bin/swarm.sh, bin/lib/board.sh and internal/config/keys.go
+  mkdir -p "$1/bin/lib" "$1/internal/config"
+  cp "${REPO}/bin/swarm.sh" "$1/bin/swarm.sh"
+  cp "${REPO}/bin/lib/board.sh" "$1/bin/lib/board.sh"
+}
+go_repo "${tmp}/go-none"
+grep -v '^[[:space:]]*{name: "' "${REPO}/internal/config/keys.go" > "${tmp}/go-none/internal/config/keys.go"
+mkdir -p "${tmp}/go-docs"
+printf 'Run %sswarm.sh config go_only_key%s and %sswarm.sh config nosuchkey%s.\n' '`' '`' '`' '`' > "${tmp}/go-docs/README.md"
+git -C "${tmp}/go-docs" init -q && git -C "${tmp}/go-docs" add -A
+want="FAIL doc_check: found no settings in ${tmp}/go-none/internal/config/keys.go"
+if doc_check "${tmp}/go-docs" "${tmp}/go-none" > "${tmp}/go-none.out" 2> "${tmp}/go-none.err"; then
+  got="exit 0"
+else got="$(cat "${tmp}/go-none.err")"; fi
+if [[ "${got}" == "${want}" ]]; then
+  echo "ok   doc_check fails naming internal/config/keys.go when it gives no setting"
+else
+  echo "FAIL doc_check with no Go settings: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
+fi
+go_repo "${tmp}/go-only"
+awk '{ print } /^var keys = \[\]key\{$/ { print "\t{name: \"go_only_key\", def: \"\"}," }' \
+  "${REPO}/internal/config/keys.go" > "${tmp}/go-only/internal/config/keys.go"
+want=$'README.md\tconfig key nosuchkey'
+if got="$(doc_check "${tmp}/go-docs" "${tmp}/go-only" 2>&1)"; then :; else got="exit $?: ${got}"; fi
+if [[ "${got}" == "${want}" ]]; then
+  echo "ok   a key only internal/config/keys.go has is a setting, and an unknown one is still caught"
+else
+  echo "FAIL doc_check with a Go-only key: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
 
 # A fixture known list, written as an entry is: two findings it allows (README.md sorts before docs/
