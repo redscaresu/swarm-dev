@@ -4,10 +4,11 @@
 //
 // Store has the two methods the frame's handoff needs, ReadFile, which _require-trusted reads
 // .claude.json with, and the stat, real-path and append methods the board-store ports read and
-// write files with. The other three (all but Repo, whose Run report's git runner needs) have none yet: each port adds the methods it needs.
+// write files with. The other three have (bar Repo's Run) none yet: each port adds the methods it needs.
 package iface
 
 import "io/fs"
+
 import "time"
 
 // AgentRunner starts, reads and stops the agents. herdr is its one implementation

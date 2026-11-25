@@ -8,9 +8,11 @@
 # rows and columns, a URL and its #<PR> on o/r, a path on /p, a target slug that is also a source word
 # replaced, and the same bytes from a second run. events_tail_helpers.sh: events_project's copies, and
 # same_output, which fails on a column-5 read of a tailed copy or an empty first output and passes on
-# columns 1-4. No test reads the live .swarm/events.tsv. When a change to bin/, hooks/ or scripts/
-# drops the last use of a word the fixture holds, --check names it: swap it in the fixture for a zz
-# stand-in.
+# columns 1-4. The Go words: a word that only a non-test .go file under cmd/ or internal/ uses passes
+# --check, and one that only a _test.go or testdata/ file there uses is refused; each check finds its
+# word at run time, names it, and fails when there is none. No test reads the live .swarm/events.tsv.
+# When a change to bin/, hooks/, scripts/ or the Go source drops the last use of a word the fixture
+# holds, --check names it: swap it in the fixture for a zz stand-in.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -76,6 +78,44 @@ check "a planted /Users path turns --check and leaks red" red_both "${ROOT}/user
 check "a planted github.com URL off o/r turns --check and leaks red" red_both "${ROOT}/url.tsv" https://github.com/acme
 check "a planted real pane id turns --check and leaks red" red_both "${ROOT}/pane.tsv" w3E:p2
 check "a planted real target slug, though a source word, turns --check and leaks red" red_both "${ROOT}/target.tsv" reconcile
+
+# The Go words. The file lists are drawn here, not by redact.py's vocabulary(), and the words by its
+# tokenizer. A candidate is letters only and no zz stand-in, so --check keeps or refuses it by the
+# vocabulary alone.
+REPO="$(cd "${HERE}/.." && pwd)"
+# WORDS_PY <redact dir> <file>... — each word token of the files, one per line.
+WORDS_PY='import sys; sys.path.insert(0, sys.argv[1]); from redact import TOKEN
+for p in sys.argv[2:]:
+    with open(p, encoding="utf-8", errors="replace") as fh:
+        print("\n".join(m.group() for m in TOKEN.finditer(fh.read()) if m.lastgroup == "word"))'
+# files_words <find args...> — the sorted word set of the files find selects from the repo root.
+files_words() {
+  (cd "${REPO}" || exit 1 && find "$@" -exec python3 -B -c "${WORDS_PY}" "${HERE}/fixtures/events" {} +) \
+    | grep -v '^$' | LC_ALL=C sort -u
+}
+go_src="$(files_words cmd internal \( -name testdata -o -name '.*' \) -prune -o -type f -name '*.go' ! -name '*_test.go')"
+go_test="$(files_words cmd internal -type f \( -name '*_test.go' -o -path '*/testdata/*' \))"
+plugin="$(files_words bin hooks scripts \( -name '.*' -o -name __pycache__ \) -prune -o -type f ! -name '*.pyc')"
+# first_plain <set> <minus>... — the first letters-only word of <set> that is no zz stand-in and in none of <minus>.
+first_plain() {
+  local set="$1" m; shift
+  for m in "$@"; do set="$(LC_ALL=C comm -23 <(printf '%s\n' "${set}") <(printf '%s\n' "${m}"))"; done
+  grep -E '^[A-Za-z]+$' <<< "${set}" | grep -vE '^zz[a-z]+$' | sed -n 1p || true
+}
+go_only="$(first_plain "${go_src}" "${plugin}")"
+test_only="$(first_plain "${go_test}" "${plugin}" "${go_src}")"
+planted go-word "${T}"$'\tok '"${go_only}"
+planted test-word "${T}"$'\tok '"${test_only}"
+go_word_kept() {
+  [[ -n "${go_only}" ]] || { echo "  no letters-only word is in a non-test .go file under cmd/ or internal/ and in no file under bin/, hooks/ or scripts/"; return 1; }
+  allowlisted "${ROOT}/go-word.tsv"
+}
+test_word_refused() {
+  [[ -n "${test_only}" ]] || { echo "  no letters-only word is only in a _test.go or testdata/ file under cmd/ or internal/"; return 1; }
+  flags "${ROOT}/test-word.tsv" "${test_only}"
+}
+check "a word only Go source uses (${go_only:-none found}) passes --check" go_word_kept
+check "a word only Go tests or testdata use (${test_only:-none found}) turns --check red" test_word_refused
 
 # redact.py over a synthetic log: reconcile, a target in row 4, is a source word, which row 5's
 # outcome keeps; the last row is past the cut, and its `=` would put it in the sample before it.
