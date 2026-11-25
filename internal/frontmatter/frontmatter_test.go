@@ -278,6 +278,16 @@ func (failing) AppendLine(string, string) error    { return errFailing }
 func (failing) WriteLine(string, string) error     { return errFailing }
 func (failing) AppendLines(string, []string) error { return errFailing }
 
+// The store's newer methods fail too, or say no.
+func (failing) Glob(string, string) ([]string, error) { return nil, errFailing }
+func (failing) IsFile(string) bool                    { return false }
+func (failing) MkdirAll(string) error                 { return errFailing }
+func (failing) WriteAtomic(string, []byte) error      { return errFailing }
+func (failing) Remove(string) error                   { return errFailing }
+func (failing) CreateExclusive(string, []byte) error  { return errFailing }
+func (failing) RemoveDir(string) error                { return errFailing }
+func (failing) Alive(int) bool                        { return false }
+
 // TestGetFMTextCallsNoStore: `get_fm - <key>` reads only the bytes given, with no state file and no
 // gone check, so a store that fails every call changes nothing.
 func TestGetFMTextCallsNoStore(t *testing.T) {

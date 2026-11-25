@@ -237,3 +237,366 @@ func TestAppendLineFailsWhenTheFolderCannotBeMade(t *testing.T) {
 		t.Errorf("%s holds %q, %v after AppendLine; want %q", blocker, got, err, want)
 	}
 }
+
+// pythonTimeout bounds the one python3 the Glob test runs.
+const pythonTimeout = 30 * time.Second
+
+// If Glob reads its folder as a pattern (a folder named with [, ], *, ?, or \, which Match takes as an
+// escape), or matches a dot name its pattern level does not ask for, a caller lists another folder's
+// files, or none, where Python's glob.glob(os.path.join(glob.escape(dir), pattern)) lists these: this
+// goes red. So it does if Glob cleans a .. after a symlink in dir away, naming a file other than the
+// one it found. Each case is pinned and checked against that Python, run for all of them in one
+// python3. The decoy folder is the one the literal folder's name matches when read as a pattern.
+func TestGlobMatchesPythonsEscapedGlob(t *testing.T) {
+	root := t.TempDir()
+	literal, decoy := `a[b]*?c\d`, "abXYcd"
+	for _, f := range []string{
+		literal + "/x-1.json", literal + "/x-2.json", literal + "/y.txt", decoy + "/x-9.json",
+		".cache/x.json", ".cache/.h.json", ".cache/p/f.jsonl", ".cache/p-b/f.jsonl", ".cache/.q/f.jsonl",
+		"target/a.json", "target/sub/s.json", "base/b.json",
+	} {
+		path := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, fileMode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "target", "sub"), filepath.Join(root, "base", "link")); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, dir, pattern string
+		want               []string // under root, pinned so a python3 that prints nothing cannot pass
+	}{
+		{"a folder named with [, ], *, ? and \\", literal, "x-*.json", []string{literal + "/x-1.json", literal + "/x-2.json"}},
+		{"a * level skips dot names, in a dot folder", ".cache", "*.json", []string{".cache/x.json"}},
+		{"a dot level matches dot names", ".cache", ".*.json", []string{".cache/.h.json"}},
+		// p-b/ sorts before p/, though the folder p sorts before p-b
+		{"a * level above another skips dot folders, sorted as paths", ".cache", "*/f.jsonl",
+			[]string{".cache/p-b/f.jsonl", ".cache/p/f.jsonl"}},
+		{"a level that is a name", ".cache", "p/f.jsonl", []string{".cache/p/f.jsonl"}},
+		// link/.. is target, physically; cleaned, it would read base/a.json, which is not there
+		{"a .. after a symlink in dir, kept as written", "base/link/..", "*.json", []string{"base/link/../a.json"}},
+		{"a missing folder", "none", "*", nil},
+	}
+	script := `import glob, os, sys
+for d, p in zip(sys.argv[1::2], sys.argv[2::2]):
+    print("\0".join(sorted(glob.glob(os.path.join(glob.escape(d), p)))))`
+	args := []string{"-c", script}
+	for _, c := range cases {
+		args = append(args, root+"/"+c.dir, c.pattern) // not filepath.Join, which would clean a ..
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pythonTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "python3", args...).Output()
+	if err != nil {
+		t.Fatalf("python3 glob.glob: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if len(lines) != len(cases) {
+		t.Fatalf("python3 printed %d lines for %d cases: %q", len(lines), len(cases), out)
+	}
+	for i, c := range cases {
+		want := []string{}
+		for _, w := range c.want {
+			want = append(want, root+"/"+w)
+		}
+		if py := strings.Join(want, "\x00"); lines[i] != py {
+			t.Fatalf("%s: python3 listed %q, want %q", c.name, lines[i], py)
+		}
+		got, err := Files{}.Glob(root+"/"+c.dir, c.pattern)
+		if err != nil || strings.Join(got, "\x00") != lines[i] {
+			t.Errorf("%s: Glob(%s, %s) = %q, %v; want %q, nil", c.name, c.dir, c.pattern, got, err, want)
+		}
+	}
+}
+
+// If Glob changes a byte of its folder's name that is not UTF-8 (to U+FFFD, as a range over runes
+// does), it lists another folder or none: this goes red. It runs on a file system that takes such a
+// name: macOS's APFS refuses it, and Linux's CI runs it.
+func TestGlobKeepsAFolderNamesBytes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "x\xff[")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Skipf("this file system refuses a folder name that is not UTF-8: %v", err)
+	}
+	file := filepath.Join(dir, "a.json")
+	if err := os.WriteFile(file, nil, fileMode); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := (Files{}).Glob(dir, "*.json"); err != nil || strings.Join(got, ",") != file {
+		t.Errorf("Glob(%q, *.json) = %q, %v; want [%q], nil", dir, got, err, file)
+	}
+}
+
+// If Glob swallows a malformed pattern as no match, a caller's typo lists nothing and reads as an empty
+// folder: this goes red. So it does if Glob checks a level only up to its first part that fails to
+// match, as filepath.Match does, or takes a pattern with an empty, . or .. level, which no folder lists.
+func TestGlobOfABadPatternFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".cache")
+	file := filepath.Join(dir, "p", "f.jsonl")
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, nil, fileMode); err != nil {
+		t.Fatal(err)
+	}
+	// p*[ and p*\ are malformed only past a *, where filepath.Match(level, "") stops checking.
+	for _, pattern := range []string{
+		"[", "p*[", "p*\\", "*/x*[", "p/./*.jsonl", "p/../p/*.jsonl", "p//*.jsonl", "./p/*.jsonl", "p/",
+	} {
+		if got, err := (Files{}).Glob(dir, pattern); !errors.Is(err, filepath.ErrBadPattern) {
+			t.Errorf("Glob(dir, %q) = %q, %v; want filepath.ErrBadPattern", pattern, got, err)
+		}
+	}
+	// A * inside a class splits no part: a check that split there would refuse this good pattern.
+	if got, err := (Files{}).Glob(dir, "p/[*f]*.jsonl"); err != nil || strings.Join(got, ",") != file {
+		t.Errorf("Glob(dir, %q) = %q, %v; want [%q], nil", "p/[*f]*.jsonl", got, err, file)
+	}
+}
+
+// If IsFile takes a folder, a missing path or a dangling symlink for a file, or misses a file behind a
+// symlink, a caller reads a story that is not there or skips one that is: this goes red.
+func TestIsFileIsTrueForARegularFileAlone(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "f")
+	if err := os.WriteFile(file, nil, fileMode); err != nil {
+		t.Fatal(err)
+	}
+	for link, to := range map[string]string{"to-file": file, "to-root": root, "dang": filepath.Join(root, "gone")} {
+		if err := os.Symlink(to, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, want := range map[string]bool{
+		"f": true, "to-file": true, ".": false, "to-root": false, "dang": false, "gone": false,
+	} {
+		if got := (Files{}).IsFile(filepath.Join(root, path)); got != want {
+			t.Errorf("IsFile(%s) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// If MkdirAll stops short of the last folder, fails on one already there, or hides a file in the way
+// behind a nil error, a caller writes into a folder that is not there: this goes red.
+func TestMkdirAllMakesEachFolderAndFailsOnAFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a", "b", "c")
+	for i := 0; i < 2; i++ { // the second call finds every folder already made
+		if err := (Files{}).MkdirAll(path); err != nil {
+			t.Fatalf("MkdirAll(%s) call %d = %v, want nil", path, i+1, err)
+		}
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Errorf("%s after MkdirAll: %v, %v; want a folder", path, info, err)
+	}
+	blocker := filepath.Join(root, "file")
+	if err := os.WriteFile(blocker, []byte("kept"), fileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Files{}).MkdirAll(filepath.Join(blocker, "sub")); err == nil {
+		t.Errorf("MkdirAll(%s/sub) = nil, want an error: %s is a file", blocker, blocker)
+	}
+	if got, err := os.ReadFile(blocker); err != nil || string(got) != "kept" {
+		t.Errorf("%s holds %q, %v after MkdirAll; want %q", blocker, got, err, "kept")
+	}
+}
+
+// dirNames returns the names in dir, sorted, failing the test when it cannot read it.
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// If WriteAtomic leaves its temp file beside the target, keeps the old bytes, or makes the file
+// readable by others where Python's mkstemp makes it 0600, the next reader sees a stray .tmp or stale
+// content: this goes red.
+func TestWriteAtomicReplacesTheFileAndLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pulls.json")
+	if err := os.WriteFile(path, []byte("old content, longer than the new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Files{}).WriteAtomic(path, []byte("new")); err != nil {
+		t.Fatalf("WriteAtomic(%s) = %v, want nil", path, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "new" {
+		t.Errorf("%s holds %q, %v; want %q", path, got, err, "new")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != fileMode {
+		t.Errorf("%s mode: %v, %v; want %v", path, info.Mode(), err, os.FileMode(fileMode))
+	}
+	if got := dirNames(t, dir); strings.Join(got, ",") != "pulls.json" {
+		t.Errorf("%s holds %q after WriteAtomic; want only pulls.json", dir, got)
+	}
+}
+
+// If WriteAtomic leaves its temp file behind when the rename fails, or loses the error, the folder
+// fills with .tmp files and the caller believes the write landed: this goes red. The target here is a
+// folder, which no file can be renamed over, and what it held must be left as it was.
+func TestWriteAtomicLeavesNoTempFileWhenTheWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "pulls.json")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(target, "old")
+	if err := os.WriteFile(old, []byte("old"), fileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Files{}).WriteAtomic(target, []byte("new")); err == nil {
+		t.Errorf("WriteAtomic(%s) = nil, want an error: it is a folder", target)
+	}
+	if got := dirNames(t, dir); strings.Join(got, ",") != "pulls.json" {
+		t.Errorf("%s holds %q after a failed WriteAtomic; want only pulls.json, no temp file", dir, got)
+	}
+	if got, err := os.ReadFile(old); err != nil || string(got) != "old" {
+		t.Errorf("%s holds %q, %v after a failed WriteAtomic; want %q", old, got, err, "old")
+	}
+	missing := filepath.Join(dir, "none", "pulls.json")
+	if err := (Files{}).WriteAtomic(missing, []byte("new")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("WriteAtomic(%s) = %v, want an error wrapping fs.ErrNotExist: its folder is missing", missing, err)
+	}
+}
+
+// If Remove takes an empty folder, as os.Remove does and Python's os.remove does not, follows a
+// symlink to its target, or drops the error for a missing file, a caller deletes what it never named
+// or takes a failed delete for a done one: this goes red.
+func TestRemoveDeletesAFileOrLinkAndNeverAFolder(t *testing.T) {
+	root := t.TempDir()
+	file, link, folder := filepath.Join(root, "f"), filepath.Join(root, "l"), filepath.Join(root, "d")
+	if err := os.WriteFile(file, nil, fileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Files{}).Remove(link); err != nil {
+		t.Errorf("Remove(%s) = %v, want nil", link, err)
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "d,f" {
+		t.Errorf("%s holds %q after removing the link; want d,f", root, got)
+	}
+	if err := (Files{}).Remove(file); err != nil {
+		t.Errorf("Remove(%s) = %v, want nil", file, err)
+	}
+	if err := (Files{}).Remove(folder); err == nil {
+		t.Errorf("Remove(%s) = nil, want an error: it is a folder", folder)
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "d" {
+		t.Errorf("%s holds %q; want only the folder d", root, got)
+	}
+	if err := (Files{}).Remove(file); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Remove(%s) of a removed file = %v, want an error wrapping fs.ErrNotExist", file, err)
+	}
+}
+
+// If CreateExclusive opened without O_EXCL, a second lock taker would truncate the first one's pid
+// and both would hold the lock; if it lost the error's fs.ErrExist, the taker could not tell "held"
+// from "cannot be made"; if it wrote nothing, a waiter would read no pid: this goes red. A dangling
+// symlink and a folder count as there, as they do for Python's O_EXCL open.
+func TestCreateExclusiveFailsOnAnExistingPathAndWritesOtherwise(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "k.lock")
+	if err := (Files{}).CreateExclusive(path, []byte("123")); err != nil {
+		t.Fatalf("CreateExclusive(%s) = %v, want nil", path, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "123" {
+		t.Errorf("%s holds %q, %v; want %q", path, got, err, "123")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&^exclusiveMode != 0 {
+		t.Errorf("%s mode: %v, %v; want no bit past %v", path, info.Mode(), err, os.FileMode(exclusiveMode))
+	}
+	dang, folder := filepath.Join(root, "dang"), filepath.Join(root, "d")
+	if err := os.Symlink(filepath.Join(root, "gone"), dang); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{path, dang, folder} {
+		if err := (Files{}).CreateExclusive(p, []byte("456")); !errors.Is(err, fs.ErrExist) {
+			t.Errorf("CreateExclusive(%s) over what is there = %v, want an error wrapping fs.ErrExist", p, err)
+		}
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "123" {
+		t.Errorf("%s holds %q, %v after a second CreateExclusive; want the first's %q", path, got, err, "123")
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "d,dang,k.lock" {
+		t.Errorf("%s holds %q; want d,dang,k.lock, and no target made for the dangling link", root, got)
+	}
+}
+
+// If RemoveDir took a folder that holds a file (os.RemoveAll), or a file (os.Remove), main_ci's
+// tidy-up would delete another wait's record or a file it never named: this goes red.
+func TestRemoveDirTakesOnlyAnEmptyFolder(t *testing.T) {
+	root := t.TempDir()
+	empty, full, file := filepath.Join(root, "empty"), filepath.Join(root, "full"), filepath.Join(root, "f")
+	for _, d := range []string{empty, full} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{file, filepath.Join(full, "rec.json")} {
+		if err := os.WriteFile(f, []byte("kept"), fileMode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (Files{}).RemoveDir(empty); err != nil {
+		t.Errorf("RemoveDir(%s) = %v, want nil", empty, err)
+	}
+	for _, p := range []string{full, file} {
+		if err := (Files{}).RemoveDir(p); err == nil {
+			t.Errorf("RemoveDir(%s) = nil, want an error: it is not an empty folder", p)
+		}
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != "f,full" {
+		t.Errorf("%s holds %q; want f,full", root, got)
+	}
+	if got := dirNames(t, full); strings.Join(got, ",") != "rec.json" {
+		t.Errorf("%s holds %q; want rec.json", full, got)
+	}
+	if err := (Files{}).RemoveDir(empty); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("RemoveDir(%s) of a removed folder = %v, want an error wrapping fs.ErrNotExist", empty, err)
+	}
+}
+
+// If Alive took a refused signal for a dead process, a lock another user's process holds would be
+// broken; if it signalled 0 or less, it would ask about a process group; if it passed a pid past
+// pid_t to the syscall, the pid would wrap to another one, here this test's own: this goes red.
+func TestAliveIsTrueForARunningPidAndFalseOtherwise(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
+	defer cancel()
+	child := exec.CommandContext(ctx, "true")
+	if err := child.Run(); err != nil {
+		t.Fatalf("true: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		pid  int
+		want bool
+	}{
+		{"this test's pid", os.Getpid(), true},
+		{"pid 1, which root owns unless the test runs as root", 1, true},
+		{"a child that has exited and been waited for", child.Process.Pid, false},
+		{"0, this process's group", 0, false},
+		{"-1, every process the test may signal", -1, false},
+		{"this test's pid plus 2^32, which a cut to pid_t would turn into this test's", os.Getpid() + 1<<32, false},
+	} {
+		if got := (Files{}).Alive(c.pid); got != c.want {
+			t.Errorf("Alive(%d), %s = %v, want %v", c.pid, c.name, got, c.want)
+		}
+	}
+}
