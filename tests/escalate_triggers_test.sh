@@ -115,6 +115,8 @@ fresh() {
   "${GIT[@]}" -C "${P}" worktree add -q -b story/s1 "${WT}" origin/main
   echo work > "${WT}/work.txt"; "${GIT[@]}" -C "${WT}" add work.txt
   GIT_COMMITTER_DATE="@${OLD}" "${GIT[@]}" -C "${WT}" commit -qm work
+  # Pushed: a close that clears a build keeps one with a commit origin does not have (unpushed_work).
+  git -C "${WT}" push -q origin story/s1
   printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
@@ -458,11 +460,12 @@ for ladder in sonnet,opus,fable ""; do
     check "a step-up or resume run by hand that stops after the close for any other reason logs its line too" "1|1|ok (exit 1),ok (exit 1)|no" \
       "${rc}|${rc2}|$(failed_lines)|$(grep -q '^step-up failed:' <<< "${out}${out2}" && echo yes || echo no)"
     # A step-up that fails before it closes anything, with a status of its own (here git exits 128: the
-    # worktree is no longer a git checkout), is a refusal: the close goes on and counts the attempt.
+    # worktree is no longer a git checkout), is a refusal: the close goes on. git cannot read that
+    # worktree, so whether it holds work origin lacks is not known: the close keeps it and counts nothing.
     fresh "${ladder}" idle; rm -f "${WT}/.git"
     out="$(run close s1)" && rc=0 || rc=$?
-    check "a step-up that fails before closing the builder is a refusal: the close goes on" "0|no|1|" \
-      "${rc}|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$(escalates)"
+    check "a step-up that fails before closing the builder is a refusal: the close goes on, and keeps the worktree git cannot read" "0|no|||yes" \
+      "${rc}|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$(escalates)|$(grep -q '^swarm: s1: kept its worktree .*: its worktree could not be read by git\.' <<< "${out}" && echo yes)"
     # One step-up of a story at a time: a lock held by a live process means another step-up may be
     # starting the next builder, so the close refuses, closing and counting nothing; one left by a
     # process that is gone is taken over.
