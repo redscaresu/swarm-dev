@@ -106,8 +106,8 @@ exec sleep 30
 	}
 }
 
-// If Run let a bound of zero through, git would start and be killed at once, and the caller would
-// read a timeout it never asked for.
+// If Run let a bound of zero through, the context would end before git started, and the caller
+// would get "context deadline exceeded", which does not say the bound was wrong.
 func TestRunRefusesNoBound(t *testing.T) {
 	stubGit(t, "exit 0\n")
 	if _, err := (Repo{}).Run(iface.GitCall{Dir: "."}); !errors.Is(err, errBound) {

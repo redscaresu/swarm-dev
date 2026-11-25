@@ -208,8 +208,8 @@ func isolate(t *testing.T) {
 }
 
 // If report.py's git_fetch gave the first stderr line, the missing remote's would differ. If
-// BatchSSH dropped core.sshCommand, the order it tries them in or its cache, or QuietGit dropped the
-// batch ssh, the ssh steps would differ. Every case runs the real git.
+// BatchSSH dropped core.sshCommand or its cache, or QuietGit dropped the batch ssh, the ssh steps
+// would differ. Every case runs the real git.
 func TestGitCompareRealRepo(t *testing.T) {
 	isolate(t)
 	tmp := t.TempDir()
@@ -241,10 +241,12 @@ func TestGitCompareRealRepo(t *testing.T) {
 	})
 }
 
-// If QuietGit dropped GIT_TERMINAL_PROMPT=0, the closed stdin or the batch ssh, the env step's
-// output would differ; if it dropped the bound, the sleep would run out its 5 s and exit 0. If the
-// adapter stopped reading when git exited, late would lose the line git's child writes after; if it
-// read on past the bound, linger would give git's 0, not report.py's 124. The other steps pin GitFetch's last line, its "exit N" and Python's text mode, newlines and errors.
+// If QuietGit dropped GIT_TERMINAL_PROMPT=0 or the batch ssh, or the adapter gave git a stdin, the
+// env step's output would differ; if QuietGit dropped the bound, the sleep would run out its 5 s and
+// exit 0. If BatchSSH tried core.sshCommand before GIT_SSH_COMMAND, the env step with both set would
+// name the wrong ssh. If the adapter stopped reading when git exited, late would lose the line git's
+// child writes after; if it read on past the bound, linger would give git's 0, not report.py's 124.
+// The other steps pin GitFetch's last line, its "exit N" and Python's text mode, newlines and errors.
 func TestGitCompareStub(t *testing.T) {
 	isolate(t)
 	stubs := t.TempDir()
